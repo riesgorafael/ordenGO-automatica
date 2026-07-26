@@ -1,0 +1,11 @@
+# Evita copiar cosas innecesarias o sensibles al construir la imagen
+**/node_modules
+dist
+web/dist
+server/public
+.git
+.gitignore
+.env
+.env.*
+*.log
+.DS_Store
