@@ -147,6 +147,19 @@ app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res
   await pool.query("INSERT INTO projects(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2", [p.id, p]);
   res.json(p);
 });
+app.patch("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM projects WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  const merged = { ...rows[0].data, ...(req.body || {}), id: req.params.id };
+  await pool.query("UPDATE projects SET data=$2 WHERE id=$1", [req.params.id, merged]);
+  res.json(merged);
+});
+app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  // Elimina el proyecto y sus tareas asociadas
+  await pool.query("DELETE FROM tasks WHERE data->>'project' = $1", [req.params.id]);
+  await pool.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
+  res.status(204).end();
+});
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
 const TEC_PATCH = ["signatureUrl", "signedBy", "photos", "equipo", "sintoma", "solucion", "category", "status", "location", "laborHours", "technicians", "contact"];
@@ -155,7 +168,8 @@ app.post("/api/orders", auth, async (req, res) => {
   let o = { ...(req.body || {}) };
   if (!o.id) o.id = "OT-" + Date.now();
   if (req.user.role === "tecnico") {
-    o.rate = Number(o.rate) || 0; o.laborBillable = true;
+    // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
+    o.rate = Number(process.env.DEFAULT_RATE) || 0; o.laborBillable = true;
     if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, price: 0, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
@@ -175,6 +189,11 @@ app.patch("/api/orders/:id", auth, async (req, res) => {
   const merged = { ...rows[0].data, ...patch };
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   res.json(req.user.role === "tecnico" ? stripMoney(merged) : merged);
+});
+
+app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  await pool.query("DELETE FROM orders WHERE id=$1", [req.params.id]);
+  res.status(204).end();
 });
 
 /* ------------------------------------------------ Tareas ------------------------------------------------ */

@@ -4,7 +4,7 @@ import {
   Plus, X, Search, Camera, Upload, Sparkles, Loader2, MapPin, Clock, ClipboardList,
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
-  BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText,
+  BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { orderReceiptPDF, monthlyReportPDF } from "./pdf";
@@ -125,6 +125,7 @@ export default function App() {
     } catch (e) { err(e); }
   };
   const updateOrder = async (id, patch) => { try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); } catch (e) { err(e); } };
+  const deleteOrder = async (id) => { if (!window.confirm(`¿Eliminar la orden ${id}? Esta acción no se puede deshacer.`)) return; try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } };
   const exportCSV = (rows, name) => {
     const head = ["Folio", "Fecha", "Cliente", "Sitio", "Tipo", "Estado", "Horas", "Mano de obra", "Materiales", "Total"];
     const lines = rows.map((o) => { const t = orderTotals(o); return [o.id, o.date, o.client, o.site, o.service, o.status, o.laborHours, t.labor.toFixed(2), t.mats.toFixed(2), t.total.toFixed(2)].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","); });
@@ -144,6 +145,17 @@ export default function App() {
     const name = prompt("Nombre del proyecto:"); if (!name) return;
     const key = (prompt("Clave (ej. AUT):") || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
     try { const p = await api.createProject({ key, name, color: PALETTE[projects.length % PALETTE.length] }); setProjects((x) => [...x, p]); } catch (e) { err(e); }
+  };
+  const editProject = async (id) => {
+    const cur = projects.find((p) => p.id === id); if (!cur) return;
+    const name = prompt("Nuevo nombre del proyecto:", cur.name); if (!name) return;
+    try { const p = await api.updateProject(id, { name }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); } catch (e) { err(e); }
+  };
+  const deleteProject = async (id) => {
+    const cur = projects.find((p) => p.id === id); if (!cur) return;
+    const n = tasks.filter((t) => t.project === id).length;
+    if (!window.confirm(`¿Eliminar el proyecto "${cur.name}"${n ? ` y sus ${n} tarea(s)` : ""}? Esta acción no se puede deshacer.`)) return;
+    try { await api.deleteProject(id); setProjects((x) => x.filter((y) => y.id !== id)); setTasks((x) => x.filter((t) => t.project !== id)); setPProj("all"); } catch (e) { err(e); }
   };
 
   /* Equipo */
@@ -216,6 +228,8 @@ export default function App() {
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20" /></div>
                 <button onClick={() => setPMine((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>
                 {isMgr && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-600"><Folder className="h-4 w-4" /> Proyecto</button>}
+                {isMgr && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
+                {isMgr && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
               </>)}
             </div>
             {(() => {
@@ -229,7 +243,7 @@ export default function App() {
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
       </main>
 
-      {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} />}
+      {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} />}
       {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} nextId={nextTaskId} onClose={() => setEditing(undefined)} onSave={onSaveTask} onDelete={onDeleteTask} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
 
@@ -424,7 +438,7 @@ function MonthlyReport({ orders }) {
 }
 
 /* ===================================== ÓRDENES: DETALLE ===================================== */
-function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport }) {
+function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDelete }) {
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const needSign = next === "Aprobada" && !order.signatureUrl;
@@ -459,6 +473,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport }) {
             {next === "Facturada" && !ger && <span className="self-center text-xs text-slate-400">La facturación la realiza Gerencia.</span>}
             <button onClick={() => orderReceiptPDF(order, ger)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Comprobante PDF</button>
             {ger && <button onClick={() => onExport(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Exportar</button>}
+            {ger && onDelete && <button onClick={() => onDelete(order.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Eliminar</button>}
           </section>
         </div>
       </div>

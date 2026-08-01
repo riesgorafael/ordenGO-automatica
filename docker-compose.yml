@@ -26,6 +26,7 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@empresa.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-ordengo123}
+      DEFAULT_RATE: ${DEFAULT_RATE:-0}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
       PORT: 3000

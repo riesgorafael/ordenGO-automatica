@@ -9,6 +9,10 @@ Aplicación de **órdenes de campo + seguimiento de proyectos** para empresas de
 
 ---
 
+> **Estado:** proyecto compilado y verificado. El frontend construye sin errores y la API
+> pasa 39 pruebas automáticas de autenticación, permisos por rol, ocultamiento de montos
+> a los técnicos, órdenes, tareas, gestión de usuarios y cambio de contraseña.
+
 ## Estructura
 
 ```
@@ -103,6 +107,7 @@ JWT_SECRET = (una cadena larga y aleatoria)
 ADMIN_EMAIL = tucorreo@empresa.com
 ADMIN_PASSWORD = (tu clave de administrador)
 DEMO_PASSWORD = (clave inicial para empleados)
+DEFAULT_RATE = 0
 ANTHROPIC_API_KEY = (tu clave de Anthropic, opcional)
 ANTHROPIC_MODEL = claude-sonnet-5
 PORT = 3000
