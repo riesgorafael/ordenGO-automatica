@@ -125,11 +125,10 @@ export default function App() {
   const userById = (id) => users.find((u) => u.id === id);
 
   /* Órdenes */
-  const nextFolio = () => { const y = new Date().getFullYear(); const n = orders.filter((o) => o.id.includes(`-${y}-`)).length + 1; return `OT-${y}-${String(n).padStart(3, "0")}`; };
   const onSaveOrder = async (o) => {
     try {
-      if (o._newClient) { const c = await api.addClient(o._newClient); setClients((p) => [...p, c]); }
-      delete o._newClient;
+      if (o._newClient) { const c = await api.addClient(o._newClient); setClients((p) => (p.some((x) => x.id === c.id) ? p : [...p, c])); o.client = c.name; o.site = o.site || c.site; }
+      delete o._newClient; delete o.id; // el servidor asigna el folio con el código del cliente
       const saved = await api.createOrder(o);
       setOrders((p) => [saved, ...p]); setOView("list");
     } catch (e) { err(e); }
@@ -188,8 +187,8 @@ export default function App() {
 
   /* Duplicar orden / crear tarea desde orden */
   const duplicateOrder = async (o) => {
-    const copy = { ...o, id: nextFolio(), status: "Borrador", signatureUrl: null, signedBy: "", noSignReason: "", photos: [], activity: [], createdAt: new Date().toISOString(), date: todayStr() };
-    delete copy._updatedAt;
+    const copy = { ...o, status: "Borrador", signatureUrl: null, signedBy: "", noSignReason: "", photos: [], activity: [], createdAt: new Date().toISOString(), date: todayStr() };
+    delete copy.id; delete copy._updatedAt;
     try { const saved = await api.createOrder(copy); setOrders((p) => [saved, ...p]); setODetail(null); alert(`Orden duplicada como ${saved.id} (borrador).`); } catch (e) { err(e); }
   };
   const taskFromOrder = (o) => {
@@ -198,13 +197,19 @@ export default function App() {
     setEditing(null);
   };
 
+  /* Clientes */
+  const addClientMgr = async (c) => { const saved = await api.addClient(c); setClients((p) => (p.some((x) => x.id === saved.id) ? p.map((x) => (x.id === saved.id ? saved : x)) : [...p, saved])); };
+  const updateClient = async (id, patch) => { const saved = await api.updateClient(id, patch); setClients((p) => p.map((x) => (x.id === id ? saved : x))); };
+  const removeClient = async (id) => { await api.deleteClient(id); setClients((p) => p.filter((x) => x.id !== id)); };
+
   if (module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} me={me} folio={nextFolio()} clients={clients} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
+    return <NewOrder ger={isMgr} me={me} clients={clients} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
 
   const modTabs = [
     { id: "inicio", label: "Mi día", icon: Home },
     { id: "orders", label: "Órdenes", icon: ClipboardList },
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
+    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2 }] : []),
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users }] : []),
   ];
 
@@ -295,6 +300,7 @@ export default function App() {
             })()}
           </>
         )}
+        {module === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {module === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
 
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
@@ -453,7 +459,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20" /></div>
-        <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm"><option>Todas</option>{O_STATUS.map((s) => <option key={s}>{s}</option>)}</select>
+        <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm"><option>Todas</option>{O_STATUS.filter((s) => ger || s !== "Facturada").map((s) => <option key={s}>{s}</option>)}</select>
         {ger && (<>
           <button onClick={() => setOBillable((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${oBillable ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Filter className="h-4 w-4" /> Facturables</button>
           <button onClick={() => exportCSV(filtered, `ordenes_${monthKey}.csv`)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> CSV</button>
@@ -597,7 +603,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, me, folio, clients, onSave, onCancel }) {
+function NewOrder({ ger, me, clients, onSave, onCancel }) {
   const [clientMode, setClientMode] = useState("existing");
   const [clientId, setClientId] = useState(clients[0]?.id || "");
   const [newClient, setNewClient] = useState({ name: "", site: "" });
@@ -620,22 +626,24 @@ function NewOrder({ ger, me, folio, clients, onSave, onCancel }) {
   const setMat = (i, patch) => setMaterials((m) => m.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const delMat = (i) => setMaterials((m) => m.filter((_, j) => j !== i));
   const client = clientMode === "existing" ? clients.find((c) => c.id === clientId) : { name: newClient.name, site: newClient.site };
+  const clientCode = clientMode === "existing" ? (client?.code || "—") : "auto";
+  const folioPreview = `OT-${clientCode}-${new Date().getFullYear()}-###`;
   const preview = orderTotals({ laborHours, rate, laborBillable, materials });
   const canSave = client && client.name && (laborHours || materials.length || solucion);
   const canComplete = canSave && (!!signatureUrl || !!noSignReason.trim());
   const save = async (status) => {
     setSaving(true);
-    const o = { id: folio, client: client.name, site: client.site || "", contact, tech, service, date: todayStr(), createdAt: new Date().toISOString(), equipo, sintoma, solucion, category, location, photos, signatureUrl, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), laborHours: Number(laborHours) || 0, technicians: Number(technicians) || 1, rate: Number(rate) || DEFAULT_RATE, laborBillable, materials: materials.map((m) => ({ ...m, qty: Number(m.qty) || 0, price: Number(m.price) || 0 })), status };
+    const o = { client: client.name, site: client.site || "", contact, tech, service, date: todayStr(), createdAt: new Date().toISOString(), equipo, sintoma, solucion, category, location, photos, signatureUrl, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), laborHours: Number(laborHours) || 0, technicians: Number(technicians) || 1, rate: Number(rate) || DEFAULT_RATE, laborBillable, materials: materials.map((m) => ({ ...m, qty: Number(m.qty) || 0, price: Number(m.price) || 0 })), status };
     if (clientMode === "new" && newClient.name) o._newClient = { id: "c" + Date.now(), name: newClient.name, site: newClient.site };
     await onSave(o); setSaving(false);
   };
   return (
     <div className="min-h-screen bg-slate-100" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
-      <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900 text-slate-100"><div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-3"><button onClick={onCancel} className="rounded-md p-1 text-slate-300 hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button><div className="leading-tight"><div className="text-sm font-semibold">Nueva orden</div><div className="font-mono text-[11px] text-sky-400">{folio}</div></div></div></header>
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900 text-slate-100"><div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-3"><button onClick={onCancel} className="rounded-md p-1 text-slate-300 hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button><div className="leading-tight"><div className="text-sm font-semibold">Nueva orden</div><div className="font-mono text-[11px] text-sky-400">{folioPreview}</div></div></div></header>
       <main className="mx-auto max-w-lg space-y-4 px-4 py-5 pb-28">
         <Section title="Cliente y sitio">
           <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => setClientMode("existing")}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => setClientMode("new")}>Cliente nuevo</Toggle></div>
-          {clientMode === "existing" ? (<select value={clientId} onChange={(e) => setClientId(e.target.value)} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.name} — {c.site}</option>)}</select>) : (<div className="space-y-2"><input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className="u-input" /><input value={newClient.site} onChange={(e) => setNewClient({ ...newClient, site: e.target.value })} placeholder="Sitio / ubicación" className="u-input" /></div>)}
+          {clientMode === "existing" ? (<select value={clientId} onChange={(e) => setClientId(e.target.value)} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name} — {c.site}</option>)}</select>) : (<div className="space-y-2"><input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className="u-input" /><input value={newClient.site} onChange={(e) => setNewClient({ ...newClient, site: e.target.value })} placeholder="Sitio / ubicación" className="u-input" /></div>)}
           <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Persona de contacto (opcional)" className="u-input mt-2" />
           <input value={tech} onChange={(e) => setTech(e.target.value)} placeholder="Técnico responsable" className="u-input mt-2" />
           <div className="mt-2 flex items-center gap-2"><button onClick={captureLocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><MapPin className="h-3.5 w-3.5" /> Capturar ubicación</button>{location && <span className="text-xs text-emerald-600">{location.lat.toFixed(4)}, {location.lng.toFixed(4)}</span>}{geoMsg && <span className="text-xs text-slate-500">{geoMsg}</span>}</div>
@@ -788,6 +796,50 @@ function ChartBox({ data }) {
 }
 
 /* ===================================== EQUIPO (ADMIN) ===================================== */
+/* ===================================== CLIENTES ===================================== */
+function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
+  const [nf, setNf] = useState({ name: "", site: "", code: "" });
+  const suggest = (name) => (name || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
+  const add = async () => {
+    if (!nf.name.trim()) return;
+    try { await onAdd({ name: nf.name.trim(), site: nf.site.trim(), code: nf.code.trim().toUpperCase() || undefined }); setNf({ name: "", site: "", code: "" }); }
+    catch (e) { onErr(e); }
+  };
+  const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
+  const editName = (c) => { const v = prompt("Nombre del cliente:", c.name); if (v && v.trim()) wrap(onPatch)(c.id, { name: v.trim() }); };
+  const editSite = (c) => { const v = prompt("Sitio / ubicación:", c.site || ""); if (v !== null) wrap(onPatch)(c.id, { site: v.trim() }); };
+  const editCode = (c) => { const v = prompt("Código del cliente (aparece en el N° de OT):", c.code || ""); if (v && v.trim()) wrap(onPatch)(c.id, { code: v.trim().toUpperCase() }); };
+  const del = (c) => { const n = orders.filter((o) => (o.client || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()).length; if (window.confirm(`¿Eliminar el cliente "${c.name}"?${n ? ` Tiene ${n} orden(es) asociadas (no se borran).` : ""}`)) wrap(onRemove)(c.id); };
+  return (
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div className="lg:col-span-2"><Panel title={`Clientes (${clients.length})`}>
+        <div className="space-y-2">
+          {clients.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin clientes</div>}
+          {clients.map((c) => { const ords = orders.filter((o) => (o.client || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()).length; return (
+            <div key={c.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
+              <span className="grid h-9 min-w-[3rem] place-items-center rounded-md bg-slate-800 px-2 font-mono text-xs font-bold text-white" title="Código del cliente">{c.code || "—"}</span>
+              <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{c.name}</div><div className="truncate text-xs text-slate-500">{c.site || "—"} · {ords} orden(es)</div></div>
+              <button onClick={() => editCode(c)} title="Editar código" className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Código</button>
+              <button onClick={() => editName(c)} title="Editar nombre" className="rounded-md p-1.5 text-slate-400 hover:text-sky-600"><Pencil className="h-4 w-4" /></button>
+              <button onClick={() => editSite(c)} title="Editar sitio" className="rounded-md p-1.5 text-slate-400 hover:text-sky-600"><MapPin className="h-4 w-4" /></button>
+              <button onClick={() => del(c)} title="Eliminar" className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          ); })}
+        </div>
+      </Panel></div>
+      <div><Panel title="Nuevo cliente">
+        <div className="space-y-2">
+          <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value, code: nf.code || suggest(e.target.value) })} placeholder="Razón social" className="u-input" /></L>
+          <L label="Sitio / ubicación"><input value={nf.site} onChange={(e) => setNf({ ...nf, site: e.target.value })} placeholder="Planta, línea, sala…" className="u-input" /></L>
+          <L label="Código (para el N° de OT)"><input value={nf.code} onChange={(e) => setNf({ ...nf, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} placeholder="Ej. LDV" className="u-input font-mono" /></L>
+          <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar cliente</button>
+          <p className="text-[11px] text-slate-400">El código identifica al cliente en el número de orden (ej. <span className="font-mono">OT-LDV-2026-001</span>). Si lo dejas vacío, se genera automáticamente. Los nombres duplicados se unifican.</p>
+        </div>
+      </Panel></div>
+    </div>
+  );
+}
+
 function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "" });
   const add = async () => { if (!nf.name.trim() || !nf.email.trim()) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "" }); } catch (e) { onErr(e); } };

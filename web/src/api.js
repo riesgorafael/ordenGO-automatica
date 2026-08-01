@@ -31,6 +31,8 @@ export const api = {
   changePassword: (current, next) => req("/me/password", { method: "POST", body: JSON.stringify({ current, next }) }),
 
   addClient: (c) => req("/clients", { method: "POST", body: JSON.stringify(c) }),
+  updateClient: (id, patch) => req("/clients/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteClient: (id) => req("/clients/" + id, { method: "DELETE" }),
 
   createOrder: (o) => req("/orders", { method: "POST", body: JSON.stringify(o) }),
   updateOrder: (id, patch) => req("/orders/" + id, { method: "PATCH", body: JSON.stringify(patch) }),

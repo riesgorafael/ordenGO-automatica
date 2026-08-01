@@ -50,9 +50,9 @@ async function initDb() {
 
   if ((await pool.query("SELECT count(*)::int n FROM clients")).rows[0].n === 0) {
     const clients = [
-      { id: "c1", name: "Lácteos del Valle", site: "Planta Norte, Nave 2" },
-      { id: "c2", name: "Embotelladora Andina", site: "Línea de llenado 3" },
-      { id: "c3", name: "Cárnicos Premium", site: "Sala de máquinas" },
+      { id: "c1", code: "LDV", name: "Lácteos del Valle", site: "Planta Norte, Nave 2" },
+      { id: "c2", code: "EMB", name: "Embotelladora Andina", site: "Línea de llenado 3" },
+      { id: "c3", code: "CAR", name: "Cárnicos Premium", site: "Sala de máquinas" },
     ];
     for (const c of clients) await pool.query("INSERT INTO clients(id,data) VALUES($1,$2)", [c.id, c]);
 
@@ -88,8 +88,20 @@ async function notify(userId, text, link) {
 }
 function stripMoney(o) {
   const x = { ...o }; delete x.rate; delete x.laborBillable;
+  // El técnico no debe saber si una OT fue facturada: se muestra como "Aprobada"
+  if (x.status === "Facturada") x.status = "Aprobada";
   if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; return y; });
   return x;
+}
+function codeFromName(name) {
+  return (String(name || "CLI").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3)) || "CLI";
+}
+async function uniqueClientCode(base, excludeId) {
+  const rows = (await pool.query("SELECT id, data->>'code' AS c FROM clients")).rows;
+  const taken = new Set(rows.filter((r) => r.id !== excludeId).map((r) => r.c).filter(Boolean));
+  if (!taken.has(base)) return base;
+  for (let i = 1; i < 1000; i++) { const cand = (base.slice(0, 2) + i); if (!taken.has(cand)) return cand; }
+  return base + Date.now().toString().slice(-3);
 }
 function auth(req, res, next) {
   const h = req.headers.authorization || "";
@@ -160,9 +172,36 @@ app.post("/api/notifications/read-all", auth, async (req, res) => {
 
 /* ------------------------------------------------ Clientes ------------------------------------------------ */
 app.post("/api/clients", auth, async (req, res) => {
-  const c = req.body || {}; if (!c.id) c.id = "c" + Date.now();
+  const c = { ...(req.body || {}) };
+  const existing = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data);
+  // Evita duplicados por nombre (reutiliza el existente)
+  const dup = existing.find((x) => (x.name || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase());
+  if (dup) return res.json(dup);
+  if (!c.id) c.id = "c" + Date.now();
+  if (c.code) {
+    const taken = new Set(existing.map((x) => x.code).filter(Boolean));
+    if (taken.has(c.code)) return res.status(400).json({ error: "Ese código de cliente ya existe" });
+  } else {
+    c.code = await uniqueClientCode(codeFromName(c.name));
+  }
   await pool.query("INSERT INTO clients(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2", [c.id, c]);
   res.json(c);
+});
+app.patch("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM clients WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  const patch = req.body || {};
+  if (patch.code) {
+    const code = await uniqueClientCode(patch.code, req.params.id);
+    if (code !== patch.code) return res.status(400).json({ error: "Ese código de cliente ya existe" });
+  }
+  const merged = { ...rows[0].data, ...patch, id: req.params.id };
+  await pool.query("UPDATE clients SET data=$2 WHERE id=$1", [req.params.id, merged]);
+  res.json(merged);
+});
+app.delete("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  await pool.query("DELETE FROM clients WHERE id=$1", [req.params.id]);
+  res.status(204).end();
 });
 
 /* ------------------------------------------------ Proyectos ------------------------------------------------ */
@@ -190,7 +229,14 @@ const TEC_PATCH = ["signatureUrl", "signedBy", "noSignReason", "photos", "equipo
 
 app.post("/api/orders", auth, async (req, res) => {
   let o = { ...(req.body || {}) };
-  if (!o.id) o.id = "OT-" + Date.now();
+  if (!o.id) {
+    const year = new Date().getFullYear();
+    const cl = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data)
+      .find((x) => (x.name || "").trim().toLowerCase() === String(o.client || "").trim().toLowerCase());
+    const code = (cl && cl.code) ? cl.code : "GEN";
+    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id LIKE $1", [`OT-${code}-${year}-%`])).rows[0].c + 1;
+    o.id = `OT-${code}-${year}-${String(n).padStart(3, "0")}`;
+  }
   if (req.user.role === "tecnico") {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
     o.rate = Number(process.env.DEFAULT_RATE) || 0; o.laborBillable = true;
