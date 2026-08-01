@@ -26,7 +26,10 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS projects( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS orders  ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS tasks   ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS notifications ( id text PRIMARY KEY, user_id text, text text, link text, read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   `);
+  // Migración idempotente para instalaciones existentes
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
 
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
   const adminPass = process.env.ADMIN_PASSWORD || "admin1234";
@@ -77,7 +80,12 @@ async function initDb() {
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
-const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active });
+const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, mustChangePassword: u.mustchangepassword || false });
+async function notify(userId, text, link) {
+  if (!userId) return;
+  const id = "n" + Date.now() + Math.floor(Math.random() * 100000);
+  try { await pool.query("INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4)", [id, userId, text, link || null]); } catch {}
+}
 function stripMoney(o) {
   const x = { ...o }; delete x.rate; delete x.laborBillable;
   if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; return y; });
@@ -109,29 +117,45 @@ app.post("/api/me/password", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]);
   const u = rows[0];
   if (!u || !bcrypt.compareSync(current || "", u.password_hash)) return res.status(400).json({ error: "La contraseña actual es incorrecta" });
-  await pool.query("UPDATE users SET password_hash=$2 WHERE id=$1", [u.id, bcrypt.hashSync(next, 10)]);
+  await pool.query("UPDATE users SET password_hash=$2, mustchangepassword=false WHERE id=$1", [u.id, bcrypt.hashSync(next, 10)]);
   res.json({ ok: true });
 });
 
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = req.user.role === "tecnico";
-  const [me, u, cl, pr, or, ta] = await Promise.all([
+  const [me, u, cl, pr, or, ta, no] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
     pool.query("SELECT data FROM projects"),
-    pool.query("SELECT data FROM orders ORDER BY updated_at DESC"),
-    pool.query("SELECT data FROM tasks ORDER BY updated_at DESC"),
+    pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC"),
+    pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC"),
+    pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
   ]);
   res.json({
     me: pubUser(me.rows[0]),
     users: u.rows.map(pubUser),
     clients: cl.rows.map((r) => r.data),
     projects: pr.rows.map((r) => r.data),
-    orders: or.rows.map((r) => (tec ? stripMoney(r.data) : r.data)),
-    tasks: ta.rows.map((r) => r.data),
+    orders: or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
   });
+});
+
+/* ------------------------------------------------ Notificaciones ------------------------------------------------ */
+app.get("/api/notifications", auth, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]);
+  res.json(rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })));
+});
+app.post("/api/notifications/:id/read", auth, async (req, res) => {
+  await pool.query("UPDATE notifications SET read=true WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+  res.status(204).end();
+});
+app.post("/api/notifications/read-all", auth, async (req, res) => {
+  await pool.query("UPDATE notifications SET read=true WHERE user_id=$1", [req.user.id]);
+  res.status(204).end();
 });
 
 /* ------------------------------------------------ Clientes ------------------------------------------------ */
@@ -162,7 +186,7 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedBy", "photos", "equipo", "sintoma", "solucion", "category", "status", "location", "laborHours", "technicians", "contact"];
+const TEC_PATCH = ["signatureUrl", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "status", "location", "laborHours", "technicians", "contact"];
 
 app.post("/api/orders", auth, async (req, res) => {
   let o = { ...(req.body || {}) };
@@ -186,7 +210,21 @@ app.patch("/api/orders/:id", auth, async (req, res) => {
     if (clean.status === "Facturada") delete clean.status;
     patch = clean;
   }
-  const merged = { ...rows[0].data, ...patch };
+  const prev = rows[0].data;
+  const merged = { ...prev, ...patch };
+  if (patch.status && patch.status !== prev.status) {
+    merged.activity = [...(prev.activity || []), { type: "status", text: `Cambió el estado a ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  }
+  await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  res.json(req.user.role === "tecnico" ? stripMoney(merged) : merged);
+});
+
+app.post("/api/orders/:id/comment", auth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM orders WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  const text = String((req.body || {}).text || "").trim();
+  if (!text) return res.status(400).json({ error: "Comentario vacío" });
+  const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   res.json(req.user.role === "tecnico" ? stripMoney(merged) : merged);
 });
@@ -199,14 +237,34 @@ app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req,
 /* ------------------------------------------------ Tareas ------------------------------------------------ */
 app.post("/api/tasks", auth, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
+  const existing = (await pool.query("SELECT data FROM tasks WHERE id=$1", [t.id])).rows[0]?.data;
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [t.id, t]);
+  // Notifica al responsable si es una asignación nueva (a otra persona)
+  if (t.assignee && t.assignee !== req.user.id && (!existing || existing.assignee !== t.assignee))
+    await notify(t.assignee, `Te asignaron la tarea ${t.id}: ${t.title}`, "task:" + t.id);
   res.json(t);
 });
 app.patch("/api/tasks/:id", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
-  const merged = { ...rows[0].data, ...(req.body || {}) };
+  const prev = rows[0].data; const patch = req.body || {};
+  const merged = { ...prev, ...patch };
+  if (patch.status && patch.status !== prev.status)
+    merged.activity = [...(prev.activity || []), { type: "status", text: `Estado: ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  if (patch.assignee && patch.assignee !== prev.assignee && patch.assignee !== req.user.id)
+    await notify(patch.assignee, `Te asignaron la tarea ${merged.id}: ${merged.title}`, "task:" + merged.id);
+  res.json(merged);
+});
+app.post("/api/tasks/:id/comment", auth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  const text = String((req.body || {}).text || "").trim();
+  if (!text) return res.status(400).json({ error: "Comentario vacío" });
+  const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
+  await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  // avisa al responsable si comenta otra persona
+  if (merged.assignee && merged.assignee !== req.user.id) await notify(merged.assignee, `Nuevo comentario en ${merged.id}`, "task:" + merged.id);
   res.json(merged);
 });
 app.delete("/api/tasks/:id", auth, async (req, res) => {
@@ -220,7 +278,7 @@ app.post("/api/users", auth, requireRole("admin"), async (req, res) => {
   const id = "u" + Date.now();
   const hash = bcrypt.hashSync(password || process.env.DEMO_PASSWORD || "ordengo123", 10);
   try {
-    await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active) VALUES($1,$2,$3,$4,$5,$6,true)",
+    await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword) VALUES($1,$2,$3,$4,$5,$6,true,true)",
       [id, name, email.toLowerCase(), hash, role || "tecnico", color || "#0ea5e9"]);
   } catch { return res.status(400).json({ error: "Ese correo ya está registrado" }); }
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [id]);

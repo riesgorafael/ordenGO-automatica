@@ -49,4 +49,10 @@ export const api = {
   deleteUser: (id) => req("/users/" + id, { method: "DELETE" }),
 
   analyze: (image) => req("/ai/analyze", { method: "POST", body: JSON.stringify({ image }) }),
+
+  notifications: () => req("/notifications"),
+  readNotification: (id) => req("/notifications/" + id + "/read", { method: "POST" }),
+  readAllNotifications: () => req("/notifications/read-all", { method: "POST" }),
+  commentOrder: (id, text) => req("/orders/" + id + "/comment", { method: "POST", body: JSON.stringify({ text }) }),
+  commentTask: (id, text) => req("/tasks/" + id + "/comment", { method: "POST", body: JSON.stringify({ text }) }),
 };

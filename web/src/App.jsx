@@ -5,6 +5,7 @@ import {
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
+  Bell, Home, MessageSquare, Copy, Link2,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { orderReceiptPDF, monthlyReportPDF } from "./pdf";
@@ -62,6 +63,10 @@ function downloadFile(name, text) {
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
+const daysSince = (iso) => { if (!iso) return 0; return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); };
+const STALE_DAYS = 4; // días sin cambios para marcar "estancada"
+const WIP_LIMITS = { "En progreso": 5, "En revisión": 3 }; // límites de trabajo en curso por columna
+const isStale = (t) => t.status !== "Hecho" && daysSince(t._updatedAt) >= STALE_DAYS;
 
 const Chip = ({ children, className = "" }) => (<span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
 const Box = ({ children, className = "" }) => (<div className={`rounded-xl border border-slate-200 bg-white ${className}`}>{children}</div>);
@@ -94,10 +99,15 @@ export default function App() {
   const [pProj, setPProj] = useState("all"); const [pQ, setPQ] = useState(""); const [pMine, setPMine] = useState(false);
   const [editing, setEditing] = useState(undefined);
   const [pwOpen, setPwOpen] = useState(false);
+  const [notifs, setNotifs] = useState([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [pStale, setPStale] = useState(false);
+  const [prefill, setPrefill] = useState(null);
 
   const boot = async () => {
     const d = await api.bootstrap();
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setOrders(d.orders); setTasks(d.tasks);
+    setNotifs(d.notifications || []);
   };
   useEffect(() => { (async () => {
     if (getToken()) { try { await boot(); } catch { setToken(null); } }
@@ -163,10 +173,36 @@ export default function App() {
   const patchUser = async (id, patch) => { const u = await api.updateUser(id, patch); setUsers((p) => p.map((x) => (x.id === id ? u : x))); };
   const removeUser = async (id) => { await api.deleteUser(id); setUsers((p) => p.filter((x) => x.id !== id)); };
 
+  /* Notificaciones */
+  const unread = notifs.filter((n) => !n.read).length;
+  const markRead = async (id) => { setNotifs((p) => p.map((n) => (n.id === id ? { ...n, read: true } : n))); try { await api.readNotification(id); } catch {} };
+  const markAllRead = async () => { setNotifs((p) => p.map((n) => ({ ...n, read: true }))); try { await api.readAllNotifications(); } catch {} };
+  const openNotif = (n) => {
+    markRead(n.id); setNotifOpen(false);
+    if (n.link && n.link.startsWith("task:")) { const t = tasks.find((x) => x.id === n.link.slice(5)); if (t) { setModule("projects"); setPTab("board"); setEditing(t); } }
+  };
+
+  /* Comentarios */
+  const commentOrder = async (id, text) => { const u = await api.commentOrder(id, text); setOrders((p) => p.map((o) => (o.id === id ? u : o))); return u; };
+  const commentTask = async (id, text) => { const u = await api.commentTask(id, text); setTasks((p) => p.map((t) => (t.id === id ? u : t))); return u; };
+
+  /* Duplicar orden / crear tarea desde orden */
+  const duplicateOrder = async (o) => {
+    const copy = { ...o, id: nextFolio(), status: "Borrador", signatureUrl: null, signedBy: "", noSignReason: "", photos: [], activity: [], createdAt: new Date().toISOString(), date: todayStr() };
+    delete copy._updatedAt;
+    try { const saved = await api.createOrder(copy); setOrders((p) => [saved, ...p]); setODetail(null); alert(`Orden duplicada como ${saved.id} (borrador).`); } catch (e) { err(e); }
+  };
+  const taskFromOrder = (o) => {
+    setODetail(null); setModule("projects"); setPTab("board");
+    setPrefill({ title: `Seguimiento OT ${o.id} — ${o.client}`, desc: `${o.equipo || ""}${o.sintoma ? " · " + o.sintoma : ""}`.trim(), order: o.id, project: projects[0]?.id || "" });
+    setEditing(null);
+  };
+
   if (module === "orders" && oView === "new")
     return <NewOrder ger={isMgr} me={me} folio={nextFolio()} clients={clients} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
 
   const modTabs = [
+    { id: "inicio", label: "Mi día", icon: Home },
     { id: "orders", label: "Órdenes", icon: ClipboardList },
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users }] : []),
@@ -184,6 +220,25 @@ export default function App() {
             {module === "orders" && <button onClick={() => setOView("new")} className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400"><Plus className="h-4 w-4" /> Orden</button>}
             {module === "projects" && <button onClick={() => setEditing(null)} className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
+            <div className="relative">
+              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" className="relative rounded-lg p-2 text-slate-300 hover:bg-slate-800">
+                <Bell className="h-4 w-4" />
+                {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{unread}</span>}
+              </button>
+              {notifOpen && (
+                <div className="absolute right-0 z-30 mt-2 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-lg">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2"><span className="text-sm font-semibold">Novedades</span>{unread > 0 && <button onClick={markAllRead} className="text-[11px] font-medium text-sky-600 hover:underline">Marcar todo leído</button>}</div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifs.length === 0 && <div className="px-3 py-6 text-center text-xs text-slate-400">Sin novedades</div>}
+                    {notifs.map((n) => (
+                      <button key={n.id} onClick={() => openNotif(n)} className={`block w-full border-b border-slate-50 px-3 py-2 text-left text-xs hover:bg-slate-50 ${n.read ? "text-slate-500" : "font-medium text-slate-800"}`}>
+                        <div className="flex items-start gap-2">{!n.read && <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />}<span className="flex-1">{n.text}</span></div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <button onClick={() => setPwOpen(true)} title="Cambiar contraseña" className="rounded-lg p-2 text-slate-300 hover:bg-slate-800"><KeyRound className="h-4 w-4" /></button>
             <button onClick={logout} title="Cerrar sesión" className="rounded-lg p-2 text-slate-300 hover:bg-slate-800"><LogOut className="h-4 w-4" /></button>
           </div>
@@ -198,6 +253,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-5">
+        {module === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { setModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
         {module === "orders" && (
           <>
             {isMgr && (
@@ -227,13 +283,14 @@ export default function App() {
                 <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20" /></div>
                 <button onClick={() => setPMine((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>
+                <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>
                 {isMgr && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-600"><Folder className="h-4 w-4" /> Proyecto</button>}
                 {isMgr && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
                 {isMgr && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
               </>)}
             </div>
             {(() => {
-              const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
+              const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (!pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               return pTab === "board" ? <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} /> : <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
             })()}
           </>
@@ -243,9 +300,10 @@ export default function App() {
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
       </main>
 
-      {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} />}
-      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} nextId={nextTaskId} onClose={() => setEditing(undefined)} onSave={onSaveTask} onDelete={onDeleteTask} />}
+      {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} me={me} />}
+      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
+      {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
 
       <style>{`.u-input{width:100%;border-radius:0.5rem;border:1px solid rgb(226 232 240);background:#fff;padding:0.5rem 0.625rem;font-size:0.875rem;color:#1e293b;outline:none}.u-input:focus{border-color:rgb(14 165 233);box-shadow:0 0 0 3px rgb(14 165 233/.15)}`}</style>
     </div>
@@ -280,9 +338,10 @@ function Login({ onLogin }) {
 const L2 = ({ label, children }) => <label className="block"><span className="mb-1 block text-xs font-medium text-slate-300">{label}</span>{children}</label>;
 
 /* ===================================== CAMBIAR CONTRASEÑA ===================================== */
-function ChangePassword({ onClose }) {
+function ChangePassword({ onClose, forced, onDone }) {
   const [cur, setCur] = useState(""); const [n1, setN1] = useState(""); const [n2, setN2] = useState("");
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(""); const [done, setDone] = useState(false);
+  const close = forced ? () => {} : onClose;
   const submit = async () => {
     setMsg("");
     if (n1.length < 6) { setMsg("La nueva contraseña debe tener al menos 6 caracteres."); return; }
@@ -293,13 +352,14 @@ function ChangePassword({ onClose }) {
     finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={close}>
       <div className="w-full max-w-sm rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Cambiar contraseña</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Cambiar contraseña</h3>{!forced && <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>}</div>
+        {forced && !done && <div className="mb-3 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">Por seguridad, define una contraseña nueva antes de continuar.</div>}
         {done ? (
           <div className="space-y-4">
             <div className="flex items-center gap-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700"><CheckCircle2 className="h-5 w-5" /> Contraseña actualizada correctamente.</div>
-            <button onClick={onClose} className="w-full rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400">Listo</button>
+            <button onClick={forced ? onDone : onClose} className="w-full rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400">Continuar</button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -314,6 +374,56 @@ function ChangePassword({ onClose }) {
     </div>
   );
 }
+
+/* ===================================== INICIO: MI DÍA ===================================== */
+function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
+  const myTasks = tasks.filter((t) => t.assignee === me.id && t.status !== "Hecho")
+    .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
+  const myOrders = orders.filter((o) => o.tech === me.name && o.status !== "Facturada");
+  const overdue = myTasks.filter(isOverdue).length;
+  const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
+  return (
+    <div className="space-y-5">
+      <div><h2 className="text-lg font-semibold text-slate-900">Hola, {me.name.split(" ")[0]}</h2><p className="text-sm text-slate-500">Esto es lo que tienes pendiente hoy.</p></div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Metric label="Mis tareas abiertas" value={myTasks.length} icon={LayoutGrid} tint="text-sky-600" />
+        <Metric label="Tareas vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" />
+        <Metric label="Mis órdenes activas" value={myOrders.length} icon={ClipboardList} tint="text-emerald-600" />
+        {ger && <Metric label="Por facturar" value={pend.length} icon={DollarSign} tint="text-amber-600" />}
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Panel title="Mis tareas">
+          <div className="space-y-2">
+            {myTasks.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin tareas pendientes</div>}
+            {myTasks.slice(0, 8).map((t) => (
+              <button key={t.id} onClick={() => onOpenTask(t)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
+                <div className="flex items-center gap-2">
+                  <Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip>
+                  <span className="truncate text-sm font-medium text-slate-800">{t.title}</span>
+                  {isOverdue(t) && <Chip className="ml-auto bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>}
+                  {!isOverdue(t) && isStale(t) && <Chip className="ml-auto bg-amber-50 text-amber-700 ring-amber-600/20">Estancada</Chip>}
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due}</span>}<span>· {t.status}</span></div>
+              </button>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Mis órdenes activas">
+          <div className="space-y-2">
+            {myOrders.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin órdenes activas</div>}
+            {myOrders.slice(0, 8).map((o) => (
+              <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
+                <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
+                <div className="mt-0.5 text-[11px] text-slate-400">{o.site} · {o.service} · {o.date}</div>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
 
 /* ===================================== ÓRDENES: HOME ===================================== */
 function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
@@ -438,7 +548,7 @@ function MonthlyReport({ orders }) {
 }
 
 /* ===================================== ÓRDENES: DETALLE ===================================== */
-function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDelete }) {
+function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, me }) {
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const needSign = next === "Aprobada" && !order.signatureUrl;
@@ -451,6 +561,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
   const t = orderTotals({ ...order, rate, materials: mats, laborBillable });
   const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || JSON.stringify(mats) !== JSON.stringify(order.materials));
   const savePrices = () => onUpdate(order.id, { rate: Number(rate) || 0, materials: mats.map((m) => ({ ...m, price: Number(m.price) || 0, qty: Number(m.qty) || 0 })), laborBillable });
+  const approveNoSign = () => { const r = prompt("Motivo para aprobar sin firma del cliente (ej. cliente ausente):"); if (r && r.trim()) onUpdate(order.id, { status: "Aprobada", noSignReason: r.trim() }); };
   return (
     <div className="fixed inset-0 z-30 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -458,6 +569,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
         <div className="space-y-4 p-5">
           <section><div className="text-base font-semibold text-slate-900">{order.client}</div><div className="text-sm text-slate-500">{order.site}{order.contact ? ` · ${order.contact}` : ""}</div><div className="mt-1 text-xs text-slate-500">{order.service} · {order.date}{order.tech ? ` · Técnico: ${order.tech}` : ""}</div>{order.location && <div className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{order.location.lat.toFixed(4)}, {order.location.lng.toFixed(4)}</div>}</section>
           {(order.equipo || order.sintoma || order.solucion) && (<section className="rounded-lg bg-slate-50 p-3 text-sm">{order.equipo && <p><span className="font-medium text-slate-700">Equipo:</span> {order.equipo}</p>}{order.sintoma && <p className="mt-1"><span className="font-medium text-slate-700">Síntoma:</span> {order.sintoma}</p>}{order.solucion && <p className="mt-1"><span className="font-medium text-slate-700">Trabajo:</span> {order.solucion}</p>}</section>)}
+          {order.noSignReason && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700">Cerrada sin firma. Motivo: {order.noSignReason}</div>}
           {order.photos && order.photos.length > 0 && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Evidencia</h4><div className="flex flex-wrap gap-2">{order.photos.map((p, i) => (<div key={i} className="relative"><img src={p.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span></div>))}</div></section>)}
           <section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Mano de obra y materiales</h4><div className="rounded-lg border border-slate-200 p-3 text-sm">
             <div className="flex items-center justify-between text-slate-600"><span>Horas de trabajo</span><span className="font-medium text-slate-800">{order.laborHours || 0} h{order.technicians ? ` · ${order.technicians} téc.` : ""}</span></div>
@@ -469,12 +581,15 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
           {!order.signatureUrl && order.status !== "Borrador" && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del cliente</h4><SignaturePad key={order.id} onChange={setSig} /><input value={sigBy} onChange={(e) => setSigBy(e.target.value)} placeholder="Nombre de quien firma" className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20" /><button disabled={!sig} onClick={() => onUpdate(order.id, { signatureUrl: sig, signedBy: sigBy })} className="mt-2 w-full rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400 disabled:opacity-50">Guardar firma</button></section>)}
           <section className="flex flex-wrap gap-2 pt-1">
             {canAdvance && <button disabled={needSign} onClick={() => onAdvance(order.id, next)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Marcar {next}</button>}
-            {needSign && <span className="self-center text-xs text-rose-600">Requiere firma del cliente para aprobar.</span>}
+            {needSign && <button onClick={approveNoSign} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
             {next === "Facturada" && !ger && <span className="self-center text-xs text-slate-400">La facturación la realiza Gerencia.</span>}
             <button onClick={() => orderReceiptPDF(order, ger)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Comprobante PDF</button>
-            {ger && <button onClick={() => onExport(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Exportar</button>}
+            {ger && onExport && <button onClick={() => onExport(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Exportar</button>}
+            {ger && onDuplicate && <button onClick={() => onDuplicate(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
+            {ger && onCreateTask && <button onClick={() => onCreateTask(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Link2 className="h-4 w-4" /> Crear tarea</button>}
             {ger && onDelete && <button onClick={() => onDelete(order.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Eliminar</button>}
           </section>
+          {onComment && <section className="border-t border-slate-100 pt-4"><ActivitySection entity={order} onSend={(text) => onComment(order.id, text)} /></section>}
         </div>
       </div>
     </div>
@@ -493,6 +608,7 @@ function NewOrder({ ger, me, folio, clients, onSave, onCancel }) {
   const [rate, setRate] = useState(DEFAULT_RATE); const [laborHours, setLaborHours] = useState(""); const [technicians, setTechnicians] = useState(1); const [laborBillable, setLaborBillable] = useState(true);
   const [materials, setMaterials] = useState([]); const [location, setLocation] = useState(null); const [geoMsg, setGeoMsg] = useState("");
   const [signatureUrl, setSignatureUrl] = useState(null); const [signedBy, setSignedBy] = useState("");
+  const [noSignReason, setNoSignReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false); const startRef = useRef(0); const [elapsed, setElapsed] = useState(0);
   useEffect(() => { if (!running) return; const t = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000); return () => clearInterval(t); }, [running]);
@@ -506,10 +622,10 @@ function NewOrder({ ger, me, folio, clients, onSave, onCancel }) {
   const client = clientMode === "existing" ? clients.find((c) => c.id === clientId) : { name: newClient.name, site: newClient.site };
   const preview = orderTotals({ laborHours, rate, laborBillable, materials });
   const canSave = client && client.name && (laborHours || materials.length || solucion);
-  const canComplete = canSave && !!signatureUrl;
+  const canComplete = canSave && (!!signatureUrl || !!noSignReason.trim());
   const save = async (status) => {
     setSaving(true);
-    const o = { id: folio, client: client.name, site: client.site || "", contact, tech, service, date: todayStr(), createdAt: new Date().toISOString(), equipo, sintoma, solucion, category, location, photos, signatureUrl, signedBy, laborHours: Number(laborHours) || 0, technicians: Number(technicians) || 1, rate: Number(rate) || DEFAULT_RATE, laborBillable, materials: materials.map((m) => ({ ...m, qty: Number(m.qty) || 0, price: Number(m.price) || 0 })), status };
+    const o = { id: folio, client: client.name, site: client.site || "", contact, tech, service, date: todayStr(), createdAt: new Date().toISOString(), equipo, sintoma, solucion, category, location, photos, signatureUrl, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), laborHours: Number(laborHours) || 0, technicians: Number(technicians) || 1, rate: Number(rate) || DEFAULT_RATE, laborBillable, materials: materials.map((m) => ({ ...m, qty: Number(m.qty) || 0, price: Number(m.price) || 0 })), status };
     if (clientMode === "new" && newClient.name) o._newClient = { id: "c" + Date.now(), name: newClient.name, site: newClient.site };
     await onSave(o); setSaving(false);
   };
@@ -545,10 +661,10 @@ function NewOrder({ ger, me, folio, clients, onSave, onCancel }) {
           <button onClick={addMaterial} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-sky-400 hover:text-sky-600"><Plus className="h-3.5 w-3.5" /> Agregar material</button>
           {!ger && <p className="mt-2 text-[11px] text-slate-400">Registra qué materiales usaste y en qué cantidad. Los precios los asigna Gerencia.</p>}
         </Section>
-        <Section title="Conformidad del cliente · obligatoria"><SignaturePad onChange={setSignatureUrl} /><input value={signedBy} onChange={(e) => setSignedBy(e.target.value)} placeholder="Nombre de quien firma" className="u-input mt-2" />{!signatureUrl && <p className="mt-1 text-[11px] text-amber-600">La firma del cliente es obligatoria para completar la orden.</p>}</Section>
+        <Section title="Conformidad del cliente"><SignaturePad onChange={setSignatureUrl} /><input value={signedBy} onChange={(e) => setSignedBy(e.target.value)} placeholder="Nombre de quien firma" className="u-input mt-2" />{!signatureUrl && (<div className="mt-2"><p className="mb-1 text-[11px] text-amber-600">Se recomienda la firma del cliente. Si no es posible, indica el motivo para poder completar igual:</p><input value={noSignReason} onChange={(e) => setNoSignReason(e.target.value)} placeholder="Motivo (ej. cliente ausente)" className="u-input" /></div>)}</Section>
         {ger && (<Box className="p-4"><div className="flex items-center justify-between text-sm text-slate-600"><span>Mano de obra</span><span>{money(preview.labor)}</span></div><div className="flex items-center justify-between text-sm text-slate-600"><span>Materiales</span><span>{money(preview.mats)}</span></div><div className="mt-1 flex items-center justify-between border-t border-slate-100 pt-1 text-base font-semibold text-slate-900"><span>Total</span><span>{money(preview.total)}</span></div></Box>)}
       </main>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto max-w-lg">{canSave && !signatureUrl && <div className="mb-2 flex items-center gap-1.5 text-[11px] text-amber-600"><FileSignature className="h-3.5 w-3.5" /> Falta la firma del cliente para completar. Puedes guardar como borrador.</div>}<div className="flex gap-2"><button disabled={saving} onClick={() => save("Borrador")} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">Guardar borrador</button><button onClick={() => save("Completada")} disabled={!canComplete || saving} className="flex-[2] inline-flex items-center justify-center gap-2 rounded-lg bg-sky-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-sky-400 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar y completar</button></div></div></div>
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto max-w-lg">{canSave && !signatureUrl && !noSignReason.trim() && <div className="mb-2 flex items-center gap-1.5 text-[11px] text-amber-600"><FileSignature className="h-3.5 w-3.5" /> Para completar, capta la firma o indica un motivo. También puedes guardar como borrador.</div>}<div className="flex gap-2"><button disabled={saving} onClick={() => save("Borrador")} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">Guardar borrador</button><button onClick={() => save("Completada")} disabled={!canComplete || saving} className="flex-[2] inline-flex items-center justify-center gap-2 rounded-lg bg-sky-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-sky-400 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar y completar</button></div></div></div>
       <style>{`.u-input{width:100%;border-radius:0.5rem;border:1px solid rgb(226 232 240);background:#fff;padding:0.5rem 0.625rem;font-size:0.875rem;color:#1e293b;outline:none}.u-input:focus{border-color:rgb(14 165 233);box-shadow:0 0 0 3px rgb(14 165 233/.15)}`}</style>
     </div>
   );
@@ -572,17 +688,21 @@ function SignaturePad({ onChange }) {
 function Board({ tasks, userById, onOpen, onMove }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {T_STATUS.map((st) => { const col = tasks.filter((t) => t.status === st); const m = T_STYLE[st]; return (
+      {T_STATUS.map((st) => { const col = tasks.filter((t) => t.status === st); const m = T_STYLE[st]; const limit = WIP_LIMITS[st]; const over = limit && col.length > limit; return (
         <div key={st} className={`rounded-xl border-t-4 ${m.col} bg-slate-50/60`}>
-          <div className="flex items-center justify-between px-3 py-2"><span className="text-sm font-semibold text-slate-700">{st}</span><span className="rounded-full bg-white px-2 text-xs font-medium text-slate-500 ring-1 ring-slate-200">{col.length}</span></div>
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm font-semibold text-slate-700">{st}</span>
+            <span className={`rounded-full px-2 text-xs font-medium ring-1 ${over ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-white text-slate-500 ring-slate-200"}`}>{col.length}{limit ? `/${limit}` : ""}</span>
+          </div>
+          {over && <div className="mx-2 mb-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] font-medium text-rose-700">Límite de trabajo en curso superado</div>}
           <div className="space-y-2 px-2 pb-3">
             {col.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin tareas</div>}
-            {col.map((t) => { const idx = T_STATUS.indexOf(t.status); return (
+            {col.map((t) => { const idx = T_STATUS.indexOf(t.status); const age = daysSince(t._updatedAt); return (
               <div key={t.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <button onClick={() => onOpen(t)} className="block w-full text-left">
-                  <div className="flex items-center gap-1.5"><Chip className={`${typeMeta[t.type]} ring-1 ring-inset ring-black/5`}>{t.type}</Chip>{isOverdue(t) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Vencida</Chip>}</div>
+                  <div className="flex flex-wrap items-center gap-1.5"><Chip className={`${typeMeta[t.type]} ring-1 ring-inset ring-black/5`}>{t.type}</Chip>{isOverdue(t) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Vencida</Chip>}{isStale(t) && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="h-3 w-3" />Estancada</Chip>}</div>
                   <div className="mt-1.5 text-sm font-medium leading-snug text-slate-800">{t.title}</div>
-                  <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due.slice(5)}</span>}</div>
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due.slice(5)}</span>}{t.status !== "Hecho" && t._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "hoy" : `hace ${age}d`}</span>}</div>
                 </button>
                 <div className="mt-2 flex items-center justify-between">
                   <div className="flex items-center gap-1.5"><Avatar user={userById(t.assignee)} size={22} /><Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip></div>
@@ -597,10 +717,35 @@ function Board({ tasks, userById, onOpen, onMove }) {
   );
 }
 
+/* Sección reutilizable de actividad y comentarios */
+function ActivitySection({ entity, onSend, userById }) {
+  const [act, setAct] = useState(entity.activity || []);
+  const [text, setText] = useState(""); const [busy, setBusy] = useState(false);
+  const send = async () => { const t = text.trim(); if (!t) return; setBusy(true); try { const upd = await onSend(t); setAct(upd.activity || []); setText(""); } catch {} finally { setBusy(false); } };
+  return (
+    <div>
+      <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Actividad y comentarios</h4>
+      <div className="mb-2 max-h-44 space-y-1.5 overflow-y-auto">
+        {act.length === 0 && <p className="text-xs text-slate-400">Sin actividad todavía.</p>}
+        {act.slice().reverse().map((a, i) => (
+          <div key={i} className={`rounded-lg px-2.5 py-1.5 text-xs ${a.type === "comment" ? "bg-sky-50 text-slate-700" : "bg-slate-50 text-slate-500"}`}>
+            <div className="flex items-center gap-1">{a.type === "comment" ? <MessageSquare className="h-3 w-3 text-sky-500" /> : <Clock className="h-3 w-3 text-slate-400" />}<span className="font-medium text-slate-700">{a.byName || "—"}</span><span className="ml-auto text-[10px] text-slate-400">{a.at ? new Date(a.at).toLocaleString("es-MX", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span></div>
+            <div className="mt-0.5">{a.text}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Escribe un comentario…" className="u-input flex-1" />
+        <button onClick={send} disabled={busy || !text.trim()} className="rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400 disabled:opacity-50">Enviar</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
-function TaskModal({ task, me, users, projects, canAssign, nextId, onClose, onSave, onDelete }) {
+function TaskModal({ task, me, users, projects, canAssign, nextId, onClose, onSave, onDelete, onComment, prefill }) {
   const editingExisting = !!task;
-  const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "" });
+  const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
   const save = () => { if (!f.title.trim()) return; onSave({ ...f, id: f.id || nextId(f.project), createdAt: f.createdAt || todayStr() }); };
   const assignable = canAssign ? users : users.filter((u) => u.id === me.id);
@@ -615,6 +760,7 @@ function TaskModal({ task, me, users, projects, canAssign, nextId, onClose, onSa
           <div className="grid grid-cols-3 gap-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} className="u-input">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} className="u-input">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} className="u-input">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
           <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} className="u-input" /></L>
         </div>
+        {editingExisting && onComment && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
         <div className="mt-5 flex gap-2">{editingExisting && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button><button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-sky-500 px-3 py-2 text-sm font-medium text-white hover:bg-sky-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button></div>
       </div>
     </div>

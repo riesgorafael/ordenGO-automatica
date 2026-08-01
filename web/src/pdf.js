@@ -1,13 +1,20 @@
 import { jsPDF } from "jspdf";
+import { LOGO, LOGO_RATIO } from "./logo";
 
-// Cambia por el nombre de tu empresa (o pásalo como parámetro más adelante).
-const COMPANY = "OrdenGO";
+// Ancho del logo en el PDF (mm)
+const LOGO_W = 42;
 
 const money = (n) => "$" + (Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function totals(o) {
   const labor = o.laborBillable ? (Number(o.laborHours) || 0) * (Number(o.rate) || 0) : 0;
   const mats = (o.materials || []).filter((m) => m.billable).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.price) || 0), 0);
   return { labor, mats, total: labor + mats };
+}
+// Dibuja el logo arriba a la izquierda; devuelve el alto ocupado
+function drawLogo(doc, M, y) {
+  const w = LOGO_W, h = w * LOGO_RATIO;
+  try { doc.addImage(LOGO, "PNG", M, y, w, h); } catch {}
+  return h;
 }
 
 export function orderReceiptPDF(order, ger) {
@@ -17,15 +24,15 @@ export function orderReceiptPDF(order, ger) {
   let y = 16;
   const brk = (need = 8) => { if (y + need > 285) { doc.addPage(); y = 20; } };
 
-  /* Encabezado */
-  doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(15, 23, 42);
-  doc.text(COMPANY, M, y);
+  /* Encabezado con logo */
+  const lh = drawLogo(doc, M, y - 4);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
   doc.text(priced ? "COMPROBANTE DE SERVICIO" : "CONSTANCIA DE TRABAJO", W - M, y, { align: "right" });
   y += 6;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   doc.text(`Folio: ${order.id}`, W - M, y, { align: "right" }); y += 4;
   doc.text(`Fecha: ${order.date || ""}`, W - M, y, { align: "right" });
+  y = Math.max(y, (y - 10) + lh) ; // asegura espacio bajo el logo
   doc.setDrawColor(226, 232, 240); doc.line(M, y + 2, W - M, y + 2); y += 9;
 
   /* Datos */
@@ -54,6 +61,27 @@ export function orderReceiptPDF(order, ger) {
   para("Síntoma:", order.sintoma);
   para("Trabajo realizado:", order.solucion);
   y += 2;
+
+  /* Registro fotográfico */
+  const fotos = (order.photos || []).filter((p) => p && p.url);
+  if (fotos.length) {
+    brk(40);
+    section("Registro fotográfico");
+    const gap = 4, cols = 3, iw = (W - 2 * M - gap * (cols - 1)) / cols, ih = iw * 0.75;
+    let cx = M, col = 0;
+    if (y + ih + 6 > 285) { doc.addPage(); y = 20; }
+    fotos.forEach((p) => {
+      if (col === cols) { col = 0; cx = M; y += ih + 8; if (y + ih + 6 > 285) { doc.addPage(); y = 20; } }
+      const fmt = /^data:image\/png/i.test(p.url) ? "PNG" : "JPEG";
+      try { doc.addImage(p.url, fmt, cx, y, iw, ih); } catch {}
+      doc.setDrawColor(226, 232, 240); doc.rect(cx, y, iw, ih);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
+      doc.text(String(p.cat || "").toUpperCase(), cx + 1, y + ih + 3.5);
+      cx += iw + gap; col++;
+    });
+    y += ih + 10;
+    doc.setTextColor(15, 23, 42);
+  }
 
   /* Materiales */
   if ((order.materials || []).length) {
@@ -126,12 +154,12 @@ export function monthlyReportPDF(month, monthLabel, rows, sum) {
   let drawHead = () => {};
   const brk = (need = 8) => { if (y + need > 285) { doc.addPage(); y = 20; drawHead(); } };
 
-  doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(15, 23, 42);
-  doc.text(COMPANY, M, y);
+  const lh = drawLogo(doc, M, y - 4);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
   doc.text("REPORTE MENSUAL POR CLIENTE", W - M, y, { align: "right" });
   y += 6; doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   doc.text(cap(monthLabel), W - M, y, { align: "right" });
+  y = Math.max(y, (y - 10) + lh);
   doc.setDrawColor(226, 232, 240); doc.line(M, y + 2, W - M, y + 2); y += 9;
 
   doc.setFontSize(9.5); doc.setTextColor(15, 23, 42);
