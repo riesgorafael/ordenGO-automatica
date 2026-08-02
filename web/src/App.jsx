@@ -75,6 +75,9 @@ function downloadFile(name, text) {
 }
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const todayStr = () => new Date().toISOString().slice(0, 10);
+const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const addCalendarDays = (date, days) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
+const startOfCalendarWeek = (date) => addCalendarDays(date, -((date.getDay() + 6) % 7));
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
 const dueLabel = (due) => {
   if (!due) return "Sin fecha";
@@ -196,6 +199,7 @@ export default function App() {
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
   const isOffice = me.role === "tecnico_oficina";
+  const activeProjectView = isMgr ? pTab : techTaskView;
   const userById = (id) => users.find((u) => u.id === id);
 
   /* Órdenes */
@@ -382,7 +386,7 @@ export default function App() {
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
-                {(isMgr ? [["board", "Tablero", LayoutGrid], ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid]]).map(([id, lb, Ic]) => {
+                {(isMgr ? [["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar], ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar]]).map(([id, lb, Ic]) => {
                   const active = isMgr ? pTab === id : techTaskView === id;
                   return <button key={id} onClick={() => isMgr ? setPTab(id) : setTechTaskView(id)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>;
                 })}
@@ -390,21 +394,22 @@ export default function App() {
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
                 <option value="all">Todos los proyectos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}
               </select>
-              {pTab === "board" && (<>
+              {activeProjectView !== "reports" && (<>
                 <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
-                {(isMgr || techTaskView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
-                <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>
-                {isMgr && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
-                {isMgr && pProj !== "all" && <button onClick={() => setDupProj(projects.find((p) => p.id === pProj))} title="Duplicar proyecto con sus tareas" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
-                {isMgr && pProj !== "all" && <button onClick={() => setAccessProj(projects.find((p) => p.id === pProj))} title="Gestionar accesos" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Users className="h-4 w-4" /> Accesos</button>}
-                {isMgr && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
-                {isMgr && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
+                {(isMgr || activeProjectView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
+                {activeProjectView === "board" && <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>}
+                {isMgr && activeProjectView === "board" && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
+                {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => setDupProj(projects.find((p) => p.id === pProj))} title="Duplicar proyecto con sus tareas" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
+                {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => setAccessProj(projects.find((p) => p.id === pProj))} title="Gestionar accesos" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Users className="h-4 w-4" /> Accesos</button>}
+                {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
+                {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
               </>)}
             </div>
             {(() => {
-              const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (!pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
+              const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && isMgr) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
+              if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name)} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr) return <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} />;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
               return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} userById={userById} onOpen={setEditing} onMove={moveTask} />;
@@ -1246,6 +1251,39 @@ function TechnicianBoard({ tasks, userById, onOpen, onMove }) {
     <div className="sm:hidden"><nav aria-label="Etapas de tareas" className="-mx-3 mb-3 flex gap-2 overflow-x-auto px-3 pb-1">{T_STATUS.map((status) => { const count = tasks.filter((task) => task.status === status).length; return <button key={status} onClick={() => setMobileStatus(status)} aria-pressed={mobileStatus === status} className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${mobileStatus === status ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}>{status}<span className="rounded-full bg-white px-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">{count}</span></button>; })}</nav><TaskColumn status={mobileStatus} tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} roomy /></div>
     <div className="hidden sm:block"><Board tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} /></div>
   </>;
+}
+
+function WorkCalendar({ tasks, orders, projects, userById, onOpenTask, onOpenOrder, showOrders }) {
+  const initial = new Date(`${todayStr()}T12:00:00`);
+  const [cursor, setCursor] = useState(initial);
+  const [selected, setSelected] = useState(todayStr());
+  const projectById = (id) => projects.find((project) => project.id === id);
+  const items = useMemo(() => [
+    ...tasks.filter((task) => task.due).map((task) => ({ id: task.id, kind: "task", date: task.due, title: task.title, meta: `${projectById(task.project)?.key || task.id} · ${task.status}`, source: task })),
+    ...(showOrders ? orders.filter((order) => order.date).map((order) => ({ id: order.id, kind: "order", date: order.date, title: order.client, meta: `${order.id} · ${order.service}`, source: order })) : []),
+  ], [tasks, orders, projects, showOrders]);
+  const byDate = useMemo(() => items.reduce((map, item) => { if (!map[item.date]) map[item.date] = []; map[item.date].push(item); return map; }, {}), [items]);
+  const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 12);
+  const calendarStart = startOfCalendarWeek(firstOfMonth);
+  const monthDays = Array.from({ length: 42 }, (_, index) => addCalendarDays(calendarStart, index));
+  const selectedDate = new Date(`${selected}T12:00:00`);
+  const weekStart = startOfCalendarWeek(selectedDate);
+  const weekDays = Array.from({ length: 7 }, (_, index) => addCalendarDays(weekStart, index));
+  const selectedItems = byDate[selected] || [];
+  const noDate = tasks.filter((task) => !task.due && task.status !== "Hecho").length;
+  const chooseDate = (date) => { setSelected(dateKey(date)); setCursor(new Date(date.getFullYear(), date.getMonth(), 1, 12)); };
+  const moveMonth = (amount) => { const next = new Date(cursor.getFullYear(), cursor.getMonth() + amount, 1, 12); setCursor(next); setSelected(dateKey(next)); };
+  const moveWeek = (amount) => chooseDate(addCalendarDays(selectedDate, amount * 7));
+  const goToday = () => { setCursor(initial); setSelected(todayStr()); };
+  const openItem = (item) => item.kind === "task" ? onOpenTask(item.source) : onOpenOrder(item.source);
+  return <div className="space-y-4">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-3 sm:px-4"><div className="min-w-0 flex-1"><h2 className="text-base font-semibold capitalize text-slate-900">{cursor.toLocaleDateString("es-AR", { month: "long", year: "numeric" })}</h2><p className="text-[11px] text-slate-500"><span className="font-medium text-brand-600">Tareas</span> y {showOrders ? <span className="font-medium text-amber-600">órdenes programadas</span> : "agenda asignada"}</p></div><button onClick={goToday} className="min-h-10 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600">Hoy</button><div className="flex gap-1"><button onClick={() => moveMonth(-1)} aria-label="Mes anterior" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500"><ChevronLeft className="h-4 w-4" /></button><button onClick={() => moveMonth(1)} aria-label="Mes siguiente" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500"><ChevronRight className="h-4 w-4" /></button></div></div>
+      <div className="sm:hidden"><div className="flex items-center justify-between px-3 py-2"><button onClick={() => moveWeek(-1)} aria-label="Semana anterior" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500"><ChevronLeft className="h-4 w-4" /></button><span className="text-xs font-medium text-slate-500">Semana del {weekStart.toLocaleDateString("es-AR", { day: "2-digit", month: "short" })}</span><button onClick={() => moveWeek(1)} aria-label="Semana siguiente" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500"><ChevronRight className="h-4 w-4" /></button></div><div className="grid grid-cols-7 gap-1 px-2 pb-3">{weekDays.map((date) => { const key = dateKey(date); const count = (byDate[key] || []).length; const active = key === selected; return <button key={key} onClick={() => chooseDate(date)} aria-pressed={active} className={`min-w-0 rounded-lg px-1 py-2 text-center ${active ? "bg-brand-500 text-white" : "bg-slate-50 text-slate-600"}`}><span className="block text-[9px] font-medium uppercase">{date.toLocaleDateString("es-AR", { weekday: "short" }).slice(0, 2)}</span><span className="mt-0.5 block text-sm font-semibold">{date.getDate()}</span><span className={`mx-auto mt-1 block h-1.5 w-1.5 rounded-full ${count ? (active ? "bg-white" : "bg-brand-500") : "bg-transparent"}`} /></button>; })}</div></div>
+      <div className="hidden sm:block"><div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">{["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((day) => <div key={day} className="px-2 py-2 text-center text-[11px] font-semibold uppercase text-slate-400">{day}</div>)}</div><div className="grid grid-cols-7">{monthDays.map((date) => { const key = dateKey(date); const dayItems = byDate[key] || []; const inMonth = date.getMonth() === cursor.getMonth(); const active = key === selected; return <button key={key} onClick={() => chooseDate(date)} className={`min-h-24 border-b border-r border-slate-100 p-1.5 text-left align-top hover:bg-slate-50 ${active ? "bg-brand-50/60 ring-2 ring-inset ring-brand-400" : ""}`}><span className={`grid h-6 w-6 place-items-center rounded-full text-xs font-semibold ${key === todayStr() ? "bg-brand-500 text-white" : inMonth ? "text-slate-700" : "text-slate-300"}`}>{date.getDate()}</span><span className="mt-1 block space-y-1">{dayItems.slice(0, 3).map((item) => <span key={`${item.kind}-${item.id}`} className={`block truncate rounded px-1.5 py-1 text-[10px] font-medium ${item.kind === "task" ? "bg-brand-50 text-brand-700" : "bg-amber-50 text-amber-700"}`}>{item.kind === "order" ? "OT · " : ""}{item.title}</span>)}{dayItems.length > 3 && <span className="block text-[10px] font-medium text-slate-400">+{dayItems.length - 3} más</span>}</span></button>; })}</div></div>
+    </section>
+    <section className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4"><div className="mb-3 flex flex-wrap items-center gap-2"><Calendar className="h-4 w-4 text-brand-600" /><h3 className="text-sm font-semibold capitalize text-slate-900">{selectedDate.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}</h3><span className="rounded-full bg-slate-100 px-2 text-xs text-slate-500">{selectedItems.length}</span>{noDate > 0 && <span className="ml-auto text-[11px] text-amber-600">{noDate} tarea(s) sin fecha</span>}</div><div className="space-y-2">{!selectedItems.length && <div className="rounded-lg border border-dashed border-slate-200 py-7 text-center text-xs text-slate-400">No hay trabajo programado para este día.</div>}{selectedItems.map((item) => <button key={`${item.kind}-${item.id}`} onClick={() => openItem(item)} className="flex min-h-14 w-full items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:bg-slate-50"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${item.kind === "task" ? "bg-brand-50 text-brand-600" : "bg-amber-50 text-amber-600"}`}>{item.kind === "task" ? <ListTodo className="h-4 w-4" /> : <ClipboardList className="h-4 w-4" />}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-800">{item.title}</span><span className="block truncate text-xs text-slate-500">{item.meta}</span></span>{item.kind === "task" && <Avatar user={userById(item.source.assignee)} size={26} />}<ChevronRight className="h-4 w-4 shrink-0 text-slate-300" /></button>)}</div></section>
+  </div>;
 }
 
 /* Sección reutilizable de actividad y comentarios */
