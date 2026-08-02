@@ -116,6 +116,7 @@ export default function App() {
   const [pStale, setPStale] = useState(false);
   const [prefill, setPrefill] = useState(null);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
+  const [dupProj, setDupProj] = useState(null); // proyecto a duplicar
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type }]); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500); };
@@ -186,6 +187,9 @@ export default function App() {
   };
   const saveAccess = async (id, allowedUsers) => {
     try { const p = await api.updateProject(id, { allowedUsers }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); setAccessProj(null); toast("Accesos actualizados", "success"); } catch (e) { err(e); }
+  };
+  const doDuplicate = async (id, opts) => {
+    try { const { project, tasks: newTasks } = await api.duplicateProject(id, opts); setProjects((x) => [...x, project]); setTasks((x) => [...newTasks, ...x]); setDupProj(null); setPProj(project.id); toast(`Proyecto duplicado (${newTasks.length} tareas)`, "success"); } catch (e) { err(e); }
   };
 
   /* Equipo */
@@ -325,6 +329,7 @@ export default function App() {
                 <button onClick={() => setPMine((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>
                 <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>
                 {isMgr && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
+                {isMgr && pProj !== "all" && <button onClick={() => setDupProj(projects.find((p) => p.id === pProj))} title="Duplicar proyecto con sus tareas" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
                 {isMgr && pProj !== "all" && <button onClick={() => setAccessProj(projects.find((p) => p.id === pProj))} title="Gestionar accesos" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Users className="h-4 w-4" /> Accesos</button>}
                 {isMgr && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
                 {isMgr && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
@@ -346,6 +351,7 @@ export default function App() {
       {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} canDelete={isMgr} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
+      {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
 
       {/* Barra de navegación inferior (móvil) */}
@@ -1146,6 +1152,42 @@ function ProjectAccess({ project, users, onClose, onSave }) {
         <div className="mt-4 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
           <button onClick={() => onSave(project.id, [...sel])} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400">Guardar accesos</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================================== DUPLICAR PROYECTO ===================================== */
+function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) {
+  const people = users.filter((u) => u.active);
+  const suggestKey = (project.key || "PRJ");
+  const [name, setName] = useState(`${project.name} (copia)`);
+  const [key, setKey] = useState(suggestKey);
+  const [assignee, setAssignee] = useState("");
+  const [resetStatus, setResetStatus] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const go = async () => { setBusy(true); await onDuplicate(project.id, { name: name.trim() || `${project.name} (copia)`, key: key.trim() || suggestKey, assignee: assignee || null, resetStatus }); setBusy(false); };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Duplicar proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <p className="mb-4 text-sm text-slate-500">Se creará una copia de <span className="font-medium text-slate-700">{project.name}</span> con sus {tasksCount} tarea(s). Podés reasignarlas todas a una persona.</p>
+        <div className="space-y-3">
+          <L label="Nombre del nuevo proyecto"><input value={name} onChange={(e) => setName(e.target.value)} className="u-input" /></L>
+          <L label="Clave (aparece en el ID de las tareas)"><input value={key} onChange={(e) => setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} className="u-input font-mono" /></L>
+          <L label="Asignar todas las tareas a">
+            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="u-input">
+              <option value="">— Mantener responsables actuales —</option>
+              {people.map((u) => <option key={u.id} value={u.id}>{u.name} · {ROLES[u.role]}</option>)}
+            </select>
+          </L>
+          <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={resetStatus} onChange={(e) => setResetStatus(e.target.checked)} className="h-4 w-4" /> Reiniciar todas las tareas en "Por hacer"</label>
+          {assignee && <p className="rounded-lg bg-brand-50 p-2.5 text-[11px] text-brand-700">La persona asignada tendrá acceso automático al nuevo proyecto.</p>}
+        </div>
+        <div className="mt-5 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button onClick={go} disabled={busy} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Duplicar</button>
         </div>
       </div>
     </div>

@@ -144,6 +144,9 @@ PORT = 3000
 - Inventario de repuestos con precio, costo, stock y stock mínimo; aviso y badge de bajo stock; autocompletado de materiales al crear órdenes.
 - Corrección de QA: "Por facturar" cuenta solo Completada + Aprobada (coherente en todas las vistas).
 
+## Duplicar proyecto
+- Copiar un proyecto con todas sus tareas desde el botón "Duplicar" (gerencia/admin), con opción de renombrar, cambiar la clave, reasignar todas las tareas a una persona y reiniciar los estados en "Por hacer". La persona asignada obtiene acceso automático. Ideal para proyectos-plantilla repetidos por persona.
+
 ## Control de acceso por proyecto
 - El administrador/gerencia define, por proyecto, qué técnicos (campo u oficina) pueden verlo (botón "Accesos" en Proyectos).
 - Enforcement en el servidor: los técnicos solo reciben los proyectos y las tareas habilitados; no pueden ver, crear, editar ni comentar tareas de proyectos a los que no tienen acceso.

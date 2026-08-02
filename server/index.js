@@ -252,6 +252,35 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
   await pool.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
   res.status(204).end();
 });
+// Duplica un proyecto con todas sus tareas; permite renombrar, cambiar clave, accesos y reasignar
+app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const src = (await pool.query("SELECT data FROM projects WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!src) return res.status(404).json({ error: "No existe" });
+  const body = req.body || {};
+  const key = (String(body.key || src.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)) || "PRJ";
+  const newId = "p" + Date.now();
+  const assignee = body.assignee || null;                 // reasignar todas las tareas (opcional)
+  const resetStatus = body.resetStatus !== false;         // por defecto, arranca en "Por hacer"
+  const allowedUsers = Array.isArray(body.allowedUsers) ? body.allowedUsers : (assignee ? [assignee] : (src.allowedUsers || []));
+  const project = { ...src, id: newId, key, name: body.name || `${src.name} (copia)`, allowedUsers };
+  await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [newId, project]);
+  // Copiar tareas del origen, en orden, renumerando por la nueva clave
+  const srcTasks = (await pool.query("SELECT data FROM tasks")).rows.map((r) => r.data)
+    .filter((t) => t.project === req.params.id)
+    .sort((a, b) => (parseInt(String(a.id).split("-")[1], 10) || 0) - (parseInt(String(b.id).split("-")[1], 10) || 0));
+  const newTasks = [];
+  let i = 1;
+  for (const t of srcTasks) {
+    const nt = { ...t, id: `${key}-${i}`, project: newId, activity: [], createdAt: new Date().toISOString() };
+    if (assignee) nt.assignee = assignee;
+    if (resetStatus) nt.status = "Por hacer";
+    delete nt._updatedAt;
+    await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [nt.id, nt]);
+    newTasks.push(nt); i++;
+  }
+  if (assignee) await notify(assignee, `Se te asignó el proyecto ${project.name} (${newTasks.length} tareas)`, null);
+  res.json({ project, tasks: newTasks });
+});
 
 /* ------------------------------------------------ Repuestos / Inventario ------------------------------------------------ */
 app.post("/api/parts", auth, requireRole("admin", "gerente"), async (req, res) => {

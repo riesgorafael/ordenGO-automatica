@@ -45,6 +45,7 @@ export const api = {
   createProject: (p) => req("/projects", { method: "POST", body: JSON.stringify(p) }),
   updateProject: (id, patch) => req("/projects/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteProject: (id) => req("/projects/" + id, { method: "DELETE" }),
+  duplicateProject: (id, opts) => req("/projects/" + id + "/duplicate", { method: "POST", body: JSON.stringify(opts || {}) }),
 
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),
   updateTask: (id, patch) => req("/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
