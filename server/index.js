@@ -123,6 +123,14 @@ function auth(req, res, next) {
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: "No autorizado" });
 // Roles "técnicos" (campo u oficina): nunca ven importes ni el estado "Facturada"
 const isTec = (r) => r === "tecnico" || r === "tecnico_oficina";
+// ¿El usuario (si es técnico) tiene permiso sobre este proyecto?
+async function tecCanProject(user, projectId) {
+  if (!isTec(user.role)) return true;
+  if (!projectId) return false;
+  const { rows } = await pool.query("SELECT data FROM projects WHERE id=$1", [projectId]);
+  const p = rows[0]?.data;
+  return !!(p && Array.isArray(p.allowedUsers) && p.allowedUsers.includes(user.id));
+}
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
 app.post("/api/auth/login", async (req, res) => {
@@ -160,13 +168,18 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     pool.query("SELECT data FROM parts ORDER BY data->>'name'"),
   ]);
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
+  const allProjects = pr.rows.map((r) => r.data);
+  // Los técnicos (campo/oficina) solo ven los proyectos que el administrador les habilitó.
+  const canSeeProject = (p) => !tec || (Array.isArray(p.allowedUsers) && p.allowedUsers.includes(req.user.id));
+  const visibleProjects = allProjects.filter(canSeeProject);
+  const allowedProjectIds = new Set(visibleProjects.map((p) => p.id));
   res.json({
     me: pubUser(me.rows[0]),
     users: u.rows.map(pubUser),
     clients: cl.rows.map((r) => r.data),
-    projects: pr.rows.map((r) => r.data),
+    projects: visibleProjects,
     orders: or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
-    tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !tec || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
   });
@@ -320,6 +333,7 @@ app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req,
 /* ------------------------------------------------ Tareas ------------------------------------------------ */
 app.post("/api/tasks", auth, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
+  if (!(await tecCanProject(req.user, t.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   const existing = (await pool.query("SELECT data FROM tasks WHERE id=$1", [t.id])).rows[0]?.data;
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [t.id, t]);
   // Notifica al responsable si es una asignación nueva (a otra persona)
@@ -331,6 +345,7 @@ app.patch("/api/tasks/:id", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const prev = rows[0].data; const patch = req.body || {};
+  if (!(await tecCanProject(req.user, prev.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   const merged = { ...prev, ...patch };
   if (patch.status && patch.status !== prev.status)
     merged.activity = [...(prev.activity || []), { type: "status", text: `Estado: ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
@@ -342,6 +357,7 @@ app.patch("/api/tasks/:id", auth, async (req, res) => {
 app.post("/api/tasks/:id/comment", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  if (!(await tecCanProject(req.user, rows[0].data.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   const text = String((req.body || {}).text || "").trim();
   if (!text) return res.status(400).json({ error: "Comentario vacío" });
   const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };

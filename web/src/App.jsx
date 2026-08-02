@@ -115,6 +115,7 @@ export default function App() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [pStale, setPStale] = useState(false);
   const [prefill, setPrefill] = useState(null);
+  const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type }]); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500); };
@@ -182,6 +183,9 @@ export default function App() {
     const n = tasks.filter((t) => t.project === id).length;
     if (!window.confirm(`¿Eliminar el proyecto "${cur.name}"${n ? ` y sus ${n} tarea(s)` : ""}? Esta acción no se puede deshacer.`)) return;
     try { await api.deleteProject(id); setProjects((x) => x.filter((y) => y.id !== id)); setTasks((x) => x.filter((t) => t.project !== id)); setPProj("all"); } catch (e) { err(e); }
+  };
+  const saveAccess = async (id, allowedUsers) => {
+    try { const p = await api.updateProject(id, { allowedUsers }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); setAccessProj(null); toast("Accesos actualizados", "success"); } catch (e) { err(e); }
   };
 
   /* Equipo */
@@ -308,7 +312,7 @@ export default function App() {
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
-                {[["board", "Tablero", LayoutGrid], ["reports", "Reportes", BarChart3]].map(([id, lb, Ic]) => (
+                {[["board", "Tablero", LayoutGrid], ...(isMgr ? [["reports", "Reportes", BarChart3]] : [])].map(([id, lb, Ic]) => (
                   <button key={id} onClick={() => setPTab(id)} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium ${pTab === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>
                 ))}
               </div>
@@ -321,13 +325,14 @@ export default function App() {
                 <button onClick={() => setPMine((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>
                 <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>
                 {isMgr && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
+                {isMgr && pProj !== "all" && <button onClick={() => setAccessProj(projects.find((p) => p.id === pProj))} title="Gestionar accesos" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Users className="h-4 w-4" /> Accesos</button>}
                 {isMgr && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
                 {isMgr && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
               </>)}
             </div>
             {(() => {
               const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (!pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
-              return pTab === "board" ? <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} /> : <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
+              return (pTab === "reports" && isMgr) ? <Reports tasks={vis} users={users} projects={projects} proj={pProj} /> : <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} />;
             })()}
           </>
         )}
@@ -340,6 +345,7 @@ export default function App() {
       {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} me={me} />}
       {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
+      {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
 
       {/* Barra de navegación inferior (móvil) */}
@@ -1086,6 +1092,35 @@ function ChartBox({ data }) {
 }
 
 /* ===================================== EQUIPO (ADMIN) ===================================== */
+/* ===================================== ACCESO POR PROYECTO ===================================== */
+function ProjectAccess({ project, users, onClose, onSave }) {
+  const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina"));
+  const [sel, setSel] = useState(new Set(project.allowedUsers || []));
+  const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Accesos del proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá qué técnicos pueden ver este proyecto y sus tareas. La gerencia siempre lo ve.</p>
+        <div className="space-y-1.5">
+          {techs.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">No hay técnicos cargados.</div>}
+          {techs.map((u) => (
+            <label key={u.id} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 p-2.5 hover:bg-slate-50">
+              <input type="checkbox" checked={sel.has(u.id)} onChange={() => toggle(u.id)} className="h-4 w-4" />
+              <Avatar user={u} size={26} />
+              <div className="min-w-0 flex-1"><div className="text-sm font-medium text-slate-800">{u.name}</div><div className="text-[11px] text-slate-400">{ROLES[u.role]}</div></div>
+            </label>
+          ))}
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button onClick={() => onSave(project.id, [...sel])} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400">Guardar accesos</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ===================================== INVENTARIO / REPUESTOS ===================================== */
 function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" });
