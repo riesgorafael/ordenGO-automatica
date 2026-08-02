@@ -343,7 +343,7 @@ export default function App() {
       </main>
 
       {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} me={me} />}
-      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
+      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} canDelete={isMgr} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
@@ -1047,7 +1047,7 @@ function ActivitySection({ entity, onSend, userById }) {
 }
 
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
-function TaskModal({ task, me, users, projects, canAssign, nextId, onClose, onSave, onDelete, onComment, prefill }) {
+function TaskModal({ task, me, users, projects, canAssign, canDelete, nextId, onClose, onSave, onDelete, onComment, prefill }) {
   const editingExisting = !!task;
   const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
@@ -1065,7 +1065,7 @@ function TaskModal({ task, me, users, projects, canAssign, nextId, onClose, onSa
           <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} className="u-input" /></L>
         </div>
         {editingExisting && onComment && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
-        <div className="mt-5 flex gap-2">{editingExisting && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button><button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button></div>
+        <div className="mt-5 flex gap-2">{editingExisting && canDelete && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button><button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button></div>
       </div>
     </div>
   );

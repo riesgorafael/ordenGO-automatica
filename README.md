@@ -144,6 +144,12 @@ PORT = 3000
 - Inventario de repuestos con precio, costo, stock y stock mínimo; aviso y badge de bajo stock; autocompletado de materiales al crear órdenes.
 - Corrección de QA: "Por facturar" cuenta solo Completada + Aprobada (coherente en todas las vistas).
 
+## Control de acceso por proyecto
+- El administrador/gerencia define, por proyecto, qué técnicos (campo u oficina) pueden verlo (botón "Accesos" en Proyectos).
+- Enforcement en el servidor: los técnicos solo reciben los proyectos y las tareas habilitados; no pueden ver, crear, editar ni comentar tareas de proyectos a los que no tienen acceso.
+- Por defecto un proyecto nuevo no es visible para ningún técnico hasta que se le otorga acceso (confidencial por defecto).
+- La pestaña "Reportes" de Proyectos (datos por usuario) queda reservada a gerencia/administración.
+
 ## Roles
 - Administrador, Gerencia/Gerente, Técnico de campo y **Técnico de oficina** (nuevo): este último solo accede a "Mi día" y "Proyectos", y no ve importes.
 

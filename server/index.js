@@ -366,7 +366,7 @@ app.post("/api/tasks/:id/comment", auth, async (req, res) => {
   if (merged.assignee && merged.assignee !== req.user.id) await notify(merged.assignee, `Nuevo comentario en ${merged.id}`, "task:" + merged.id);
   res.json(merged);
 });
-app.delete("/api/tasks/:id", auth, async (req, res) => {
+app.delete("/api/tasks/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   await pool.query("DELETE FROM tasks WHERE id=$1", [req.params.id]); res.status(204).end();
 });
 
