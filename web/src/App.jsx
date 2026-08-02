@@ -1231,12 +1231,21 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
                 </div>
               );
               return (
-                <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
-                  <div className="min-w-0 basis-full flex-1 sm:basis-auto"><div className="break-words text-sm font-semibold text-slate-800">{p.name}</div><div className="break-words text-xs text-slate-500">Venta {money(p.price)} · Costo {money(p.cost)}{margin != null && <span className="text-emerald-600"> · margen {margin}%</span>}</div></div>
-                  <span className={`rounded-md px-2 py-1 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
-                  <span className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">Mín: {p.minStock}</span>
-                  <button onClick={() => startEdit(p)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
-                  <button onClick={() => del(p)} title="Eliminar" className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                <div key={p.id} className={`rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                  <div className="min-w-0">
+                    <div className="break-words text-sm font-semibold text-slate-800">{p.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <span>Venta <b className="font-medium text-slate-700">{money(p.price)}</b></span>
+                      <span>Costo <b className="font-medium text-slate-700">{money(p.cost)}</b></span>
+                      {margin != null && <span className="font-medium text-emerald-600">Margen {margin}%</span>}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex w-full flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3">
+                    <span className={`rounded-md px-2 py-1.5 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
+                    <span className="rounded-md border border-slate-200 bg-white/60 px-2 py-1.5 text-xs text-slate-500">Mín: {p.minStock}</span>
+                    <button onClick={() => startEdit(p)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
+                    <button onClick={() => del(p)} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                  </div>
                 </div>
               );
             })}
