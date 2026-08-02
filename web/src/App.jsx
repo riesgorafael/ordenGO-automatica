@@ -76,6 +76,17 @@ function downloadFile(name, text) {
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
+const dueLabel = (due) => {
+  if (!due) return "Sin fecha";
+  const today = new Date(`${todayStr()}T12:00:00`);
+  const target = new Date(`${due}T12:00:00`);
+  const days = Math.round((target - today) / 86400000);
+  if (days === 0) return "Hoy";
+  if (days === 1) return "Mañana";
+  if (days === -1) return "Venció ayer";
+  if (days < 0) return `Venció hace ${Math.abs(days)} días`;
+  return target.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
+};
 const daysSince = (iso) => { if (!iso) return 0; return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); };
 const STALE_DAYS = 4; // días sin cambios para marcar "estancada"
 const WIP_LIMITS = { "En progreso": 5, "En revisión": 3 }; // límites de trabajo en curso por columna
@@ -113,6 +124,7 @@ export default function App() {
   const [oQ, setOQ] = useState(savedOrderFilters.q); const [oStatus, setOStatus] = useState(savedOrderFilters.status); const [oBillable, setOBillable] = useState(savedOrderFilters.billable);
   const [oTab, setOTab] = useState("list");
   const [pTab, setPTab] = useState("board");
+  const [techTaskView, setTechTaskView] = useState(() => { try { return localStorage.getItem("ordengo_tech_task_view") || "work"; } catch { return "work"; } });
   const [pProj, setPProj] = useState(savedProjectFilters.project); const [pQ, setPQ] = useState(savedProjectFilters.q); const [pMine, setPMine] = useState(savedProjectFilters.mine);
   const [editing, setEditing] = useState(undefined);
   const [pwOpen, setPwOpen] = useState(false);
@@ -144,6 +156,7 @@ export default function App() {
   })(); }, []);
   useEffect(() => { try { localStorage.setItem("ordengo_order_filters", JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} }, [oQ, oStatus, oBillable]);
   useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} }, [pProj, pQ, pMine, pStale]);
+  useEffect(() => { try { localStorage.setItem("ordengo_tech_task_view", techTaskView); } catch {} }, [techTaskView]);
 
   useEffect(() => {
     if (!online || !me || !offlineCount) return;
@@ -359,9 +372,10 @@ export default function App() {
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
-                {[["board", "Tablero", LayoutGrid], ...(isMgr ? [["reports", "Reportes", BarChart3]] : [])].map(([id, lb, Ic]) => (
-                  <button key={id} onClick={() => setPTab(id)} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium ${pTab === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>
-                ))}
+                {(isMgr ? [["board", "Tablero", LayoutGrid], ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid]]).map(([id, lb, Ic]) => {
+                  const active = isMgr ? pTab === id : techTaskView === id;
+                  return <button key={id} onClick={() => isMgr ? setPTab(id) : setTechTaskView(id)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>;
+                })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
                 <option value="all">Todos los proyectos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}
@@ -369,7 +383,7 @@ export default function App() {
               {pTab === "board" && (<>
                 <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
-                <button onClick={() => setPMine((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>
+                {(isMgr || techTaskView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
                 <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>
                 {isMgr && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
                 {isMgr && pProj !== "all" && <button onClick={() => setDupProj(projects.find((p) => p.id === pProj))} title="Duplicar proyecto con sus tareas" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
@@ -380,7 +394,10 @@ export default function App() {
             </div>
             {(() => {
               const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (!pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
-              return (pTab === "reports" && isMgr) ? <Reports tasks={vis} users={users} projects={projects} proj={pProj} /> : isMgr ? <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} /> : <FieldTaskList tasks={vis} projects={projects} onOpen={setEditing} onMove={moveTask} />;
+              if (pTab === "reports" && isMgr) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
+              if (isMgr) return <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} />;
+              const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
+              return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} userById={userById} onOpen={setEditing} onMove={moveTask} />;
             })()}
           </>
         )}
@@ -1187,39 +1204,38 @@ function FieldTaskList({ tasks, projects, onOpen, onMove }) {
     { id: "upcoming", title: "Próximas", items: open.filter((t) => !isOverdue(t) && t.due !== todayStr() && t.status !== "En progreso"), tone: "border-slate-200 bg-white", icon: ListTodo },
   ];
   const projectById = (id) => projects.find((p) => p.id === id);
-  return <div className="space-y-4">{groups.map(({ id, title, items, tone, icon: Icon }) => items.length > 0 && <section key={id}><div className="mb-2 flex items-center gap-2"><Icon className="h-4 w-4 text-slate-500" /><h3 className="text-sm font-semibold text-slate-800">{title}</h3><span className="rounded-full bg-slate-200 px-2 text-xs text-slate-600">{items.length}</span></div><div className="space-y-2">{items.map((task) => { const index = T_STATUS.indexOf(task.status); return <article key={task.id} className={`rounded-xl border p-3 ${tone}`}><button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><Chip className={`${prioMeta[task.priority]} ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip>{task._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente</Chip>}</div><h4 className="mt-2 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><p className="mt-1 text-xs text-slate-500">{projectById(task.project)?.name || task.id}{task.due ? ` · ${task.due}` : ""}</p></button><div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3"><span className="text-xs font-medium text-slate-600">{task.status}</span><button onClick={() => onOpen(task)} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Ver detalle</button>{index < T_STATUS.length - 1 && <button onClick={() => onMove(task.id, 1)} className="rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white">Avanzar</button>}</div></article>; })}</div></section>)}</div>;
+  if (!open.length) return <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" /><h3 className="mt-3 text-sm font-semibold text-slate-800">No tenés tareas pendientes</h3><p className="mt-1 text-xs text-slate-500">Las nuevas asignaciones aparecerán en esta vista.</p></div>;
+  return <div className="space-y-4">{groups.map(({ id, title, items, tone, icon: Icon }) => items.length > 0 && <section key={id}><div className="mb-2 flex items-center gap-2"><Icon className="h-4 w-4 text-slate-500" /><h3 className="text-sm font-semibold text-slate-800">{title}</h3><span className="rounded-full bg-slate-200 px-2 text-xs text-slate-600">{items.length}</span></div><div className="space-y-2">{items.map((task) => { const index = T_STATUS.indexOf(task.status); return <article key={task.id} className={`rounded-xl border p-3 ${tone}`}><button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><Chip className={`${prioMeta[task.priority]} ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip>{task._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente</Chip>}</div><h4 className="mt-2 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><p className="mt-1 text-xs text-slate-500">{projectById(task.project)?.name || task.id}{task.due ? ` · ${dueLabel(task.due)}` : ""}</p></button><div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3"><span className="text-xs font-medium text-slate-600">{task.status}</span><button onClick={() => onOpen(task)} className="ml-auto min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Ver detalle</button>{index < T_STATUS.length - 1 && <button onClick={() => onMove(task.id, 1)} className="min-h-10 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white">Avanzar</button>}</div></article>; })}</div></section>)}</div>;
+}
+
+function TaskColumn({ status, tasks, userById, onOpen, onMove, roomy = false }) {
+  const col = tasks.filter((task) => task.status === status);
+  const meta = T_STYLE[status];
+  const limit = WIP_LIMITS[status];
+  const over = limit && col.length > limit;
+  return <section className={`rounded-xl border-t-4 ${meta.col} bg-slate-50/60 ${roomy ? "min-h-[18rem]" : ""}`}>
+    <div className="flex items-center justify-between px-3 py-2"><h3 className="text-sm font-semibold text-slate-700">{status}</h3><span className={`rounded-full px-2 text-xs font-medium ring-1 ${over ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-white text-slate-500 ring-slate-200"}`}>{col.length}{limit ? `/${limit}` : ""}</span></div>
+    {over && <div className="mx-2 mb-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] font-medium text-rose-700">Límite de trabajo en curso superado</div>}
+    <div className="space-y-2 px-2 pb-3">
+      {col.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-xs text-slate-400">Sin tareas en esta etapa</div>}
+      {col.map((task) => { const index = T_STATUS.indexOf(task.status); const age = daysSince(task._updatedAt); return <article key={task.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        <button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><Chip className={`${typeMeta[task.type]} ring-1 ring-inset ring-black/5`}>{task.type}</Chip>{isOverdue(task) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Vencida</Chip>}{isStale(task) && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="h-3 w-3" />Estancada</Chip>}</div><h4 className="mt-1.5 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{task.id}</span>{task.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{dueLabel(task.due)}</span>}{task.status !== "Hecho" && task._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "Actualizada hoy" : `Hace ${age}d`}</span>}</div></button>
+        <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3"><div className="flex min-w-0 items-center gap-1.5"><Avatar user={userById(task.assignee)} size={24} /><Chip className={`${prioMeta[task.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip></div><div className="flex gap-1"><button onClick={() => onMove(task.id, -1)} disabled={index === 0} aria-label={`Mover ${task.title} hacia atrás`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button><button onClick={() => onMove(task.id, 1)} disabled={index === T_STATUS.length - 1} aria-label={`Avanzar ${task.title}`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button></div></div>
+      </article>; })}
+    </div>
+  </section>;
 }
 
 function Board({ tasks, userById, onOpen, onMove }) {
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {T_STATUS.map((st) => { const col = tasks.filter((t) => t.status === st); const m = T_STYLE[st]; const limit = WIP_LIMITS[st]; const over = limit && col.length > limit; return (
-        <div key={st} className={`rounded-xl border-t-4 ${m.col} bg-slate-50/60`}>
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm font-semibold text-slate-700">{st}</span>
-            <span className={`rounded-full px-2 text-xs font-medium ring-1 ${over ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-white text-slate-500 ring-slate-200"}`}>{col.length}{limit ? `/${limit}` : ""}</span>
-          </div>
-          {over && <div className="mx-2 mb-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] font-medium text-rose-700">Límite de trabajo en curso superado</div>}
-          <div className="space-y-2 px-2 pb-3">
-            {col.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin tareas</div>}
-            {col.map((t) => { const idx = T_STATUS.indexOf(t.status); const age = daysSince(t._updatedAt); return (
-              <div key={t.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-                <button onClick={() => onOpen(t)} className="block w-full text-left">
-                  <div className="flex flex-wrap items-center gap-1.5"><Chip className={`${typeMeta[t.type]} ring-1 ring-inset ring-black/5`}>{t.type}</Chip>{isOverdue(t) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Vencida</Chip>}{isStale(t) && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="h-3 w-3" />Estancada</Chip>}</div>
-                  <div className="mt-1.5 text-sm font-medium leading-snug text-slate-800">{t.title}</div>
-                  <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due.slice(5)}</span>}{t.status !== "Hecho" && t._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "hoy" : `hace ${age}d`}</span>}</div>
-                </button>
-                <div className="mt-2 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5"><Avatar user={userById(t.assignee)} size={22} /><Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip></div>
-                  <div className="flex gap-1"><button onClick={() => onMove(t.id, -1)} disabled={idx === 0} className="rounded-md border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-3.5 w-3.5" /></button><button onClick={() => onMove(t.id, 1)} disabled={idx === T_STATUS.length - 1} className="rounded-md border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-3.5 w-3.5" /></button></div>
-                </div>
-              </div>
-            ); })}
-          </div>
-        </div>
-      ); })}
-    </div>
-  );
+  return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{T_STATUS.map((status) => <TaskColumn key={status} status={status} tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} />)}</div>;
+}
+
+function TechnicianBoard({ tasks, userById, onOpen, onMove }) {
+  const [mobileStatus, setMobileStatus] = useState(() => tasks.some((task) => task.status === "En progreso") ? "En progreso" : "Por hacer");
+  return <>
+    <div className="sm:hidden"><nav aria-label="Etapas de tareas" className="-mx-3 mb-3 flex gap-2 overflow-x-auto px-3 pb-1">{T_STATUS.map((status) => { const count = tasks.filter((task) => task.status === status).length; return <button key={status} onClick={() => setMobileStatus(status)} aria-pressed={mobileStatus === status} className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${mobileStatus === status ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}>{status}<span className="rounded-full bg-white px-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">{count}</span></button>; })}</nav><TaskColumn status={mobileStatus} tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} roomy /></div>
+    <div className="hidden sm:block"><Board tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} /></div>
+  </>;
 }
 
 /* Sección reutilizable de actividad y comentarios */
