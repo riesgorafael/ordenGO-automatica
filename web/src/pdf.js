@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { LOGO, LOGO_RATIO } from "./logo";
+import { LOGO, LOGO_RATIO } from "./logo.js";
 
 // Ancho del logo en el PDF (mm)
 const LOGO_W = 42;
@@ -17,12 +17,12 @@ function drawLogo(doc, M, y) {
   return h;
 }
 
-export function orderReceiptPDF(order, ger) {
+export function buildOrderReceiptPDF(order, ger) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   const priced = !!ger;
   let y = 16;
-  const brk = (need = 8) => { if (y + need > 285) { doc.addPage(); y = 20; } };
+  const brk = (need = 8) => { if (y + need > 282) { doc.addPage(); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139); doc.text(`${order.id} - CONTINUACIÓN`, M, 14); doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17); y = 24; } };
 
   /* Encabezado con logo */
   const lh = drawLogo(doc, M, y - 4);
@@ -42,7 +42,10 @@ export function orderReceiptPDF(order, ger) {
   kv("Sitio:", order.site);
   if (order.contact) kv("Contacto:", order.contact);
   kv("Servicio:", order.service);
+  kv("Estado:", order.status);
   if (order.tech) kv("Técnico:", order.tech);
+  if (order.category) kv("Clasificación:", order.category);
+  if (order.location?.lat != null && order.location?.lng != null) kv("Ubicación:", `${Number(order.location.lat).toFixed(5)}, ${Number(order.location.lng).toFixed(5)}`);
   y += 2;
 
   const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(241, 135, 0); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
@@ -65,21 +68,27 @@ export function orderReceiptPDF(order, ger) {
   /* Registro fotográfico */
   const fotos = (order.photos || []).filter((p) => p && p.url);
   if (fotos.length) {
-    brk(40);
     section("Registro fotográfico");
-    const gap = 4, cols = 3, iw = (W - 2 * M - gap * (cols - 1)) / cols, ih = iw * 0.75;
-    let cx = M, col = 0;
-    if (y + ih + 6 > 285) { doc.addPage(); y = 20; }
-    fotos.forEach((p) => {
-      if (col === cols) { col = 0; cx = M; y += ih + 8; if (y + ih + 6 > 285) { doc.addPage(); y = 20; } }
-      const fmt = /^data:image\/png/i.test(p.url) ? "PNG" : "JPEG";
-      try { doc.addImage(p.url, fmt, cx, y, iw, ih); } catch {}
-      doc.setDrawColor(226, 232, 240); doc.rect(cx, y, iw, ih);
-      doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
-      doc.text(String(p.cat || "").toUpperCase(), cx + 1, y + ih + 3.5);
-      cx += iw + gap; col++;
-    });
-    y += ih + 10;
+    const gap = 5, cols = 2, frameW = (W - 2 * M - gap) / cols, frameH = 50, rowH = 61;
+    for (let i = 0; i < fotos.length; i += cols) {
+      brk(rowH);
+      fotos.slice(i, i + cols).forEach((p, offset) => {
+        const x = M + offset * (frameW + gap);
+        const fmt = /^data:image\/png/i.test(p.url) ? "PNG" : "JPEG";
+        doc.setFillColor(248, 250, 252); doc.setDrawColor(203, 213, 225); doc.roundedRect(x, y, frameW, frameH, 1.5, 1.5, "FD");
+        try {
+          const props = doc.getImageProperties(p.url);
+          const scale = Math.min((frameW - 2) / props.width, (frameH - 2) / props.height);
+          const drawW = props.width * scale, drawH = props.height * scale;
+          doc.addImage(p.url, fmt, x + (frameW - drawW) / 2, y + (frameH - drawH) / 2, drawW, drawH, undefined, "NONE");
+        } catch {}
+        const stamp = p.ts ? new Date(p.ts).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+        doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(71, 85, 105);
+        doc.text(`FOTO ${i + offset + 1} - ${String(p.cat || "EVIDENCIA").toUpperCase()}`, x, y + frameH + 4);
+        if (stamp) { doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139); doc.text(stamp, x + frameW, y + frameH + 4, { align: "right" }); }
+      });
+      y += rowH;
+    }
     doc.setTextColor(15, 23, 42);
   }
 
@@ -138,12 +147,22 @@ export function orderReceiptPDF(order, ger) {
   doc.setDrawColor(148, 163, 184); doc.line(M, y, M + 62, y); y += 4;
   doc.setFontSize(9); doc.setTextColor(71, 85, 105);
   doc.text(`Firma del cliente${order.signedBy ? "  ·  " + order.signedBy : ""}`, M, y);
+  if (order.noSignReason) { y += 5; doc.setFontSize(8); doc.setTextColor(180, 83, 9); doc.text(doc.splitTextToSize(`Orden aprobada sin firma. Motivo: ${order.noSignReason}`, W - 2 * M), M, y); }
 
-  /* Pie */
-  doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-  doc.text(`Documento generado el ${new Date().toLocaleString("es-MX")}${priced ? "" : "  ·  Documento sin valores monetarios"}`, M, 290);
+  /* Pie y numeración */
+  const pages = doc.getNumberOfPages();
+  for (let page = 1; page <= pages; page++) {
+    doc.setPage(page); doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+    doc.text(`Generado el ${new Date().toLocaleString("es-AR")}${priced ? "" : " - Documento sin valores monetarios"}`, M, 290);
+    doc.text(`Página ${page} de ${pages}`, W - M, 290, { align: "right" });
+  }
 
-  doc.save(`${order.id}.pdf`);
+  return doc;
+}
+
+export function orderReceiptPDF(order, ger) {
+  buildOrderReceiptPDF(order, ger).save(`${order.id}.pdf`);
 }
 
 export function monthlyReportPDF(month, monthLabel, rows, sum) {
