@@ -152,6 +152,7 @@ function auth(req, res, next) {
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: "No autorizado" });
 // Roles "técnicos" (campo u oficina): nunca ven importes ni el estado "Facturada"
 const isTec = (r) => r === "tecnico" || r === "tecnico_oficina";
+const requireOrdersAccess = (req, res, next) => req.user.role === "tecnico_oficina" ? res.status(403).json({ error: "El rol Técnico de oficina no tiene acceso a órdenes de trabajo" }) : next();
 // ¿El usuario (si es técnico) tiene permiso sobre este proyecto?
 async function tecCanProject(user, projectId) {
   if (!isTec(user.role)) return true;
@@ -208,7 +209,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     users: u.rows.map(pubUser),
     clients: cl.rows.map((r) => r.data),
     projects: visibleProjects,
-    orders: or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    orders: req.user.role === "tecnico_oficina" ? [] : or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !tec || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
@@ -336,7 +337,7 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
 const TEC_PATCH = ["signatureUrl", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "status", "location", "laborHours", "technicians", "contact"];
 
-app.post("/api/orders", auth, async (req, res) => {
+app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
   if (!o.id) {
     const year = new Date().getFullYear();
@@ -356,7 +357,7 @@ app.post("/api/orders", auth, async (req, res) => {
   res.json(isTec(req.user.role) ? stripMoney(o) : o);
 });
 
-app.patch("/api/orders/:id", auth, async (req, res) => {
+app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM orders WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   let patch = req.body || {};
@@ -374,7 +375,7 @@ app.patch("/api/orders/:id", auth, async (req, res) => {
   res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
 });
 
-app.post("/api/orders/:id/comment", auth, async (req, res) => {
+app.post("/api/orders/:id/comment", auth, requireOrdersAccess, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM orders WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const text = String((req.body || {}).text || "").trim();

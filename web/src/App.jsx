@@ -185,7 +185,7 @@ export default function App() {
 
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
-  const isOffice = me.role === "tecnico_oficina"; // solo Mi día + Proyectos
+  const isOffice = me.role === "tecnico_oficina";
   const userById = (id) => users.find((u) => u.id === id);
 
   /* Órdenes */
@@ -284,7 +284,7 @@ export default function App() {
   const removePart = async (id) => { await api.deletePart(id); setParts((p) => p.filter((x) => x.id !== id)); };
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
-  if (module === "orders" && oView === "new")
+  if (!isOffice && module === "orders" && oView === "new")
     return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
 
   const modTabs = [
