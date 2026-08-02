@@ -130,6 +130,7 @@ export default function App() {
   const [pwOpen, setPwOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef(null);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -144,6 +145,15 @@ export default function App() {
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type }]); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500); };
   useEffect(() => { const on = () => setOnline(true), off = () => setOnline(false); window.addEventListener("online", on); window.addEventListener("offline", off); return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); }; }, []);
   useEffect(() => { const openSearch = (e) => { if ((e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) { e.preventDefault(); setGlobalSearchOpen(true); } }; window.addEventListener("keydown", openSearch); return () => window.removeEventListener("keydown", openSearch); }, []);
+  useEffect(() => {
+    if (!notifOpen) return;
+    const closeOutside = (event) => { if (notifRef.current && !notifRef.current.contains(event.target)) setNotifOpen(false); };
+    const closeWithKeyboard = (event) => { if (event.key === "Escape") setNotifOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeWithKeyboard);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
+  }, [notifOpen]);
+  useEffect(() => { setNotifOpen(false); }, [module]);
 
   const boot = async () => {
     const d = await api.bootstrap();
@@ -317,13 +327,13 @@ export default function App() {
             {activeModule === "projects" && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><Search className="h-4 w-4" /></button>
-            <div className="relative">
-              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" className="relative rounded-lg p-2 text-slate-300 hover:bg-ink-800">
+            <div ref={notifRef} className="relative">
+              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" aria-label="Novedades" aria-expanded={notifOpen} aria-controls="notifications-panel" className="relative rounded-lg p-2 text-slate-300 hover:bg-ink-800">
                 <Bell className="h-4 w-4" />
                 {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{unread}</span>}
               </button>
               {notifOpen && (
-                <div className="fixed left-4 right-4 top-16 z-30 mt-2 w-auto overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-lg sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:w-80">
+                <div id="notifications-panel" role="region" aria-label="Novedades" className="fixed left-4 right-4 top-16 z-30 mt-2 w-auto overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-lg sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:w-80">
                   <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2"><span className="text-sm font-semibold">Novedades</span>{unread > 0 && <button onClick={markAllRead} className="text-[11px] font-medium text-brand-600 hover:underline">Marcar todo leído</button>}</div>
                   <div className="max-h-80 overflow-y-auto">
                     {notifs.length === 0 && <div className="px-3 py-6 text-center text-xs text-slate-400">Sin novedades</div>}
