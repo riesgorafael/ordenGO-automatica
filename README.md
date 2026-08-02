@@ -138,6 +138,15 @@ PORT = 3000
 - Gráficos: tendencia de facturación 12 meses, cobranzas por antigüedad (aging), embudo del ciclo de la orden con tiempo promedio hasta facturar, top clientes, mix de servicios (dona) y productividad por técnico.
 - Selector de período (mes / trimestre / año). Solo visible para gerencia y administración.
 
+## Costos, margen e inventario
+- Costos por orden (costo/hora de mano de obra y costo por material) → margen y % de rentabilidad en el detalle y en el Panel.
+- Gráfico "Rentabilidad por cliente" (ingreso vs. costo) en el Panel de dirección.
+- Inventario de repuestos con precio, costo, stock y stock mínimo; aviso y badge de bajo stock; autocompletado de materiales al crear órdenes.
+- Corrección de QA: "Por facturar" cuenta solo Completada + Aprobada (coherente en todas las vistas).
+
+## Roles
+- Administrador, Gerencia/Gerente, Técnico de campo y **Técnico de oficina** (nuevo): este último solo accede a "Mi día" y "Proyectos", y no ve importes.
+
 ## Rediseño de interfaz (identidad AUTOMATICA ARG)
 - Marca aplicada: logo de la empresa en encabezado y login, color primario naranja (#F18700) y encabezado gris carbón (#2E2E2D).
 - Navegación inferior en móvil + botón de acción flotante (FAB) para crear.

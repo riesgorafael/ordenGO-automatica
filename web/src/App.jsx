@@ -1089,9 +1089,13 @@ function ChartBox({ data }) {
 /* ===================================== INVENTARIO / REPUESTOS ===================================== */
 function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" });
+  const [editId, setEditId] = useState(null);
+  const [ef, setEf] = useState({});
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
   const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: Number(nf.price) || 0, cost: Number(nf.cost) || 0, stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0 }); setNf({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" }); } catch (e) { onErr(e); } };
-  const editNum = (p, field, label) => { const v = prompt(label, p[field] ?? 0); if (v !== null) wrap(onPatch)(p.id, { [field]: Number(v) || 0 }); };
+  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, stock: p.stock ?? 0, minStock: p.minStock ?? 0 }); };
+  const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), unit: ef.unit.trim() || "u", price: Number(ef.price) || 0, cost: Number(ef.cost) || 0, stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0 }); setEditId(null); } catch (e) { onErr(e); } };
+  const del = (p) => { if (window.confirm(`¿Eliminar el repuesto "${p.name}"?`)) wrap(onRemove)(p.id); };
   const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
   const sorted = [...parts].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   return (
@@ -1101,15 +1105,35 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
         <Panel title={`Repuestos (${parts.length})`}>
           <div className="space-y-2">
             {sorted.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin repuestos cargados</div>}
-            {sorted.map((p) => { const isLow = p.stock <= p.minStock; const margin = p.price ? Math.round((1 - (p.cost || 0) / p.price) * 100) : null; return (
-              <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
-                <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{p.name}</div><div className="text-xs text-slate-500">Venta {money(p.price)} · Costo {money(p.cost)}{margin != null && <span className="text-emerald-600"> · margen {margin}%</span>}</div></div>
-                <button onClick={() => editNum(p, "stock", "Stock actual:")} className={`rounded-md px-2 py-1 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</button>
-                <button onClick={() => editNum(p, "minStock", "Stock mínimo:")} className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">Mín: {p.minStock}</button>
-                <button onClick={() => editNum(p, "price", "Precio de venta:")} className="rounded-md p-1.5 text-slate-400 hover:text-brand-600"><DollarSign className="h-4 w-4" /></button>
-                <button onClick={() => wrap(onRemove)(p.id)} className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
-              </div>
-            ); })}
+            {sorted.map((p) => {
+              const isLow = p.stock <= p.minStock;
+              const margin = p.price ? Math.round((1 - (p.cost || 0) / p.price) * 100) : null;
+              if (editId === p.id) return (
+                <div key={p.id} className="rounded-lg border border-brand-300 bg-brand-50/40 p-3">
+                  <L label="Nombre"><input value={ef.name} onChange={(e) => setEf({ ...ef, name: e.target.value })} className="u-input" /></L>
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <L label="Unidad"><input value={ef.unit} onChange={(e) => setEf({ ...ef, unit: e.target.value })} className="u-input" /></L>
+                    <L label="Stock"><input type="number" value={ef.stock} onChange={(e) => setEf({ ...ef, stock: e.target.value })} className="u-input" /></L>
+                    <L label="Stock mínimo"><input type="number" value={ef.minStock} onChange={(e) => setEf({ ...ef, minStock: e.target.value })} className="u-input" /></L>
+                    <L label="Precio venta"><input type="number" value={ef.price} onChange={(e) => setEf({ ...ef, price: e.target.value })} className="u-input" /></L>
+                    <L label="Costo"><input type="number" value={ef.cost} onChange={(e) => setEf({ ...ef, cost: e.target.value })} className="u-input" /></L>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={() => setEditId(null)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+                    <button onClick={saveEdit} disabled={!ef.name.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Guardar</button>
+                  </div>
+                </div>
+              );
+              return (
+                <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                  <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{p.name}</div><div className="text-xs text-slate-500">Venta {money(p.price)} · Costo {money(p.cost)}{margin != null && <span className="text-emerald-600"> · margen {margin}%</span>}</div></div>
+                  <span className={`rounded-md px-2 py-1 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
+                  <span className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">Mín: {p.minStock}</span>
+                  <button onClick={() => startEdit(p)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
+                  <button onClick={() => del(p)} title="Eliminar" className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              );
+            })}
           </div>
         </Panel>
       </div>
