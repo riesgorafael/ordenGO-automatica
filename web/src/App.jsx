@@ -267,7 +267,7 @@ export default function App() {
                 {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{unread}</span>}
               </button>
               {notifOpen && (
-                <div className="absolute right-0 z-30 mt-2 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-lg">
+                <div className="fixed left-4 right-4 top-16 z-30 mt-2 w-auto overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-lg sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:w-80">
                   <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2"><span className="text-sm font-semibold">Novedades</span>{unread > 0 && <button onClick={markAllRead} className="text-[11px] font-medium text-brand-600 hover:underline">Marcar todo leído</button>}</div>
                   <div className="max-h-80 overflow-y-auto">
                     {notifs.length === 0 && <div className="px-3 py-6 text-center text-xs text-slate-400">Sin novedades</div>}
@@ -294,7 +294,7 @@ export default function App() {
       </header>
 
       {!online && <div className="sticky top-0 z-30 bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-white">Sin conexión — revisá tu internet. Los cambios podrían no guardarse.</div>}
-      <main className="mx-auto max-w-6xl px-4 py-5 pb-24 sm:pb-5">
+      <main className="mx-auto max-w-6xl px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { setModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} onOpen={setODetail} />}
         {activeModule === "inventory" && isMgr && <Inventory parts={parts} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
@@ -320,11 +320,11 @@ export default function App() {
                   <button key={id} onClick={() => setPTab(id)} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium ${pTab === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>
                 ))}
               </div>
-              <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium">
+              <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
                 <option value="all">Todos los proyectos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}
               </select>
               {pTab === "board" && (<>
-                <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
                 <button onClick={() => setPMine((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>
                 <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>
@@ -355,18 +355,18 @@ export default function App() {
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
 
       {/* Barra de navegación inferior (móvil) */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 backdrop-blur sm:hidden">
+      <nav className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 backdrop-blur sm:hidden" aria-label="Navegación principal">
         {modTabs.map(({ id, label, icon: Icon, badge }) => (
-          <button key={id} onClick={() => setModule(id)} className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
+          <button key={id} onClick={() => setModule(id)} title={label} aria-label={label} className={`mobile-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
             {badge > 0 && <span className="absolute right-1/4 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-rose-500 px-1 text-[8px] font-bold text-white">{badge}</span>}
-            <Icon className="h-5 w-5" /> {label}
+            <Icon className="h-5 w-5" /><span className="mobile-nav-label">{label}</span>
           </button>
         ))}
       </nav>
 
       {/* Botón de acción flotante (móvil) */}
       {(activeModule === "orders" || activeModule === "projects") && (
-        <button onClick={() => (activeModule === "orders" ? setOView("new") : setEditing(null))} className="fixed bottom-20 right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : "Nueva tarea"}>
+        <button onClick={() => (activeModule === "orders" ? setOView("new") : setEditing(null))} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
       )}
@@ -381,7 +381,6 @@ export default function App() {
         ))}
       </div>
 
-      <style>{`.u-input{width:100%;border-radius:0.5rem;border:1px solid rgb(226 232 240);background:#fff;padding:0.5rem 0.625rem;font-size:0.875rem;color:#1e293b;outline:none}.u-input:focus{border-color:rgb(241 135 0);box-shadow:0 0 0 3px rgb(241 135 0/.15)}`}</style>
     </div>
   );
 }
@@ -460,7 +459,7 @@ function ChangePassword({ onClose, forced, onDone }) {
   };
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={close}>
-      <div className="w-full max-w-sm rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Cambiar contraseña</h3>{!forced && <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>}</div>
         {forced && !done && <div className="mb-3 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">Por seguridad, define una contraseña nueva antes de continuar.</div>}
         {done ? (
@@ -781,12 +780,12 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
         <Metric label="Sin firma" value={unsigned.length} icon={FileSignature} tint="text-rose-600" />
       </div>
       <div className="mb-5 space-y-2">
-        {ger && pendingBill.length > 0 && (<div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"><span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{pendingBill.length} orden(es) completadas pendientes de facturar.</span><button onClick={() => { setOBillable(true); setOStatus("Todas"); }} className="shrink-0 rounded-md bg-white/70 px-2 py-1 text-xs font-medium hover:bg-white">Ver facturables</button></div>)}
+        {ger && pendingBill.length > 0 && (<div className="flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between"><span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{pendingBill.length} orden(es) completadas pendientes de facturar.</span><button onClick={() => { setOBillable(true); setOStatus("Todas"); }} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver facturables</button></div>)}
         {unsigned.length > 0 && (<div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><FileSignature className="mt-0.5 h-4 w-4 shrink-0" />{unsigned.length} orden(es) completadas sin firma del cliente.</div>)}
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
-        <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm"><option>Todas</option>{O_STATUS.filter((s) => ger || s !== "Facturada").map((s) => <option key={s}>{s}</option>)}</select>
+        <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
+        <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:flex-none"><option>Todas</option>{O_STATUS.filter((s) => ger || s !== "Facturada").map((s) => <option key={s}>{s}</option>)}</select>
         {ger && (<>
           <button onClick={() => setOBillable((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${oBillable ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Filter className="h-4 w-4" /> Facturables</button>
           <button onClick={() => exportCSV(filtered, `ordenes_${monthKey}.csv`)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> CSV</button>
@@ -839,7 +838,7 @@ function MonthlyReport({ orders }) {
       <div className="flex flex-wrap items-center gap-2">
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm" />
         <span className="text-sm font-medium capitalize text-slate-600">{monthLabel}</span>
-        <div className="ml-auto flex gap-2">
+        <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
           <button onClick={exportCSV} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
           <button onClick={() => monthlyReportPDF(month, monthLabel, rows, sum)} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><FileText className="h-4 w-4" /> PDF</button>
         </div>
@@ -899,10 +898,10 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
   const approveNoSign = () => { const r = prompt("Motivo para aprobar sin firma del cliente (ej. cliente ausente):"); if (r && r.trim()) onUpdate(order.id, { status: "Aprobada", noSignReason: r.trim() }); };
   const [zoom, setZoom] = useState(null);
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="mobile-dialog w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-3"><div className="flex items-center gap-2"><span className="font-mono text-sm font-semibold text-slate-800">{order.id}</span><Chip className={O_STYLE[order.status]}>{order.status}</Chip></div><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-        <div className="space-y-4 p-5">
+        <div className="mobile-sheet-content space-y-4 p-4 sm:p-5">
           <section><div className="text-base font-semibold text-slate-900">{order.client}</div><div className="text-sm text-slate-500">{order.site}{order.contact ? ` · ${order.contact}` : ""}</div><div className="mt-1 text-xs text-slate-500">{order.service} · {order.date}{order.tech ? ` · Técnico: ${order.tech}` : ""}</div>{order.location && <div className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{order.location.lat.toFixed(4)}, {order.location.lng.toFixed(4)}</div>}</section>
           {(order.equipo || order.sintoma || order.solucion) && (<section className="rounded-lg bg-slate-50 p-3 text-sm">{order.equipo && <p><span className="font-medium text-slate-700">Equipo:</span> {order.equipo}</p>}{order.sintoma && <p className="mt-1"><span className="font-medium text-slate-700">Síntoma:</span> {order.sintoma}</p>}{order.solucion && <p className="mt-1"><span className="font-medium text-slate-700">Trabajo:</span> {order.solucion}</p>}</section>)}
           {order.noSignReason && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700">Cerrada sin firma. Motivo: {order.noSignReason}</div>}
@@ -911,7 +910,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
             <div className="flex items-center justify-between text-slate-600"><span>Horas de trabajo</span><span className="font-medium text-slate-800">{order.laborHours || 0} h{order.technicians ? ` · ${order.technicians} téc.` : ""}</span></div>
             {ger && <div className="mt-2 flex items-center gap-2"><span className="text-slate-600">Tarifa/h:</span><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-sm" /><label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={laborBillable} onChange={(e) => setLaborBillable(e.target.checked)} /> Facturable</label></div>}
             {ger && <div className="mt-1 flex items-center gap-2"><span className="text-slate-500 text-xs">Costo/h (interno):</span><input type="number" value={laborCost} onChange={(e) => setLaborCost(e.target.value)} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs" /></div>}
-            {mats.length > 0 && <ul className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">{mats.map((m, i) => (<li key={i} className="text-sm"><div className="flex items-center justify-between"><span className="text-slate-700">{m.qty}× {m.name || "—"}</span>{ger && <span className="text-xs text-slate-500">{money((m.qty || 0) * (m.price || 0))}</span>}</div>{ger && <div className="mt-1 flex items-center gap-2"><span className="text-xs text-slate-500">P. unit:</span><input type="number" value={m.price} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, price: e.target.value } : y))} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs" /><span className="text-xs text-slate-500">Costo:</span><input type="number" value={m.cost ?? ""} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, cost: e.target.value } : y))} className="w-20 rounded-md border border-slate-200 px-2 py-1 text-xs" /><label className="ml-auto flex items-center gap-1 text-[11px] text-slate-500"><input type="checkbox" checked={m.billable} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, billable: e.target.checked } : y))} /> Facturable</label></div>}</li>))}</ul>}
+            {mats.length > 0 && <ul className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">{mats.map((m, i) => (<li key={i} className="text-sm"><div className="flex min-w-0 items-start justify-between gap-2"><span className="min-w-0 break-words text-slate-700">{m.qty}× {m.name || "—"}</span>{ger && <span className="shrink-0 text-xs text-slate-500">{money((m.qty || 0) * (m.price || 0))}</span>}</div>{ger && <div className="mt-1 grid grid-cols-2 gap-2 sm:flex sm:items-center"><label className="text-xs text-slate-500">P. unit:<input type="number" value={m.price} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, price: e.target.value } : y))} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1 text-xs sm:ml-1 sm:mt-0 sm:w-24" /></label><label className="text-xs text-slate-500">Costo:<input type="number" value={m.cost ?? ""} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, cost: e.target.value } : y))} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1 text-xs sm:ml-1 sm:mt-0 sm:w-20" /></label><label className="col-span-2 flex items-center gap-1 text-[11px] text-slate-500 sm:ml-auto"><input type="checkbox" checked={m.billable} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, billable: e.target.checked } : y))} /> Facturable</label></div>}</li>))}</ul>}
           </div></section>
           {ger && (<section className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm"><div className="flex items-center justify-between text-slate-600"><span>Mano de obra</span><span className="font-medium text-slate-800">{money(t.labor)}</span></div><div className="flex items-center justify-between text-slate-600"><span>Materiales facturables</span><span className="font-medium text-slate-800">{money(t.mats)}</span></div><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 font-semibold text-slate-900"><span>Total</span><span>{money(t.total)}</span></div>{(mg.cost > 0) && <><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 text-slate-500"><span>Costo estimado</span><span>{money(mg.cost)}</span></div><div className="flex items-center justify-between font-semibold text-emerald-700"><span>Margen</span><span>{money(mg.margin)} · {Math.round(mg.pct * 100)}%</span></div></>}{dirty && <button onClick={savePrices} className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500">Guardar precios y costos</button>}</section>)}
           {order.signatureUrl && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Conformidad del cliente</h4>{order.signatureUrl !== "signed" ? <img src={order.signatureUrl} alt="firma" className="h-20 rounded-lg border border-slate-200 bg-white" /> : <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">Firmada</div>}{order.signedBy && <div className="mt-1 text-xs text-slate-500">Firmó: {order.signedBy}</div>}</section>)}
@@ -972,7 +971,7 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
   return (
     <div className="min-h-screen bg-slate-100" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100"><div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-3"><button onClick={onCancel} className="rounded-md p-1 text-slate-300 hover:bg-ink-800"><ChevronLeft className="h-5 w-5" /></button><div className="leading-tight"><div className="text-sm font-semibold">Nueva orden</div><div className="font-mono text-[11px] text-brand-400">{folioPreview}</div></div></div></header>
-      <main className="mx-auto max-w-lg space-y-4 px-4 py-5 pb-28">
+      <main className="mx-auto max-w-lg space-y-4 px-3 py-4 pb-40 sm:px-4 sm:py-5 sm:pb-32">
         <Section title="Cliente y sitio">
           <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => setClientMode("existing")}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => setClientMode("new")}>Cliente nuevo</Toggle></div>
           {clientMode === "existing" ? (<select value={clientId} onChange={(e) => setClientId(e.target.value)} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name} — {c.site}</option>)}</select>) : (<div className="space-y-2"><input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className="u-input" /><input value={newClient.site} onChange={(e) => setNewClient({ ...newClient, site: e.target.value })} placeholder="Sitio / ubicación" className="u-input" /></div>)}
@@ -993,11 +992,11 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
         </Section>
         <Section title="Mano de obra">
           <div className="flex items-center gap-2"><button onClick={toggleTimer} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-white ${running ? "bg-rose-500 hover:bg-rose-400" : "bg-emerald-600 hover:bg-emerald-500"}`}>{running ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />} {running ? "Detener" : "Cronómetro"}</button>{(running || elapsed > 0) && <span className="font-mono text-sm text-slate-600"><Clock className="mr-1 inline h-3.5 w-3.5" />{fmt}</span>}</div>
-          <div className={`mt-2 grid gap-2 ${ger ? "grid-cols-3" : "grid-cols-2"}`}><L label="Horas"><input type="number" value={laborHours} onChange={(e) => setLaborHours(e.target.value)} placeholder="0" className="u-input" /></L><L label="Técnicos"><input type="number" value={technicians} onChange={(e) => setTechnicians(e.target.value)} className="u-input" /></L>{ger && <L label="Tarifa/h"><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} className="u-input" /></L>}</div>
+          <div className={`mt-2 grid gap-2 ${ger ? "grid-cols-2 min-[430px]:grid-cols-3" : "grid-cols-2"}`}><L label="Horas"><input type="number" value={laborHours} onChange={(e) => setLaborHours(e.target.value)} placeholder="0" className="u-input" /></L><L label="Técnicos"><input type="number" value={technicians} onChange={(e) => setTechnicians(e.target.value)} className="u-input" /></L>{ger && <L label="Tarifa/h"><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} className="u-input" /></L>}</div>
           {ger && <label className="mt-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={laborBillable} onChange={(e) => setLaborBillable(e.target.checked)} /> Facturable</label>}
         </Section>
         <Section title="Materiales y repuestos usados">
-          <div className="space-y-2">{materials.map((m, i) => (<div key={i} className="flex items-center gap-2"><input list="parts-list" value={m.name} onChange={(e) => { const v = e.target.value; const hit = parts.find((p) => p.name === v); setMat(i, hit ? { name: v, ...(hit.price !== undefined ? { price: hit.price } : {}), ...(hit.cost !== undefined ? { cost: hit.cost } : {}) } : { name: v }); }} placeholder="Descripción del material" className="u-input flex-1" /><input type="number" value={m.qty} onChange={(e) => setMat(i, { qty: e.target.value })} className="u-input w-14" title="Cantidad" />{ger && <input type="number" value={m.price} onChange={(e) => setMat(i, { price: e.target.value })} placeholder="Precio" className="u-input w-20" />}{ger && <button onClick={() => setMat(i, { billable: !m.billable })} className={`rounded-md p-1.5 ${m.billable ? "text-emerald-600" : "text-slate-300"}`}><DollarSign className="h-4 w-4" /></button>}<button onClick={() => delMat(i)} className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div>))}</div>
+          <div className="space-y-2">{materials.map((m, i) => (<div key={i} className="grid grid-cols-[minmax(0,1fr)_4.5rem_auto_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_4.5rem_6rem_auto_auto]"><input list="parts-list" value={m.name} onChange={(e) => { const v = e.target.value; const hit = parts.find((p) => p.name === v); setMat(i, hit ? { name: v, ...(hit.price !== undefined ? { price: hit.price } : {}), ...(hit.cost !== undefined ? { cost: hit.cost } : {}) } : { name: v }); }} placeholder="Descripción del material" className={`u-input min-w-0 ${ger ? "col-span-4 sm:col-span-1" : "col-span-4 sm:col-span-1"}`} /><input type="number" value={m.qty} onChange={(e) => setMat(i, { qty: e.target.value })} className="u-input min-w-0" title="Cantidad" aria-label="Cantidad" placeholder="Cant." />{ger && <input type="number" value={m.price} onChange={(e) => setMat(i, { price: e.target.value })} placeholder="Precio" className="u-input min-w-0" />}{ger && <button onClick={() => setMat(i, { billable: !m.billable })} title={m.billable ? "Material facturable" : "Material no facturable"} aria-label={m.billable ? "Material facturable" : "Material no facturable"} className={`grid h-10 w-10 place-items-center rounded-md ${m.billable ? "bg-emerald-50 text-emerald-600" : "bg-slate-50 text-slate-300"}`}><DollarSign className="h-4 w-4" /></button>}<button onClick={() => delMat(i)} title="Eliminar material" aria-label="Eliminar material" className="grid h-10 w-10 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div>))}</div>
           <datalist id="parts-list">{parts.map((p) => <option key={p.id} value={p.name} />)}</datalist>
           <button onClick={addMaterial} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Plus className="h-3.5 w-3.5" /> Agregar material</button>
           {!ger && <p className="mt-2 text-[11px] text-slate-400">Registra qué materiales usaste y en qué cantidad. Los precios los asigna Gerencia.</p>}
@@ -1005,8 +1004,7 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
         <Section title="Conformidad del cliente"><SignaturePad onChange={setSignatureUrl} /><input value={signedBy} onChange={(e) => setSignedBy(e.target.value)} placeholder="Nombre de quien firma" className="u-input mt-2" />{!signatureUrl && (<div className="mt-2"><p className="mb-1 text-[11px] text-amber-600">Se recomienda la firma del cliente. Si no es posible, indica el motivo para poder completar igual:</p><input value={noSignReason} onChange={(e) => setNoSignReason(e.target.value)} placeholder="Motivo (ej. cliente ausente)" className="u-input" /></div>)}</Section>
         {ger && (<Box className="p-4"><div className="flex items-center justify-between text-sm text-slate-600"><span>Mano de obra</span><span>{money(preview.labor)}</span></div><div className="flex items-center justify-between text-sm text-slate-600"><span>Materiales</span><span>{money(preview.mats)}</span></div><div className="mt-1 flex items-center justify-between border-t border-slate-100 pt-1 text-base font-semibold text-slate-900"><span>Total</span><span>{money(preview.total)}</span></div></Box>)}
       </main>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto max-w-lg">{canSave && !signatureUrl && !noSignReason.trim() && <div className="mb-2 flex items-center gap-1.5 text-[11px] text-amber-600"><FileSignature className="h-3.5 w-3.5" /> Para completar, capta la firma o indica un motivo. También puedes guardar como borrador.</div>}<div className="flex gap-2"><button disabled={saving} onClick={() => save("Borrador")} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">Guardar borrador</button><button onClick={() => save("Completada")} disabled={!canComplete || saving} className="flex-[2] inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar y completar</button></div></div></div>
-      <style>{`.u-input{width:100%;border-radius:0.5rem;border:1px solid rgb(226 232 240);background:#fff;padding:0.5rem 0.625rem;font-size:0.875rem;color:#1e293b;outline:none}.u-input:focus{border-color:rgb(241 135 0);box-shadow:0 0 0 3px rgb(241 135 0/.15)}`}</style>
+      <div className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-4"><div className="mx-auto max-w-lg">{canSave && !signatureUrl && !noSignReason.trim() && <div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-600"><FileSignature className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Para completar, capta la firma o indica un motivo. También puedes guardar como borrador.</div>}<div className="grid grid-cols-2 gap-2"><button disabled={saving} onClick={() => save("Borrador")} className="min-w-0 rounded-lg border border-slate-200 px-2 py-2.5 text-sm font-medium leading-tight text-slate-600 hover:bg-slate-50 disabled:opacity-50">Guardar borrador</button><button onClick={() => save("Completada")} disabled={!canComplete || saving} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-lg bg-brand-500 px-2 py-2.5 text-sm font-semibold leading-tight text-white hover:bg-brand-400 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />} Guardar y completar</button></div></div></div>
     </div>
   );
 }
@@ -1091,14 +1089,14 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, nextId, on
   const save = () => { if (!f.title.trim()) return; onSave({ ...f, id: f.id || nextId(f.project), createdAt: f.createdAt || todayStr() }); };
   const assignable = canAssign ? users : users.filter((u) => u.id === me.id);
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">{editingExisting ? f.id : "Nueva tarea"}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="space-y-3">
           <input value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="Título de la tarea" className="u-input text-sm font-medium" />
           <textarea value={f.desc} onChange={(e) => set({ desc: e.target.value })} rows={3} placeholder="Descripción / criterios" className="u-input resize-none" />
-          <div className="grid grid-cols-2 gap-3"><L label="Proyecto"><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={editingExisting} className="u-input">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} className="u-input">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
-          <div className="grid grid-cols-3 gap-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} className="u-input">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} className="u-input">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} className="u-input">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
+          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto"><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={editingExisting} className="u-input">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} className="u-input">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
+          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} className="u-input">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} className="u-input">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} className="u-input">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
           <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} className="u-input" /></L>
         </div>
         {editingExisting && onComment && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
@@ -1136,7 +1134,7 @@ function ProjectAccess({ project, users, onClose, onSave }) {
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Accesos del proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá qué técnicos pueden ver este proyecto y sus tareas. La gerencia siempre lo ve.</p>
         <div className="space-y-1.5">
@@ -1170,7 +1168,7 @@ function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) 
   const go = async () => { setBusy(true); await onDuplicate(project.id, { name: name.trim() || `${project.name} (copia)`, key: key.trim() || suggestKey, assignee: assignee || null, resetStatus }); setBusy(false); };
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Duplicar proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <p className="mb-4 text-sm text-slate-500">Se creará una copia de <span className="font-medium text-slate-700">{project.name}</span> con sus {tasksCount} tarea(s). Podés reasignarlas todas a una persona.</p>
         <div className="space-y-3">
@@ -1234,7 +1232,7 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
               );
               return (
                 <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
-                  <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{p.name}</div><div className="text-xs text-slate-500">Venta {money(p.price)} · Costo {money(p.cost)}{margin != null && <span className="text-emerald-600"> · margen {margin}%</span>}</div></div>
+                  <div className="min-w-0 basis-full flex-1 sm:basis-auto"><div className="break-words text-sm font-semibold text-slate-800">{p.name}</div><div className="break-words text-xs text-slate-500">Venta {money(p.price)} · Costo {money(p.cost)}{margin != null && <span className="text-emerald-600"> · margen {margin}%</span>}</div></div>
                   <span className={`rounded-md px-2 py-1 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
                   <span className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">Mín: {p.minStock}</span>
                   <button onClick={() => startEdit(p)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
@@ -1285,11 +1283,13 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
           {clients.map((c) => { const ords = orders.filter((o) => (o.client || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()).length; return (
             <div key={c.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
               <span className="grid h-9 min-w-[3rem] place-items-center rounded-md bg-slate-800 px-2 font-mono text-xs font-bold text-white" title="Código del cliente">{c.code || "—"}</span>
-              <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{c.name}</div><div className="truncate text-xs text-slate-500">{c.site || "—"} · {ords} orden(es)</div></div>
-              <button onClick={() => editCode(c)} title="Editar código" className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Código</button>
-              <button onClick={() => editName(c)} title="Editar nombre" className="rounded-md p-1.5 text-slate-400 hover:text-brand-600"><Pencil className="h-4 w-4" /></button>
-              <button onClick={() => editSite(c)} title="Editar sitio" className="rounded-md p-1.5 text-slate-400 hover:text-brand-600"><MapPin className="h-4 w-4" /></button>
-              <button onClick={() => del(c)} title="Eliminar" className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+              <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{c.name}</div><div className="break-words text-xs text-slate-500">{c.site || "—"} · {ords} orden(es)</div></div>
+              <div className="flex w-full items-center justify-end gap-1 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
+                <button onClick={() => editCode(c)} title="Editar código" className="rounded-md border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Código</button>
+                <button onClick={() => editName(c)} title="Editar nombre" aria-label="Editar nombre" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-slate-50 hover:text-brand-600"><Pencil className="h-4 w-4" /></button>
+                <button onClick={() => editSite(c)} title="Editar sitio" aria-label="Editar sitio" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-slate-50 hover:text-brand-600"><MapPin className="h-4 w-4" /></button>
+                <button onClick={() => del(c)} title="Eliminar" aria-label="Eliminar cliente" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+              </div>
             </div>
           ); })}
         </div>
@@ -1317,10 +1317,12 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         <div className="space-y-2">{users.map((u) => { const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}</div><div className="truncate text-xs text-slate-500">{u.email} · {load} tarea(s) · {ords} orden(es)</div></div>
-            <select value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="rounded-md border border-slate-200 px-2 py-1 text-xs disabled:opacity-60">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-            <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
-            <button onClick={() => wrap(onRemove)(u.id)} disabled={u.id === me.id} className="rounded-md p-1.5 text-slate-400 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
+            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}</div><div className="break-all text-xs text-slate-500">{u.email} · {load} tarea(s) · {ords} orden(es)</div></div>
+            <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
+              <select value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+              <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
+              <button onClick={() => wrap(onRemove)(u.id)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
+            </div>
           </div>
         ); })}</div>
       </Panel></div>
