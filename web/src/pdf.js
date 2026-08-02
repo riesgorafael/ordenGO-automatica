@@ -10,6 +10,11 @@ function totals(o) {
   const mats = (o.materials || []).filter((m) => m.billable).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.price) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
+function costs(o) {
+  const labor = (Number(o.laborHours) || 0) * (Number(o.laborCost) || 0);
+  const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
+  return { labor, mats, total: labor + mats };
+}
 // Dibuja el logo arriba a la izquierda; devuelve el alto ocupado
 function drawLogo(doc, M, y) {
   const w = LOGO_W, h = w * LOGO_RATIO;
@@ -17,17 +22,19 @@ function drawLogo(doc, M, y) {
   return h;
 }
 
-export function buildOrderReceiptPDF(order, ger) {
+export function buildOrderReceiptPDF(order, audience = "client") {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
-  const priced = !!ger;
+  const internal = audience === "internal";
+  const priced = internal;
+  const technical = order.technical || {};
   let y = 16;
   const brk = (need = 8) => { if (y + need > 282) { doc.addPage(); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139); doc.text(`${order.id} - CONTINUACIÓN`, M, 14); doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17); y = 24; } };
 
   /* Encabezado con logo */
   const lh = drawLogo(doc, M, y - 4);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
-  doc.text(priced ? "COMPROBANTE DE SERVICIO" : "CONSTANCIA DE TRABAJO", W - M, y, { align: "right" });
+  doc.text(internal ? "INFORME TÉCNICO INTERNO" : "REPORTE DE SERVICIO TÉCNICO", W - M, y, { align: "right" });
   y += 6;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   doc.text(`Folio: ${order.id}`, W - M, y, { align: "right" }); y += 4;
@@ -37,7 +44,7 @@ export function buildOrderReceiptPDF(order, ger) {
 
   /* Datos */
   doc.setTextColor(15, 23, 42); doc.setFontSize(10);
-  const kv = (k, v) => { doc.setFont("helvetica", "bold"); doc.text(k, M, y); doc.setFont("helvetica", "normal"); doc.text(String(v || "—"), M + 32, y); y += 5.5; };
+  const kv = (k, v) => { doc.setFont("helvetica", "bold"); doc.text(k, M, y); doc.setFont("helvetica", "normal"); doc.text(String(v || "—"), M + 46, y); y += 5.5; };
   kv("Cliente:", order.client);
   kv("Sitio:", order.site);
   if (order.contact) kv("Contacto:", order.contact);
@@ -45,7 +52,10 @@ export function buildOrderReceiptPDF(order, ger) {
   kv("Estado:", order.status);
   if (order.tech) kv("Técnico:", order.tech);
   if (order.category) kv("Clasificación:", order.category);
-  if (order.location?.lat != null && order.location?.lng != null) kv("Ubicación:", `${Number(order.location.lat).toFixed(5)}, ${Number(order.location.lng).toFixed(5)}`);
+  if (order.location?.label && order.location.label !== order.site) kv("Ubicación:", order.location.label);
+  if (technical.assetTag) kv("TAG del activo:", technical.assetTag);
+  if (technical.manufacturer || technical.model) kv("Fabricante / modelo:", [technical.manufacturer, technical.model].filter(Boolean).join(" / "));
+  if (technical.serial) kv("N° de serie:", technical.serial);
   y += 2;
 
   const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(241, 135, 0); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
@@ -62,8 +72,41 @@ export function buildOrderReceiptPDF(order, ger) {
   section("Detalle del trabajo");
   para("Equipo:", order.equipo);
   para("Síntoma:", order.sintoma);
+  para("Diagnóstico:", technical.diagnosis);
+  para("Causa raíz:", technical.rootCause);
   para("Trabajo realizado:", order.solucion);
   y += 2;
+
+  if (technical.reportedAt || technical.arrivalAt || technical.startedAt || technical.completedAt || technical.downtimeMinutes) {
+    section("Cronología del servicio");
+    const stamp = (value) => value ? new Date(value).toLocaleString("es-AR") : "—";
+    para("Aviso recibido:", stamp(technical.reportedAt)); para("Llegada al sitio:", stamp(technical.arrivalAt));
+    para("Inicio:", stamp(technical.startedAt)); para("Finalización:", stamp(technical.completedAt));
+    if (technical.downtimeMinutes) para("Tiempo de parada:", `${technical.downtimeMinutes} minutos`);
+  }
+
+  if (technical.workPermit || technical.lotoApplied || technical.ppe || technical.safetyNotes) {
+    section("Seguridad");
+    para("Permiso / autorización:", technical.workPermit); para("LOTO:", technical.lotoApplied ? "Aplicado" : "No informado");
+    para("EPP:", technical.ppe); para("Condiciones y medidas:", technical.safetyNotes);
+  }
+
+  if (technical.deviceType || technical.firmware || technical.programVersion || technical.backupRef || technical.ioVerified || technical.alarmsVerified || technical.setpointChanges) {
+    section("Registro de automatización");
+    para("Dispositivo:", technical.deviceType); para("Firmware:", technical.firmware); para("Versión de programa:", technical.programVersion);
+    para("Respaldo:", technical.backupRef); para("E/S verificadas:", technical.ioVerified); para("Alarmas e interlocks:", technical.alarmsVerified); para("Cambios de parámetros:", technical.setpointChanges);
+  }
+
+  if (technical.measurementsBefore || technical.measurementsAfter || technical.testsPerformed || technical.testResult || technical.finalCondition) {
+    section("Verificación y puesta en servicio");
+    para("Mediciones iniciales:", technical.measurementsBefore); para("Mediciones finales:", technical.measurementsAfter);
+    para("Pruebas realizadas:", technical.testsPerformed); para("Resultado / aceptación:", technical.testResult); para("Estado final:", technical.finalCondition);
+  }
+
+  if (technical.recommendations || technical.pendingActions || technical.followUpDate) {
+    section("Recomendaciones y pendientes");
+    para("Recomendaciones:", technical.recommendations); para("Acciones pendientes:", technical.pendingActions); para("Seguimiento sugerido:", technical.followUpDate);
+  }
 
   /* Registro fotográfico */
   const fotos = (order.photos || []).filter((p) => p && p.url);
@@ -97,17 +140,18 @@ export function buildOrderReceiptPDF(order, ger) {
     section("Materiales y repuestos");
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139);
     doc.text("Cant.", M, y); doc.text("Descripción", M + 16, y);
-    if (priced) { doc.text("P. unit", W - M - 38, y, { align: "right" }); doc.text("Importe", W - M, y, { align: "right" }); }
+    if (priced) { doc.text("Costo u.", W - M - 38, y, { align: "right" }); doc.text("Venta u.", W - M, y, { align: "right" }); }
     y += 2; doc.setDrawColor(241, 245, 249); doc.line(M, y, W - M, y); y += 4;
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(9);
     (order.materials || []).forEach((m) => {
       brk(8);
       doc.text(String(m.qty || 0), M, y);
-      const nm = doc.splitTextToSize(String(m.name || "—"), priced ? 95 : 150);
+      const trace = [m.partNumber && `P/N ${m.partNumber}`, m.brand, m.model, m.serial && `S/N ${m.serial}`, internal && m.supplier && `Prov. ${m.supplier}`].filter(Boolean).join(" · ");
+      const nm = doc.splitTextToSize(`${String(m.name || "—")}${trace ? `\n${trace}` : ""}`, priced ? 95 : 150);
       doc.text(nm, M + 16, y);
       if (priced) {
-        doc.text(money(m.price), W - M - 38, y, { align: "right" });
-        doc.text(money((m.qty || 0) * (m.price || 0)), W - M, y, { align: "right" });
+        doc.text(money(m.cost), W - M - 38, y, { align: "right" });
+        doc.text(money(m.price), W - M, y, { align: "right" });
       }
       y += Math.max(nm.length * 4.3, 5);
     });
@@ -123,18 +167,28 @@ export function buildOrderReceiptPDF(order, ger) {
 
   /* Totales (solo con importes) */
   if (priced) {
-    brk(30);
-    const t = totals(order); const bw = 74, bx = W - M - bw;
+    brk(45);
+    const t = totals(order), c = costs(order), margin = t.total - c.total, pct = t.total ? Math.round((margin / t.total) * 100) : 0; const bw = 84, bx = W - M - bw;
     doc.setDrawColor(226, 232, 240); doc.setFillColor(248, 250, 252);
-    doc.roundedRect(bx, y, bw, 23, 2, 2, "FD");
+    doc.roundedRect(bx, y, bw, 36, 2, 2, "FD");
     doc.setFontSize(9); doc.setTextColor(71, 85, 105); doc.setFont("helvetica", "normal");
     doc.text("Mano de obra", bx + 3, y + 6); doc.text(money(t.labor), bx + bw - 3, y + 6, { align: "right" });
     doc.text("Materiales", bx + 3, y + 11.5); doc.text(money(t.mats), bx + bw - 3, y + 11.5, { align: "right" });
     doc.setDrawColor(226, 232, 240); doc.line(bx + 3, y + 14.5, bx + bw - 3, y + 14.5);
     doc.setFont("helvetica", "bold"); doc.setTextColor(15, 23, 42); doc.setFontSize(10.5);
     doc.text("TOTAL", bx + 3, y + 20); doc.text(money(t.total), bx + bw - 3, y + 20, { align: "right" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139);
+    doc.text("Costo interno", bx + 3, y + 26); doc.text(money(c.total), bx + bw - 3, y + 26, { align: "right" });
+    doc.setFont("helvetica", "bold"); doc.setTextColor(margin >= 0 ? 5 : 190, margin >= 0 ? 150 : 24, margin >= 0 ? 105 : 93);
+    doc.text(`Margen (${pct}%)`, bx + 3, y + 32); doc.text(money(margin), bx + bw - 3, y + 32, { align: "right" });
     doc.setFont("helvetica", "normal");
-    y += 29;
+    y += 42;
+  }
+
+  if (internal && (technical.warranty || technical.recurrence || technical.internalNotes || (order.activity || []).length)) {
+    section("Gestión interna");
+    para("Garantía:", technical.warranty); para("Recurrencia:", technical.recurrence); para("Notas internas:", technical.internalNotes);
+    if ((order.activity || []).length) para("Trazabilidad:", (order.activity || []).map((entry) => `${entry.at ? new Date(entry.at).toLocaleString("es-AR") : ""} ${entry.byName || ""}: ${entry.text || ""}`.trim()).join("\n"));
   }
 
   /* Firma */
@@ -147,6 +201,7 @@ export function buildOrderReceiptPDF(order, ger) {
   doc.setDrawColor(148, 163, 184); doc.line(M, y, M + 62, y); y += 4;
   doc.setFontSize(9); doc.setTextColor(71, 85, 105);
   doc.text(`Firma del cliente${order.signedBy ? "  ·  " + order.signedBy : ""}`, M, y);
+  if (technical.signerRole || technical.signerCompany) { y += 4.5; doc.setFontSize(8); doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" · "), M, y); }
   if (order.noSignReason) { y += 5; doc.setFontSize(8); doc.setTextColor(180, 83, 9); doc.text(doc.splitTextToSize(`Orden aprobada sin firma. Motivo: ${order.noSignReason}`, W - 2 * M), M, y); }
 
   /* Pie y numeración */
@@ -154,16 +209,15 @@ export function buildOrderReceiptPDF(order, ger) {
   for (let page = 1; page <= pages; page++) {
     doc.setPage(page); doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-    doc.text(`Generado el ${new Date().toLocaleString("es-AR")}${priced ? "" : " - Documento sin valores monetarios"}`, M, 290);
+    doc.text(`Generado el ${new Date().toLocaleString("es-AR")} - ${internal ? "Uso interno y confidencial" : "Reporte para cliente sin costos internos"}`, M, 290);
     doc.text(`Página ${page} de ${pages}`, W - M, 290, { align: "right" });
   }
 
   return doc;
 }
 
-export function orderReceiptPDF(order, ger) {
-  buildOrderReceiptPDF(order, ger).save(`${order.id}.pdf`);
-}
+export function clientOrderReportPDF(order) { buildOrderReceiptPDF(order, "client").save(`${order.id}_cliente.pdf`); }
+export function internalOrderReportPDF(order) { buildOrderReceiptPDF(order, "internal").save(`${order.id}_interno.pdf`); }
 
 export function monthlyReportPDF(month, monthLabel, rows, sum) {
   const doc = new jsPDF("p", "mm", "a4");
