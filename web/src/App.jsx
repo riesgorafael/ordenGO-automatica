@@ -14,7 +14,7 @@ import { orderReceiptPDF, monthlyReportPDF } from "./pdf";
 /* ===================================== CONFIG ===================================== */
 const CUR = "$";
 const DEFAULT_RATE = 850;
-const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo" };
+const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina" };
 const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#6366f1"];
 const money = (n) => `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -56,6 +56,16 @@ function orderTotals(o) {
   const mats = (o.materials || []).filter((m) => m.billable).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.price) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+function orderCosts(o) {
+  const labor = (Number(o.laborHours) || 0) * (Number(o.laborCost) || 0);
+  const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
+  return { labor, mats, costTotal: labor + mats };
+}
+function orderMargin(o) {
+  const rev = orderTotals(o).total, cost = orderCosts(o).costTotal;
+  return { rev, cost, margin: rev - cost, pct: rev ? (rev - cost) / rev : 0 };
+}
 function downloadFile(name, text) {
   try { const blob = new Blob(["\ufeff" + text], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
@@ -91,6 +101,7 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [parts, setParts] = useState([]);
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
   const [oDetail, setODetail] = useState(null);
@@ -112,7 +123,7 @@ export default function App() {
   const boot = async () => {
     const d = await api.bootstrap();
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setOrders(d.orders); setTasks(d.tasks);
-    setNotifs(d.notifications || []);
+    setNotifs(d.notifications || []); setParts(d.parts || []);
   };
   useEffect(() => { (async () => {
     if (getToken()) { try { await boot(); } catch { setToken(null); } }
@@ -127,6 +138,7 @@ export default function App() {
 
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
+  const isOffice = me.role === "tecnico_oficina"; // solo Mi día + Proyectos
   const userById = (id) => users.find((u) => u.id === id);
 
   /* Órdenes */
@@ -207,17 +219,27 @@ export default function App() {
   const updateClient = async (id, patch) => { const saved = await api.updateClient(id, patch); setClients((p) => p.map((x) => (x.id === id ? saved : x))); };
   const removeClient = async (id) => { await api.deleteClient(id); setClients((p) => p.filter((x) => x.id !== id)); };
 
+  /* Repuestos */
+  const addPart = async (pt) => { const s = await api.addPart(pt); setParts((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [...p, s])); };
+  const updatePart = async (id, patch) => { const s = await api.updatePart(id, patch); setParts((p) => p.map((x) => (x.id === id ? s : x))); };
+  const removePart = async (id) => { await api.deletePart(id); setParts((p) => p.filter((x) => x.id !== id)); };
+  const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
+
   if (module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} me={me} clients={clients} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
+    return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
 
   const modTabs = [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
-    { id: "orders", label: "Órdenes", icon: ClipboardList },
+    ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2 }] : []),
+    ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock }] : []),
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users }] : []),
   ];
+  // Si el módulo activo no está permitido para el rol, caer en "Mi día"
+  const allowedIds = modTabs.map((t) => t.id);
+  const activeModule = allowedIds.includes(module) ? module : "inicio";
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -228,8 +250,8 @@ export default function App() {
             <div className="leading-tight border-l border-ink-800 pl-2.5"><div className="text-sm font-semibold">Orden<span className="text-brand-400">GO</span></div><div className="text-[11px] text-slate-400">Campo + Proyectos</div></div>
           </div>
           <div className="flex items-center gap-2">
-            {module === "orders" && <button onClick={() => setOView("new")} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
-            {module === "projects" && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
+            {activeModule === "orders" && <button onClick={() => setOView("new")} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
+            {activeModule === "projects" && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
             <div className="relative">
               <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" className="relative rounded-lg p-2 text-slate-300 hover:bg-ink-800">
@@ -256,8 +278,8 @@ export default function App() {
         </div>
         <div className="mx-auto hidden max-w-6xl overflow-x-auto px-2 sm:block">
           <nav className="flex gap-1 pb-1">
-            {modTabs.map(({ id, label, icon: Icon }) => (
-              <button key={id} onClick={() => setModule(id)} className={`inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 py-2 text-sm font-medium transition ${module === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}</button>
+            {modTabs.map(({ id, label, icon: Icon, badge }) => (
+              <button key={id} onClick={() => setModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
             ))}
           </nav>
         </div>
@@ -265,9 +287,10 @@ export default function App() {
 
       {!online && <div className="sticky top-0 z-30 bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-white">Sin conexión — revisá tu internet. Los cambios podrían no guardarse.</div>}
       <main className="mx-auto max-w-6xl px-4 py-5 pb-24 sm:pb-5">
-        {module === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { setModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
-        {module === "panel" && isMgr && <Dashboard orders={orders} users={users} onOpen={setODetail} />}
-        {module === "orders" && (
+        {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { setModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
+        {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} onOpen={setODetail} />}
+        {activeModule === "inventory" && isMgr && <Inventory parts={parts} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
+        {activeModule === "orders" && (
           <>
             {isMgr && (
               <div className="mb-4 flex w-fit rounded-lg bg-slate-200 p-0.5">
@@ -281,7 +304,7 @@ export default function App() {
               : <MonthlyReport orders={orders} />}
           </>
         )}
-        {module === "projects" && (
+        {activeModule === "projects" && (
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
@@ -308,8 +331,8 @@ export default function App() {
             })()}
           </>
         )}
-        {module === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
-        {module === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
+        {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
+        {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
 
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
       </main>
@@ -321,16 +344,17 @@ export default function App() {
 
       {/* Barra de navegación inferior (móvil) */}
       <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 backdrop-blur sm:hidden">
-        {modTabs.map(({ id, label, icon: Icon }) => (
-          <button key={id} onClick={() => setModule(id)} className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium ${module === id ? "text-brand-600" : "text-slate-400"}`}>
+        {modTabs.map(({ id, label, icon: Icon, badge }) => (
+          <button key={id} onClick={() => setModule(id)} className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
+            {badge > 0 && <span className="absolute right-1/4 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-rose-500 px-1 text-[8px] font-bold text-white">{badge}</span>}
             <Icon className="h-5 w-5" /> {label}
           </button>
         ))}
       </nav>
 
       {/* Botón de acción flotante (móvil) */}
-      {(module === "orders" || module === "projects") && (
-        <button onClick={() => (module === "orders" ? setOView("new") : setEditing(null))} className="fixed bottom-20 right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={module === "orders" ? "Nueva orden" : "Nueva tarea"}>
+      {(activeModule === "orders" || activeModule === "projects") && (
+        <button onClick={() => (activeModule === "orders" ? setOView("new") : setEditing(null))} className="fixed bottom-20 right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
       )}
@@ -440,6 +464,10 @@ function Dashboard({ orders, users, onOpen }) {
   const oldestPending = pending.reduce((max, o) => Math.max(max, daysSince((o.date || "") + "T00:00:00")), 0);
   const periodOrders = real.filter(inPeriod);
   const ticket = facturadas.filter(inPeriod).length ? periodBilled / facturadas.filter(inPeriod).length : 0;
+  // Margen del período (sobre facturadas)
+  const marginAgg = facturadas.filter(inPeriod).reduce((a, o) => { const m = orderMargin(o); return { rev: a.rev + m.rev, cost: a.cost + m.cost }; }, { rev: 0, cost: 0 });
+  const marginPct = marginAgg.rev ? Math.round(((marginAgg.rev - marginAgg.cost) / marginAgg.rev) * 100) : null;
+  const marginAmount = round2(marginAgg.rev - marginAgg.cost);
 
   // 1) Tendencia 12 meses
   const trend = (() => {
@@ -468,6 +496,11 @@ function Dashboard({ orders, users, onOpen }) {
   const byClient = {};
   periodOrders.forEach((o) => { byClient[o.client] = (byClient[o.client] || 0) + tot(o); });
   const topClients = Object.entries(byClient).map(([name, value]) => ({ name: name.length > 16 ? name.slice(0, 15) + "…" : name, value: Math.round(value) })).sort((a, b) => b.value - a.value).slice(0, 6);
+
+  // 4b) Rentabilidad por cliente (ingreso vs costo) — sobre facturadas del período
+  const byClientRent = {};
+  facturadas.filter(inPeriod).forEach((o) => { const m = orderMargin(o); const k = o.client; if (!byClientRent[k]) byClientRent[k] = { name: k.length > 14 ? k.slice(0, 13) + "…" : k, ingreso: 0, costo: 0 }; byClientRent[k].ingreso += m.rev; byClientRent[k].costo += m.cost; });
+  const rentClients = Object.values(byClientRent).map((r) => ({ ...r, ingreso: Math.round(r.ingreso), costo: Math.round(r.costo) })).sort((a, b) => (b.ingreso - b.costo) - (a.ingreso - a.costo)).slice(0, 6);
 
   // 5) Mix de servicios (período, por monto)
   const byService = {};
@@ -498,6 +531,7 @@ function Dashboard({ orders, users, onOpen }) {
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <div className="flex items-center justify-between"><span className="text-[11px] font-medium text-slate-500">Facturado ({periodLabel})</span><DollarSign className="h-4 w-4 text-emerald-600" /></div>
           <div className="mt-0.5 text-lg font-semibold text-slate-900">{money(periodBilled)}</div>
+          {marginPct != null && <div className="mt-0.5 text-[11px] font-medium text-emerald-600">Margen {marginPct}% · {money(marginAmount)}</div>}
           {variation != null && <div className={`mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium ${variation >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{variation >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}{variation >= 0 ? "+" : ""}{variation}% vs período anterior</div>}
         </div>
         <Metric label="Ticket promedio" value={money(ticket)} icon={ClipboardList} tint="text-brand-600" />
@@ -607,7 +641,25 @@ function Dashboard({ orders, users, onOpen }) {
         )}
       </Panel>
 
-      <p className="text-[11px] text-slate-400">Los importes surgen de las órdenes cargadas. El "tiempo hasta facturar" es exacto en las órdenes con historial de estados; en las anteriores es una estimación.</p>
+      <Panel title={`Rentabilidad por cliente — ingreso vs. costo (${periodLabel})`}>
+        {rentClients.length === 0 ? <Empty text="Sin facturación en el período (o sin costos cargados)." /> : (
+          <div style={{ width: "100%", height: 240 }}>
+            <ResponsiveContainer>
+              <BarChart data={rentClients} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="ingreso" name="Ingreso" fill="#10b981" radius={[5, 5, 0, 0]} />
+                <Bar dataKey="costo" name="Costo" fill="#ef4444" radius={[5, 5, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </Panel>
+
+      <p className="text-[11px] text-slate-400">Los importes surgen de las órdenes cargadas. El "tiempo hasta facturar" es exacto en las órdenes con historial de estados; en las anteriores es una estimación. El margen requiere costos cargados (en el detalle de la orden y en el inventario).</p>
     </div>
   );
 }
@@ -670,7 +722,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
   const monthKey = new Date().toISOString().slice(0, 7);
   const monthOrders = orders.filter((o) => (o.date || "").startsWith(monthKey));
   const monthTotal = monthOrders.reduce((s, o) => s + orderTotals(o).total, 0);
-  const monthPending = monthOrders.filter((o) => o.status !== "Facturada" && o.status !== "Borrador").reduce((s, o) => s + orderTotals(o).total, 0);
+  const monthPending = monthOrders.filter((o) => o.status === "Completada" || o.status === "Aprobada").reduce((s, o) => s + orderTotals(o).total, 0);
   const filtered = orders.filter((o) => (oStatus === "Todas" || o.status === oStatus) && (!oBillable || o.status === "Completada" || o.status === "Aprobada") && `${o.id} ${o.client} ${o.site} ${o.service} ${o.equipo}`.toLowerCase().includes(oQ.toLowerCase()));
   return (
     <div>
@@ -794,11 +846,13 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
   const [rate, setRate] = useState(order.rate || DEFAULT_RATE);
   const [mats, setMats] = useState(order.materials || []);
   const [laborBillable, setLaborBillable] = useState(order.laborBillable);
+  const [laborCost, setLaborCost] = useState(order.laborCost || 0);
   const [sig, setSig] = useState(null); const [sigBy, setSigBy] = useState("");
-  useEffect(() => { setRate(order.rate || DEFAULT_RATE); setMats(order.materials || []); setLaborBillable(order.laborBillable); setSig(null); setSigBy(""); }, [order.id]);
+  useEffect(() => { setRate(order.rate || DEFAULT_RATE); setMats(order.materials || []); setLaborBillable(order.laborBillable); setLaborCost(order.laborCost || 0); setSig(null); setSigBy(""); }, [order.id]);
   const t = orderTotals({ ...order, rate, materials: mats, laborBillable });
-  const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || JSON.stringify(mats) !== JSON.stringify(order.materials));
-  const savePrices = () => onUpdate(order.id, { rate: Number(rate) || 0, materials: mats.map((m) => ({ ...m, price: Number(m.price) || 0, qty: Number(m.qty) || 0 })), laborBillable });
+  const mg = orderMargin({ ...order, rate, materials: mats, laborBillable, laborCost });
+  const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || (order.laborCost || 0) !== Number(laborCost) || JSON.stringify(mats) !== JSON.stringify(order.materials));
+  const savePrices = () => onUpdate(order.id, { rate: Number(rate) || 0, laborCost: Number(laborCost) || 0, materials: mats.map((m) => ({ ...m, price: Number(m.price) || 0, cost: Number(m.cost) || 0, qty: Number(m.qty) || 0 })), laborBillable });
   const approveNoSign = () => { const r = prompt("Motivo para aprobar sin firma del cliente (ej. cliente ausente):"); if (r && r.trim()) onUpdate(order.id, { status: "Aprobada", noSignReason: r.trim() }); };
   const [zoom, setZoom] = useState(null);
   return (
@@ -813,9 +867,10 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
           <section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Mano de obra y materiales</h4><div className="rounded-lg border border-slate-200 p-3 text-sm">
             <div className="flex items-center justify-between text-slate-600"><span>Horas de trabajo</span><span className="font-medium text-slate-800">{order.laborHours || 0} h{order.technicians ? ` · ${order.technicians} téc.` : ""}</span></div>
             {ger && <div className="mt-2 flex items-center gap-2"><span className="text-slate-600">Tarifa/h:</span><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-sm" /><label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={laborBillable} onChange={(e) => setLaborBillable(e.target.checked)} /> Facturable</label></div>}
-            {mats.length > 0 && <ul className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">{mats.map((m, i) => (<li key={i} className="text-sm"><div className="flex items-center justify-between"><span className="text-slate-700">{m.qty}× {m.name || "—"}</span>{ger && <span className="text-xs text-slate-500">{money((m.qty || 0) * (m.price || 0))}</span>}</div>{ger && <div className="mt-1 flex items-center gap-2"><span className="text-xs text-slate-500">P. unit:</span><input type="number" value={m.price} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, price: e.target.value } : y))} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs" /><label className="ml-auto flex items-center gap-1 text-[11px] text-slate-500"><input type="checkbox" checked={m.billable} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, billable: e.target.checked } : y))} /> Facturable</label></div>}</li>))}</ul>}
+            {ger && <div className="mt-1 flex items-center gap-2"><span className="text-slate-500 text-xs">Costo/h (interno):</span><input type="number" value={laborCost} onChange={(e) => setLaborCost(e.target.value)} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs" /></div>}
+            {mats.length > 0 && <ul className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">{mats.map((m, i) => (<li key={i} className="text-sm"><div className="flex items-center justify-between"><span className="text-slate-700">{m.qty}× {m.name || "—"}</span>{ger && <span className="text-xs text-slate-500">{money((m.qty || 0) * (m.price || 0))}</span>}</div>{ger && <div className="mt-1 flex items-center gap-2"><span className="text-xs text-slate-500">P. unit:</span><input type="number" value={m.price} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, price: e.target.value } : y))} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-xs" /><span className="text-xs text-slate-500">Costo:</span><input type="number" value={m.cost ?? ""} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, cost: e.target.value } : y))} className="w-20 rounded-md border border-slate-200 px-2 py-1 text-xs" /><label className="ml-auto flex items-center gap-1 text-[11px] text-slate-500"><input type="checkbox" checked={m.billable} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, billable: e.target.checked } : y))} /> Facturable</label></div>}</li>))}</ul>}
           </div></section>
-          {ger && (<section className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm"><div className="flex items-center justify-between text-slate-600"><span>Mano de obra</span><span className="font-medium text-slate-800">{money(t.labor)}</span></div><div className="flex items-center justify-between text-slate-600"><span>Materiales facturables</span><span className="font-medium text-slate-800">{money(t.mats)}</span></div><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 font-semibold text-slate-900"><span>Total</span><span>{money(t.total)}</span></div>{dirty && <button onClick={savePrices} className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500">Guardar precios</button>}</section>)}
+          {ger && (<section className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm"><div className="flex items-center justify-between text-slate-600"><span>Mano de obra</span><span className="font-medium text-slate-800">{money(t.labor)}</span></div><div className="flex items-center justify-between text-slate-600"><span>Materiales facturables</span><span className="font-medium text-slate-800">{money(t.mats)}</span></div><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 font-semibold text-slate-900"><span>Total</span><span>{money(t.total)}</span></div>{(mg.cost > 0) && <><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 text-slate-500"><span>Costo estimado</span><span>{money(mg.cost)}</span></div><div className="flex items-center justify-between font-semibold text-emerald-700"><span>Margen</span><span>{money(mg.margin)} · {Math.round(mg.pct * 100)}%</span></div></>}{dirty && <button onClick={savePrices} className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500">Guardar precios y costos</button>}</section>)}
           {order.signatureUrl && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Conformidad del cliente</h4>{order.signatureUrl !== "signed" ? <img src={order.signatureUrl} alt="firma" className="h-20 rounded-lg border border-slate-200 bg-white" /> : <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">Firmada</div>}{order.signedBy && <div className="mt-1 text-xs text-slate-500">Firmó: {order.signedBy}</div>}</section>)}
           {!order.signatureUrl && order.status !== "Borrador" && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del cliente</h4><SignaturePad key={order.id} onChange={setSig} /><input value={sigBy} onChange={(e) => setSigBy(e.target.value)} placeholder="Nombre de quien firma" className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /><button disabled={!sig} onClick={() => onUpdate(order.id, { signatureUrl: sig, signedBy: sigBy })} className="mt-2 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Guardar firma</button></section>)}
           <section className="flex flex-wrap gap-2 pt-1">
@@ -837,7 +892,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, me, clients, onSave, onCancel }) {
+function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
   const [clientMode, setClientMode] = useState("existing");
   const [clientId, setClientId] = useState(clients[0]?.id || "");
   const [newClient, setNewClient] = useState({ name: "", site: "" });
@@ -899,7 +954,8 @@ function NewOrder({ ger, me, clients, onSave, onCancel }) {
           {ger && <label className="mt-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={laborBillable} onChange={(e) => setLaborBillable(e.target.checked)} /> Facturable</label>}
         </Section>
         <Section title="Materiales y repuestos usados">
-          <div className="space-y-2">{materials.map((m, i) => (<div key={i} className="flex items-center gap-2"><input value={m.name} onChange={(e) => setMat(i, { name: e.target.value })} placeholder="Descripción del material" className="u-input flex-1" /><input type="number" value={m.qty} onChange={(e) => setMat(i, { qty: e.target.value })} className="u-input w-14" title="Cantidad" />{ger && <input type="number" value={m.price} onChange={(e) => setMat(i, { price: e.target.value })} placeholder="Precio" className="u-input w-20" />}{ger && <button onClick={() => setMat(i, { billable: !m.billable })} className={`rounded-md p-1.5 ${m.billable ? "text-emerald-600" : "text-slate-300"}`}><DollarSign className="h-4 w-4" /></button>}<button onClick={() => delMat(i)} className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div>))}</div>
+          <div className="space-y-2">{materials.map((m, i) => (<div key={i} className="flex items-center gap-2"><input list="parts-list" value={m.name} onChange={(e) => { const v = e.target.value; const hit = parts.find((p) => p.name === v); setMat(i, hit ? { name: v, ...(hit.price !== undefined ? { price: hit.price } : {}), ...(hit.cost !== undefined ? { cost: hit.cost } : {}) } : { name: v }); }} placeholder="Descripción del material" className="u-input flex-1" /><input type="number" value={m.qty} onChange={(e) => setMat(i, { qty: e.target.value })} className="u-input w-14" title="Cantidad" />{ger && <input type="number" value={m.price} onChange={(e) => setMat(i, { price: e.target.value })} placeholder="Precio" className="u-input w-20" />}{ger && <button onClick={() => setMat(i, { billable: !m.billable })} className={`rounded-md p-1.5 ${m.billable ? "text-emerald-600" : "text-slate-300"}`}><DollarSign className="h-4 w-4" /></button>}<button onClick={() => delMat(i)} className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div>))}</div>
+          <datalist id="parts-list">{parts.map((p) => <option key={p.id} value={p.name} />)}</datalist>
           <button onClick={addMaterial} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Plus className="h-3.5 w-3.5" /> Agregar material</button>
           {!ger && <p className="mt-2 text-[11px] text-slate-400">Registra qué materiales usaste y en qué cantidad. Los precios los asigna Gerencia.</p>}
         </Section>
@@ -1030,6 +1086,51 @@ function ChartBox({ data }) {
 }
 
 /* ===================================== EQUIPO (ADMIN) ===================================== */
+/* ===================================== INVENTARIO / REPUESTOS ===================================== */
+function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
+  const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" });
+  const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
+  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: Number(nf.price) || 0, cost: Number(nf.cost) || 0, stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0 }); setNf({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" }); } catch (e) { onErr(e); } };
+  const editNum = (p, field, label) => { const v = prompt(label, p[field] ?? 0); if (v !== null) wrap(onPatch)(p.id, { [field]: Number(v) || 0 }); };
+  const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
+  const sorted = [...parts].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  return (
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div className="lg:col-span-2">
+        {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} repuesto(s) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
+        <Panel title={`Repuestos (${parts.length})`}>
+          <div className="space-y-2">
+            {sorted.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin repuestos cargados</div>}
+            {sorted.map((p) => { const isLow = p.stock <= p.minStock; const margin = p.price ? Math.round((1 - (p.cost || 0) / p.price) * 100) : null; return (
+              <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-800">{p.name}</div><div className="text-xs text-slate-500">Venta {money(p.price)} · Costo {money(p.cost)}{margin != null && <span className="text-emerald-600"> · margen {margin}%</span>}</div></div>
+                <button onClick={() => editNum(p, "stock", "Stock actual:")} className={`rounded-md px-2 py-1 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</button>
+                <button onClick={() => editNum(p, "minStock", "Stock mínimo:")} className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">Mín: {p.minStock}</button>
+                <button onClick={() => editNum(p, "price", "Precio de venta:")} className="rounded-md p-1.5 text-slate-400 hover:text-brand-600"><DollarSign className="h-4 w-4" /></button>
+                <button onClick={() => wrap(onRemove)(p.id)} className="rounded-md p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+              </div>
+            ); })}
+          </div>
+        </Panel>
+      </div>
+      <div><Panel title="Nuevo repuesto">
+        <div className="space-y-2">
+          <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Descripción del repuesto" className="u-input" /></L>
+          <div className="grid grid-cols-2 gap-2">
+            <L label="Unidad"><input value={nf.unit} onChange={(e) => setNf({ ...nf, unit: e.target.value })} placeholder="u / m / kg" className="u-input" /></L>
+            <L label="Stock"><input type="number" value={nf.stock} onChange={(e) => setNf({ ...nf, stock: e.target.value })} className="u-input" /></L>
+            <L label="Precio venta"><input type="number" value={nf.price} onChange={(e) => setNf({ ...nf, price: e.target.value })} className="u-input" /></L>
+            <L label="Costo"><input type="number" value={nf.cost} onChange={(e) => setNf({ ...nf, cost: e.target.value })} className="u-input" /></L>
+            <L label="Stock mínimo"><input type="number" value={nf.minStock} onChange={(e) => setNf({ ...nf, minStock: e.target.value })} className="u-input" /></L>
+          </div>
+          <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar repuesto</button>
+          <p className="text-[11px] text-slate-400">El catálogo autocompleta los materiales al crear una orden. Cuando el stock llega al mínimo, aparece un aviso en esta pestaña.</p>
+        </div>
+      </Panel></div>
+    </div>
+  );
+}
+
 /* ===================================== CLIENTES ===================================== */
 function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", site: "", code: "" });

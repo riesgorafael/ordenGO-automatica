@@ -34,6 +34,10 @@ export const api = {
   updateClient: (id, patch) => req("/clients/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteClient: (id) => req("/clients/" + id, { method: "DELETE" }),
 
+  addPart: (p) => req("/parts", { method: "POST", body: JSON.stringify(p) }),
+  updatePart: (id, patch) => req("/parts/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deletePart: (id) => req("/parts/" + id, { method: "DELETE" }),
+
   createOrder: (o) => req("/orders", { method: "POST", body: JSON.stringify(o) }),
   updateOrder: (id, patch) => req("/orders/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteOrder: (id) => req("/orders/" + id, { method: "DELETE" }),

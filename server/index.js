@@ -27,6 +27,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS orders  ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS tasks   ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS notifications ( id text PRIMARY KEY, user_id text, text text, link text, read boolean DEFAULT false, created_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS parts ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
   `);
   // Migración idempotente para instalaciones existentes
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
@@ -77,6 +78,16 @@ async function initDb() {
     for (const o of orders) await pool.query("INSERT INTO orders(id,data) VALUES($1,$2)", [o.id, o]);
     console.log("→ Datos de demostración sembrados.");
   }
+
+  if ((await pool.query("SELECT count(*)::int n FROM parts")).rows[0].n === 0) {
+    const parts = [
+      { id: "sp1", name: "Ventilador disipador VFD", unit: "u", price: 1200, cost: 780, stock: 4, minStock: 2 },
+      { id: "sp2", name: "Cable de red blindado (m)", unit: "m", price: 350, cost: 210, stock: 120, minStock: 50 },
+      { id: "sp3", name: "Sensor inductivo M12", unit: "u", price: 4200, cost: 2600, stock: 1, minStock: 3 },
+      { id: "sp4", name: "Fuente 24VDC 5A", unit: "u", price: 9800, cost: 6100, stock: 2, minStock: 1 },
+    ];
+    for (const p of parts) await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]);
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
@@ -87,10 +98,10 @@ async function notify(userId, text, link) {
   try { await pool.query("INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4)", [id, userId, text, link || null]); } catch {}
 }
 function stripMoney(o) {
-  const x = { ...o }; delete x.rate; delete x.laborBillable;
-  // El técnico no debe saber si una OT fue facturada: se muestra como "Aprobada"
+  const x = { ...o }; delete x.rate; delete x.laborBillable; delete x.laborCost;
+  // El técnico no ve montos ni si la OT fue facturada
   if (x.status === "Facturada") x.status = "Aprobada";
-  if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; return y; });
+  if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; delete y.cost; return y; });
   return x;
 }
 function codeFromName(name) {
@@ -110,6 +121,8 @@ function auth(req, res, next) {
   try { req.user = jwt.verify(t, JWT_SECRET); next(); } catch { res.status(401).json({ error: "Token inválido" }); }
 }
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: "No autorizado" });
+// Roles "técnicos" (campo u oficina): nunca ven importes ni el estado "Facturada"
+const isTec = (r) => r === "tecnico" || r === "tecnico_oficina";
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
 app.post("/api/auth/login", async (req, res) => {
@@ -135,8 +148,8 @@ app.post("/api/me/password", auth, async (req, res) => {
 
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
-  const tec = req.user.role === "tecnico";
-  const [me, u, cl, pr, or, ta, no] = await Promise.all([
+  const tec = isTec(req.user.role);
+  const [me, u, cl, pr, or, ta, no, pa] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -144,7 +157,9 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC"),
     pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
+    pool.query("SELECT data FROM parts ORDER BY data->>'name'"),
   ]);
+  const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   res.json({
     me: pubUser(me.rows[0]),
     users: u.rows.map(pubUser),
@@ -153,6 +168,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     orders: or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
+    parts: pa.rows.map((r) => partOut(r.data)),
   });
 });
 
@@ -224,6 +240,27 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
   res.status(204).end();
 });
 
+/* ------------------------------------------------ Repuestos / Inventario ------------------------------------------------ */
+app.post("/api/parts", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const p = { ...(req.body || {}) }; if (!p.id) p.id = "sp" + Date.now();
+  ["price", "cost", "stock", "minStock"].forEach((k) => { if (p[k] !== undefined) p[k] = Number(p[k]) || 0; });
+  await pool.query("INSERT INTO parts(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [p.id, p]);
+  res.json(p);
+});
+app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM parts WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  const patch = { ...(req.body || {}) };
+  ["price", "cost", "stock", "minStock"].forEach((k) => { if (patch[k] !== undefined) patch[k] = Number(patch[k]) || 0; });
+  const merged = { ...rows[0].data, ...patch, id: req.params.id };
+  await pool.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  res.json(merged);
+});
+app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  await pool.query("DELETE FROM parts WHERE id=$1", [req.params.id]);
+  res.status(204).end();
+});
+
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
 const TEC_PATCH = ["signatureUrl", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "status", "location", "laborHours", "technicians", "contact"];
 
@@ -237,21 +274,21 @@ app.post("/api/orders", auth, async (req, res) => {
     const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id LIKE $1", [`OT-${code}-${year}-%`])).rows[0].c + 1;
     o.id = `OT-${code}-${year}-${String(n).padStart(3, "0")}`;
   }
-  if (req.user.role === "tecnico") {
+  if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
-    o.rate = Number(process.env.DEFAULT_RATE) || 0; o.laborBillable = true;
-    if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, price: 0, billable: true }));
+    o.rate = Number(process.env.DEFAULT_RATE) || 0; o.laborBillable = true; o.laborCost = 0;
+    if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, price: 0, cost: 0, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
   await pool.query("INSERT INTO orders(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [o.id, o]);
-  res.json(req.user.role === "tecnico" ? stripMoney(o) : o);
+  res.json(isTec(req.user.role) ? stripMoney(o) : o);
 });
 
 app.patch("/api/orders/:id", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM orders WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   let patch = req.body || {};
-  if (req.user.role === "tecnico") {
+  if (isTec(req.user.role)) {
     const clean = {}; for (const k of TEC_PATCH) if (k in patch) clean[k] = patch[k];
     if (clean.status === "Facturada") delete clean.status;
     patch = clean;
@@ -262,7 +299,7 @@ app.patch("/api/orders/:id", auth, async (req, res) => {
     merged.activity = [...(prev.activity || []), { type: "status", text: `Cambió el estado a ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   }
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
-  res.json(req.user.role === "tecnico" ? stripMoney(merged) : merged);
+  res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
 });
 
 app.post("/api/orders/:id/comment", auth, async (req, res) => {
@@ -272,7 +309,7 @@ app.post("/api/orders/:id/comment", auth, async (req, res) => {
   if (!text) return res.status(400).json({ error: "Comentario vacío" });
   const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
-  res.json(req.user.role === "tecnico" ? stripMoney(merged) : merged);
+  res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
 });
 
 app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
