@@ -5,7 +5,7 @@ import {
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
-  Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown,
+  Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -113,6 +113,7 @@ export default function App() {
   const [pwOpen, setPwOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [pStale, setPStale] = useState(false);
   const [prefill, setPrefill] = useState(null);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
@@ -248,6 +249,10 @@ export default function App() {
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
   const activeModule = allowedIds.includes(module) ? module : "inicio";
+  const mobilePrimaryTabs = modTabs.length > 5 ? modTabs.slice(0, 4) : modTabs;
+  const mobileExtraTabs = modTabs.length > 5 ? modTabs.slice(4) : [];
+  const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
+  const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -354,14 +359,41 @@ export default function App() {
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
 
+      {/* Menú secundario móvil */}
+      {mobileMoreOpen && mobileExtraTabs.length > 0 && (
+        <div className="fixed inset-0 z-40 flex items-end bg-slate-900/40 sm:hidden" onClick={() => setMobileMoreOpen(false)}>
+          <div className="mobile-sheet-content w-full rounded-t-2xl bg-white p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <div><h2 className="text-base font-semibold text-slate-900">Más opciones</h2><p className="text-xs text-slate-500">Gestión y administración</p></div>
+              <button onClick={() => setMobileMoreOpen(false)} aria-label="Cerrar más opciones" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+            </div>
+            <nav className="grid grid-cols-1 gap-2" aria-label="Más opciones de navegación">
+              {mobileExtraTabs.map(({ id, label, icon: Icon, badge }) => (
+                <button key={id} onClick={() => { setModule(id); setMobileMoreOpen(false); }} className={`flex min-h-14 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left ${activeModule === id ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+                  <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${activeModule === id ? "bg-brand-100" : "bg-slate-100"}`}><Icon className="h-5 w-5" /></span>
+                  <span className="min-w-0 flex-1 text-sm font-medium">{label}</span>
+                  {badge > 0 && <span className="grid h-6 min-w-6 place-items-center rounded-full bg-rose-500 px-1.5 text-xs font-bold text-white">{badge}</span>}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </div>
+      )}
+
       {/* Barra de navegación inferior (móvil) */}
       <nav className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 backdrop-blur sm:hidden" aria-label="Navegación principal">
-        {modTabs.map(({ id, label, icon: Icon, badge }) => (
-          <button key={id} onClick={() => setModule(id)} title={label} aria-label={label} className={`mobile-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
+        {mobilePrimaryTabs.map(({ id, label, icon: Icon, badge }) => (
+          <button key={id} onClick={() => { setModule(id); setMobileMoreOpen(false); }} title={label} aria-label={label} className={`mobile-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
             {badge > 0 && <span className="absolute right-1/4 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-rose-500 px-1 text-[8px] font-bold text-white">{badge}</span>}
             <Icon className="h-5 w-5" /><span className="mobile-nav-label">{label}</span>
           </button>
         ))}
+        {mobileExtraTabs.length > 0 && (
+          <button onClick={() => setMobileMoreOpen((open) => !open)} title="Más" aria-label="Más opciones" aria-expanded={mobileMoreOpen} className={`mobile-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium ${mobileMoreActive || mobileMoreOpen ? "text-brand-600" : "text-slate-400"}`}>
+            {mobileMoreBadge > 0 && <span className="absolute right-1/4 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-rose-500 px-1 text-[8px] font-bold text-white">{mobileMoreBadge}</span>}
+            <Menu className="h-5 w-5" /><span className="mobile-nav-label">Más</span>
+          </button>
+        )}
       </nav>
 
       {/* Botón de acción flotante (móvil) */}
