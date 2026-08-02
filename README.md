@@ -133,7 +133,34 @@ PORT = 3000
 - La clave de Anthropic vive solo en el servidor; el navegador nunca la ve.
 - Los montos (tarifas, precios, totales) se filtran en el backend para el rol Técnico: aunque alguien inspeccione la red, no los recibe.
 
+## Panel de dirección (gerencia/admin)
+- Indicadores: facturado del período con variación vs. período anterior, ticket promedio, por facturar (con antigüedad de la más vieja) y órdenes del período.
+- Gráficos: tendencia de facturación 12 meses, cobranzas por antigüedad (aging), embudo del ciclo de la orden con tiempo promedio hasta facturar, top clientes, mix de servicios (dona) y productividad por técnico.
+- Selector de período (mes / trimestre / año). Solo visible para gerencia y administración.
+
+## Rediseño de interfaz (identidad AUTOMATICA ARG)
+- Marca aplicada: logo de la empresa en encabezado y login, color primario naranja (#F18700) y encabezado gris carbón (#2E2E2D).
+- Navegación inferior en móvil + botón de acción flotante (FAB) para crear.
+- Notificaciones (toasts) para éxito y error, en lugar de avisos del navegador.
+- Banner de "sin conexión", zoom de fotos en el detalle de orden, objetivos táctiles más grandes y respeto por "reduce motion".
+- El logo (claro/oscuro) vive en web/src/logo.js; la paleta de marca en web/src/index.css (@theme).
+
+## Mejoras incluidas en esta versión
+- Notificaciones dentro de la app (campana) al asignar tareas o comentar.
+- Historial de actividad y comentarios en órdenes y tareas.
+- Pestaña "Mi día" con pendientes personales.
+- Tablero con antigüedad, alerta de tareas estancadas y límites de trabajo en curso (WIP).
+- Cierre/aprobación de orden sin firma con motivo justificado.
+- Duplicar orden y crear tarea de seguimiento desde una orden.
+- Cambio de contraseña forzado en el primer ingreso de nuevos empleados.
+- Comprobante PDF con el logo de la empresa y registro fotográfico integrado.
+- Gestión de clientes (alta/edición/eliminación) con **código único** por cliente.
+- Número de OT codificado por cliente (ej. OT-LDV-2026-001) para identificarlo de un vistazo.
+- Los técnicos de campo no ven si una orden fue facturada.
+
 ## Qué se puede agregar después
+- Notificaciones por correo electrónico (requiere configurar un servidor SMTP).
+- Modo sin conexión (PWA) para trabajo de campo sin señal.
 - Recuperación de contraseña por correo (el cambio de contraseña por el propio usuario ya está incluido).
 - Integración con facturación electrónica fiscal (el comprobante PDF por orden y el reporte mensual por cliente ya están incluidos).
 - Comentarios/actividad por orden y por tarea; vínculo entre una orden de campo y una tarea de proyecto.

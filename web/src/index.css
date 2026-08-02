@@ -1,4 +1,21 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand-50: #FFF7ED;
+  --color-brand-100: #FEEBCD;
+  --color-brand-200: #FBD9A5;
+  --color-brand-300: #F9C06B;
+  --color-brand-400: #F5A623;
+  --color-brand-500: #F18700;
+  --color-brand-600: #D67300;
+  --color-brand-700: #A85800;
+  --color-ink-800: #3A3A38;
+  --color-ink-900: #2E2E2D;
+}
+
 html, body, #root { height: 100%; }
 body { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}

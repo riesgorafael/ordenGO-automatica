@@ -45,7 +45,7 @@ export function orderReceiptPDF(order, ger) {
   if (order.tech) kv("Técnico:", order.tech);
   y += 2;
 
-  const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(2, 132, 199); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
+  const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(241, 135, 0); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
   const para = (label, val) => {
     if (!val) return; brk(10);
     doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(label + " ", M, y);
