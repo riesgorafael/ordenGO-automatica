@@ -6,10 +6,12 @@ import {
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu,
+  WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
 import { orderReceiptPDF, monthlyReportPDF } from "./pdf";
+import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, saveOrderDraft, updateQueuedOrder } from "./offline";
 
 /* ===================================== CONFIG ===================================== */
 const CUR = "$";
@@ -78,6 +80,7 @@ const daysSince = (iso) => { if (!iso) return 0; return Math.floor((Date.now() -
 const STALE_DAYS = 4; // días sin cambios para marcar "estancada"
 const WIP_LIMITS = { "En progreso": 5, "En revisión": 3 }; // límites de trabajo en curso por columna
 const isStale = (t) => t.status !== "Hecho" && daysSince(t._updatedAt) >= STALE_DAYS;
+const readPreference = (key, fallback) => { try { return { ...fallback, ...JSON.parse(localStorage.getItem(key) || "{}") }; } catch { return fallback; } };
 
 const Chip = ({ children, className = "" }) => (<span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
 const Box = ({ children, className = "" }) => (<div className={`rounded-xl border border-slate-200 bg-white ${className}`}>{children}</div>);
@@ -94,6 +97,8 @@ const HealthBar = ({ v, color }) => (<div className="h-2 w-full rounded-full bg-
 
 /* ===================================== APP ===================================== */
 export default function App() {
+  const savedOrderFilters = useMemo(() => readPreference("ordengo_order_filters", { q: "", status: "Todas", billable: false }), []);
+  const savedProjectFilters = useMemo(() => readPreference("ordengo_project_filters", { project: "all", q: "", mine: false, stale: false }), []);
   const [booting, setBooting] = useState(true);
   const [me, setMe] = useState(null);
   const [users, setUsers] = useState([]);
@@ -105,23 +110,28 @@ export default function App() {
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
   const [oDetail, setODetail] = useState(null);
-  const [oQ, setOQ] = useState(""); const [oStatus, setOStatus] = useState("Todas"); const [oBillable, setOBillable] = useState(false);
+  const [oQ, setOQ] = useState(savedOrderFilters.q); const [oStatus, setOStatus] = useState(savedOrderFilters.status); const [oBillable, setOBillable] = useState(savedOrderFilters.billable);
   const [oTab, setOTab] = useState("list");
   const [pTab, setPTab] = useState("board");
-  const [pProj, setPProj] = useState("all"); const [pQ, setPQ] = useState(""); const [pMine, setPMine] = useState(false);
+  const [pProj, setPProj] = useState(savedProjectFilters.project); const [pQ, setPQ] = useState(savedProjectFilters.q); const [pMine, setPMine] = useState(savedProjectFilters.mine);
   const [editing, setEditing] = useState(undefined);
   const [pwOpen, setPwOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
-  const [pStale, setPStale] = useState(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [projectEditor, setProjectEditor] = useState(null);
+  const [pStale, setPStale] = useState(savedProjectFilters.stale);
   const [prefill, setPrefill] = useState(null);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
   const [dupProj, setDupProj] = useState(null); // proyecto a duplicar
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  const [offlineCount, setOfflineCount] = useState(() => offlineQueueSize());
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type }]); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500); };
   useEffect(() => { const on = () => setOnline(true), off = () => setOnline(false); window.addEventListener("online", on); window.addEventListener("offline", off); return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); }; }, []);
+  useEffect(() => { const openSearch = (e) => { if ((e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) { e.preventDefault(); setGlobalSearchOpen(true); } }; window.addEventListener("keydown", openSearch); return () => window.removeEventListener("keydown", openSearch); }, []);
 
   const boot = async () => {
     const d = await api.bootstrap();
@@ -132,6 +142,27 @@ export default function App() {
     if (getToken()) { try { await boot(); } catch { setToken(null); } }
     setBooting(false);
   })(); }, []);
+  useEffect(() => { try { localStorage.setItem("ordengo_order_filters", JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} }, [oQ, oStatus, oBillable]);
+  useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} }, [pProj, pQ, pMine, pStale]);
+
+  useEffect(() => {
+    if (!online || !me || !offlineCount) return;
+    (async () => {
+      const result = await flushOfflineQueue(async ({ type, payload }) => {
+        if (type === "order:create") {
+          const order = { ...payload };
+          delete order._localId;
+          if (order._newClient) { const client = await api.addClient(order._newClient); order.client = client.name; order.site = order.site || client.site; delete order._newClient; }
+          delete order.id; await api.createOrder(order); return;
+        }
+        if (type === "order:update") return api.updateOrder(payload.id, payload.patch);
+        if (type === "task:save") return api.saveTask(payload);
+        if (type === "task:update") return api.updateTask(payload.id, payload.patch);
+      });
+      setOfflineCount(result.remaining);
+      if (result.sent) { await boot(); toast(`${result.sent} cambio(s) sincronizado(s)`, "success"); }
+    })();
+  }, [online, me, offlineCount]);
 
   const logout = () => { setToken(null); setMe(null); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
@@ -146,15 +177,25 @@ export default function App() {
 
   /* Órdenes */
   const onSaveOrder = async (o) => {
+    if (!online) {
+      const localId = `PEND-${Date.now().toString(36).slice(-5).toUpperCase()}`;
+      queueOfflineOperation("order:create", { ...o, _localId: localId });
+      const local = { ...o, id: localId, _offline: true };
+      setOrders((p) => [local, ...p]); setOfflineCount(offlineQueueSize()); setOView("list"); toast("Orden guardada en el teléfono. Se enviará al recuperar conexión.", "success"); return true;
+    }
     try {
       if (o._newClient) { const c = await api.addClient(o._newClient); setClients((p) => (p.some((x) => x.id === c.id) ? p : [...p, c])); o.client = c.name; o.site = o.site || c.site; }
       delete o._newClient; delete o.id; // el servidor asigna el folio con el código del cliente
       const saved = await api.createOrder(o);
-      setOrders((p) => [saved, ...p]); setOView("list"); toast(`Orden ${saved.id} creada`, "success");
-    } catch (e) { err(e); }
+      setOrders((p) => [saved, ...p]); setOView("list"); toast(`Orden ${saved.id} creada`, "success"); return true;
+    } catch (e) { err(e); return false; }
   };
-  const updateOrder = async (id, patch) => { try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); } catch (e) { err(e); } };
-  const deleteOrder = async (id) => { if (!window.confirm(`¿Eliminar la orden ${id}? Esta acción no se puede deshacer.`)) return; try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } };
+  const updateOrder = async (id, patch) => {
+    if (id.startsWith("PEND-")) { updateQueuedOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...patch, _offline: true } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return; }
+    if (!online) { queueOfflineOperation("order:update", { id, patch }); setOfflineCount(offlineQueueSize()); setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...patch, _offline: true } : o))); toast("Cambio guardado para sincronizar", "success"); return; }
+    try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); } catch (e) { err(e); }
+  };
+  const deleteOrder = (id) => setConfirmDialog({ title: `Eliminar ${id}`, message: "La orden y su historial se eliminarán de forma permanente.", confirmLabel: "Eliminar orden", danger: true, action: async () => { try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } } });
   const exportCSV = (rows, name) => {
     const head = ["Folio", "Fecha", "Cliente", "Sitio", "Tipo", "Estado", "Horas", "Mano de obra", "Materiales", "Total"];
     const lines = rows.map((o) => { const t = orderTotals(o); return [o.id, o.date, o.client, o.site, o.service, o.status, o.laborHours, t.labor.toFixed(2), t.mats.toFixed(2), t.total.toFixed(2)].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","); });
@@ -162,29 +203,25 @@ export default function App() {
   };
 
   /* Proyectos */
-  const onSaveTask = async (t) => { try { const s = await api.saveTask(t); setTasks((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [s, ...p])); setEditing(undefined); } catch (e) { err(e); } };
+  const onSaveTask = async (t) => {
+    if (!online) { queueOfflineOperation("task:save", t); setOfflineCount(offlineQueueSize()); setTasks((p) => (p.some((x) => x.id === t.id) ? p.map((x) => x.id === t.id ? { ...t, _offline: true } : x) : [{ ...t, _offline: true }, ...p])); setEditing(undefined); toast("Tarea guardada para sincronizar", "success"); return; }
+    try { const s = await api.saveTask(t); setTasks((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [s, ...p])); setEditing(undefined); } catch (e) { err(e); }
+  };
   const onDeleteTask = async (id) => { try { await api.deleteTask(id); setTasks((p) => p.filter((x) => x.id !== id)); setEditing(undefined); } catch (e) { err(e); } };
   const moveTask = async (id, dir) => {
     const t = tasks.find((x) => x.id === id); if (!t) return;
     const i = T_STATUS.indexOf(t.status); const status = T_STATUS[Math.min(T_STATUS.length - 1, Math.max(0, i + dir))];
+    if (!online) { queueOfflineOperation("task:update", { id, patch: { status } }); setOfflineCount(offlineQueueSize()); setTasks((p) => p.map((x) => x.id === id ? { ...x, status, _offline: true } : x)); return; }
     try { const u = await api.updateTask(id, { status }); setTasks((p) => p.map((x) => (x.id === id ? u : x))); } catch (e) { err(e); }
   };
   const nextTaskId = (projectId) => { const key = projects.find((p) => p.id === projectId)?.key || "TASK"; const n = Math.max(0, ...tasks.filter((t) => t.id.startsWith(key + "-")).map((t) => parseInt(t.id.split("-")[1], 10) || 0)) + 1; return `${key}-${n}`; };
-  const createProject = async () => {
-    const name = prompt("Nombre del proyecto:"); if (!name) return;
-    const key = (prompt("Clave (ej. AUT):") || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
-    try { const p = await api.createProject({ key, name, color: PALETTE[projects.length % PALETTE.length] }); setProjects((x) => [...x, p]); } catch (e) { err(e); }
-  };
-  const editProject = async (id) => {
-    const cur = projects.find((p) => p.id === id); if (!cur) return;
-    const name = prompt("Nuevo nombre del proyecto:", cur.name); if (!name) return;
-    try { const p = await api.updateProject(id, { name }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); } catch (e) { err(e); }
-  };
+  const createProject = () => setProjectEditor({ mode: "create", name: "", key: "PRJ", color: PALETTE[projects.length % PALETTE.length] });
+  const editProject = (id) => { const current = projects.find((p) => p.id === id); if (current) setProjectEditor({ mode: "edit", ...current }); };
+  const saveProjectEditor = async (form) => { try { if (form.mode === "create") { const project = await api.createProject({ name: form.name, key: form.key, color: form.color }); setProjects((items) => [...items, project]); } else { const project = await api.updateProject(form.id, { name: form.name, color: form.color }); setProjects((items) => items.map((item) => item.id === form.id ? project : item)); } setProjectEditor(null); toast("Proyecto guardado", "success"); } catch (e) { err(e); } };
   const deleteProject = async (id) => {
     const cur = projects.find((p) => p.id === id); if (!cur) return;
     const n = tasks.filter((t) => t.project === id).length;
-    if (!window.confirm(`¿Eliminar el proyecto "${cur.name}"${n ? ` y sus ${n} tarea(s)` : ""}? Esta acción no se puede deshacer.`)) return;
-    try { await api.deleteProject(id); setProjects((x) => x.filter((y) => y.id !== id)); setTasks((x) => x.filter((t) => t.project !== id)); setPProj("all"); } catch (e) { err(e); }
+    setConfirmDialog({ title: `Eliminar ${cur.name}`, message: `Se eliminará el proyecto${n ? ` junto con ${n} tarea(s)` : ""}. Esta acción no se puede deshacer.`, confirmLabel: "Eliminar proyecto", danger: true, action: async () => { try { await api.deleteProject(id); setProjects((x) => x.filter((y) => y.id !== id)); setTasks((x) => x.filter((t) => t.project !== id)); setPProj("all"); } catch (e) { err(e); } } });
   };
   const saveAccess = async (id, allowedUsers) => {
     try { const p = await api.updateProject(id, { allowedUsers }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); setAccessProj(null); toast("Accesos actualizados", "success"); } catch (e) { err(e); }
@@ -266,6 +303,7 @@ export default function App() {
             {activeModule === "orders" && <button onClick={() => setOView("new")} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
             {activeModule === "projects" && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
+            <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><Search className="h-4 w-4" /></button>
             <div className="relative">
               <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" className="relative rounded-lg p-2 text-slate-300 hover:bg-ink-800">
                 <Bell className="h-4 w-4" />
@@ -298,10 +336,10 @@ export default function App() {
         </div>
       </header>
 
-      {!online && <div className="sticky top-0 z-30 bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-white">Sin conexión — revisá tu internet. Los cambios podrían no guardarse.</div>}
+      {(!online || offlineCount > 0) && <div className={`sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online ? "bg-brand-600" : "bg-amber-600"}`}>{online ? <Loader2 className="h-4 w-4 animate-spin" /> : <WifiOff className="h-4 w-4" />}{online ? `Sincronizando ${offlineCount} cambio(s)…` : `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.`}</div>}
       <main className="mx-auto max-w-6xl px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { setModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
-        {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} onOpen={setODetail} />}
+        {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { setModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "inventory") setModule("inventory"); else if (destination === "projects") { setModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "inventory" && isMgr && <Inventory parts={parts} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
         {activeModule === "orders" && (
           <>
@@ -342,7 +380,7 @@ export default function App() {
             </div>
             {(() => {
               const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (!pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
-              return (pTab === "reports" && isMgr) ? <Reports tasks={vis} users={users} projects={projects} proj={pProj} /> : <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} />;
+              return (pTab === "reports" && isMgr) ? <Reports tasks={vis} users={users} projects={projects} proj={pProj} /> : isMgr ? <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} /> : <FieldTaskList tasks={vis} projects={projects} onOpen={setEditing} onMove={moveTask} />;
             })()}
           </>
         )}
@@ -358,6 +396,9 @@ export default function App() {
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
+      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} isMgr={isMgr} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { setModule("orders"); setODetail(result.item); } else if (result.kind === "task") { setModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "client") setModule("clients"); else if (result.kind === "part") setModule("inventory"); }} />}
+      {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
+      {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
       {/* Menú secundario móvil */}
       {mobileMoreOpen && mobileExtraTabs.length > 0 && (
@@ -513,12 +554,65 @@ function ChangePassword({ onClose, forced, onDone }) {
   );
 }
 
+function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger, onClose, onConfirm }) {
+  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="mobile-sheet-content w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl ${danger ? "bg-rose-50 text-rose-600" : "bg-brand-50 text-brand-600"}`}>{danger ? <Trash2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</div><h2 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-2 text-sm leading-relaxed text-slate-500">{message}</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={onConfirm} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-brand-500 hover:bg-brand-400"}`}>{confirmLabel}</button></div></div></div>;
+}
+
+function ProjectEditor({ value, onClose, onSave }) {
+  const [form, setForm] = useState(value);
+  const set = (patch) => setForm((current) => ({ ...current, ...patch }));
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
+}
+
+function GlobalSearch({ orders, tasks, clients, parts, projects, isMgr, onClose, onSelect }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const projectById = (id) => projects.find((p) => p.id === id);
+  const results = useMemo(() => {
+    if (!q) return [];
+    const found = [
+      ...orders.filter((o) => `${o.id} ${o.client} ${o.site} ${o.equipo || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "order", item, title: `${item.id} · ${item.client}`, meta: `${item.site || "Sin sitio"} · ${item.status}`, icon: ClipboardList })),
+      ...tasks.filter((t) => `${t.id} ${t.title} ${t.desc || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "task", item, title: `${item.id} · ${item.title}`, meta: `${projectById(item.project)?.name || "Proyecto"} · ${item.status}`, icon: ListTodo })),
+      ...(isMgr ? clients.filter((c) => `${c.name} ${c.site || ""} ${c.code || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "client", item, title: item.name, meta: `Cliente · ${item.site || "Sin ubicación"}`, icon: Building2 })) : []),
+      ...(isMgr ? parts.filter((p) => `${p.name} ${p.unit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "part", item, title: item.name, meta: `Inventario · Stock ${item.stock ?? "—"}`, icon: Wrench })) : []),
+    ];
+    return found.slice(0, 12);
+  }, [q, orders, tasks, clients, parts, projects, isMgr]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-3 pt-[8vh] sm:p-6 sm:pt-[12vh]" onClick={onClose}>
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3"><Search className="h-5 w-5 shrink-0 text-slate-400" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && onClose()} placeholder="Buscar órdenes, tareas, clientes o repuestos…" className="min-w-0 flex-1 border-0 bg-transparent text-base text-slate-900 outline-none" /><button onClick={onClose} aria-label="Cerrar búsqueda" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="max-h-[65vh] overflow-y-auto p-2">
+          {!q && <div className="px-3 py-8 text-center text-sm text-slate-400">Escribí para buscar en toda la aplicación.</div>}
+          {q && !results.length && <div className="px-3 py-8 text-center text-sm text-slate-400">No encontramos resultados para “{query}”.</div>}
+          {results.map((result, index) => { const Icon = result.icon; return <button key={`${result.kind}-${result.item.id || index}`} onClick={() => onSelect(result)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-slate-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500"><Icon className="h-5 w-5" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-slate-800">{result.title}</span><span className="block truncate text-xs text-slate-500">{result.meta}</span></span><ChevronRight className="h-4 w-4 text-slate-300" /></button>; })}
+        </div>
+        <div className="hidden border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400 sm:block">Atajo: Ctrl/⌘ + K</div>
+      </div>
+    </div>
+  );
+}
+
+function ActionCenter({ orders, tasks, parts, onGo }) {
+  const pendingBilling = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada").length;
+  const overdue = tasks.filter(isOverdue).length;
+  const stale = tasks.filter(isStale).length;
+  const low = parts.filter((p) => Number(p.stock) <= Number(p.minStock)).length;
+  const actions = [
+    { id: "billing", label: "Listas para facturar", value: pendingBilling, icon: DollarSign, tone: "text-amber-700 bg-amber-50 border-amber-200" },
+    { id: "projects", label: "Tareas vencidas", value: overdue, icon: AlertTriangle, tone: "text-rose-700 bg-rose-50 border-rose-200" },
+    { id: "projects", label: "Tareas estancadas", value: stale, icon: Clock, tone: "text-violet-700 bg-violet-50 border-violet-200" },
+    { id: "inventory", label: "Stock crítico", value: low, icon: Wrench, tone: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+  ];
+  return <section className="rounded-xl border border-slate-200 bg-white p-4"><div className="mb-3"><h3 className="text-sm font-semibold text-slate-900">Prioridades de hoy</h3><p className="text-xs text-slate-500">Acciones que requieren atención.</p></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{actions.map(({ id, label, value, icon: Icon, tone }, index) => <button key={`${id}-${index}`} onClick={() => onGo(id)} className={`flex min-w-0 items-center gap-2 rounded-lg border p-2.5 text-left ${tone}`}><Icon className="h-4 w-4 shrink-0" /><span className="min-w-0 flex-1"><span className="block text-lg font-semibold leading-none">{value}</span><span className="mt-1 block text-[11px] leading-tight">{label}</span></span><ChevronRight className="h-4 w-4 shrink-0 opacity-50" /></button>)}</div></section>;
+}
+
 /* ===================================== PANEL DE DIRECCIÓN ===================================== */
 const PIE_COLORS = ["#F18700", "#0ea5e9", "#10b981", "#8b5cf6", "#ef4444", "#f59e0b", "#14b8a6"];
 const monthKey = (d) => (d || "").slice(0, 7);
 const monthLabelShort = (ym) => { const [y, m] = ym.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("es-MX", { month: "short" }).replace(".", ""); };
 
-function Dashboard({ orders, users, onOpen }) {
+function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
   const [period, setPeriod] = useState("mes"); // mes | trim | anio
   const now = new Date();
   const startOf = { mes: new Date(now.getFullYear(), now.getMonth(), 1), trim: new Date(now.getFullYear(), now.getMonth() - 2, 1), anio: new Date(now.getFullYear(), 0, 1) }[period];
@@ -599,6 +693,8 @@ function Dashboard({ orders, users, onOpen }) {
           ))}
         </div>
       </div>
+
+      <ActionCenter orders={orders} tasks={tasks} parts={parts} onGo={onGo} />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -831,6 +927,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-semibold text-slate-800">{o.id}</span>
                 <Chip className={O_STYLE[o.status]}>{o.status}</Chip>
+                {o._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente de sincronizar</Chip>}
                 {o.category && <Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{o.category}</Chip>}
                 <span className="ml-auto text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{o.laborHours || 0} h</span>}</span>
               </div>
@@ -922,19 +1019,20 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
   const [laborBillable, setLaborBillable] = useState(order.laborBillable);
   const [laborCost, setLaborCost] = useState(order.laborCost || 0);
   const [sig, setSig] = useState(null); const [sigBy, setSigBy] = useState("");
+  const [noSignOpen, setNoSignOpen] = useState(false);
   useEffect(() => { setRate(order.rate || DEFAULT_RATE); setMats(order.materials || []); setLaborBillable(order.laborBillable); setLaborCost(order.laborCost || 0); setSig(null); setSigBy(""); }, [order.id]);
   const t = orderTotals({ ...order, rate, materials: mats, laborBillable });
   const mg = orderMargin({ ...order, rate, materials: mats, laborBillable, laborCost });
   const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || (order.laborCost || 0) !== Number(laborCost) || JSON.stringify(mats) !== JSON.stringify(order.materials));
   const savePrices = () => onUpdate(order.id, { rate: Number(rate) || 0, laborCost: Number(laborCost) || 0, materials: mats.map((m) => ({ ...m, price: Number(m.price) || 0, cost: Number(m.cost) || 0, qty: Number(m.qty) || 0 })), laborBillable });
-  const approveNoSign = () => { const r = prompt("Motivo para aprobar sin firma del cliente (ej. cliente ausente):"); if (r && r.trim()) onUpdate(order.id, { status: "Aprobada", noSignReason: r.trim() }); };
+  const shareOrder = async () => { const text = `${order.id} · ${order.client}\n${order.site || ""}\n${order.service} · ${order.status}`; if (navigator.share) { try { await navigator.share({ title: `Orden ${order.id}`, text }); } catch {} } else { try { await navigator.clipboard.writeText(text); } catch {} } };
   const [zoom, setZoom] = useState(null);
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="mobile-dialog w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-3"><div className="flex items-center gap-2"><span className="font-mono text-sm font-semibold text-slate-800">{order.id}</span><Chip className={O_STYLE[order.status]}>{order.status}</Chip></div><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="mobile-sheet-content space-y-4 p-4 sm:p-5">
-          <section><div className="text-base font-semibold text-slate-900">{order.client}</div><div className="text-sm text-slate-500">{order.site}{order.contact ? ` · ${order.contact}` : ""}</div><div className="mt-1 text-xs text-slate-500">{order.service} · {order.date}{order.tech ? ` · Técnico: ${order.tech}` : ""}</div>{order.location && <div className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{order.location.lat.toFixed(4)}, {order.location.lng.toFixed(4)}</div>}</section>
+          <section><div className="text-base font-semibold text-slate-900">{order.client}</div><div className="text-sm text-slate-500">{order.site}{order.contact ? ` · ${order.contact}` : ""}</div><div className="mt-1 text-xs text-slate-500">{order.service} · {order.date}{order.tech ? ` · Técnico: ${order.tech}` : ""}</div><div className="mt-3 flex flex-wrap gap-2">{order.contactPhone && <a href={`tel:${order.contactPhone}`} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600"><Phone className="h-4 w-4" /> Llamar</a>}{order.location && <a href={`https://www.google.com/maps/search/?api=1&query=${order.location.lat},${order.location.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600"><Navigation className="h-4 w-4" /> Abrir mapa</a>}<button onClick={shareOrder} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600"><ExternalLink className="h-4 w-4" /> Compartir</button></div></section>
           {(order.equipo || order.sintoma || order.solucion) && (<section className="rounded-lg bg-slate-50 p-3 text-sm">{order.equipo && <p><span className="font-medium text-slate-700">Equipo:</span> {order.equipo}</p>}{order.sintoma && <p className="mt-1"><span className="font-medium text-slate-700">Síntoma:</span> {order.sintoma}</p>}{order.solucion && <p className="mt-1"><span className="font-medium text-slate-700">Trabajo:</span> {order.solucion}</p>}</section>)}
           {order.noSignReason && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700">Cerrada sin firma. Motivo: {order.noSignReason}</div>}
           {order.photos && order.photos.length > 0 && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Evidencia</h4><div className="flex flex-wrap gap-2">{order.photos.map((p, i) => (<button key={i} onClick={() => setZoom(p)} className="relative" aria-label={`Ampliar foto ${p.cat || ""}`}><img src={p.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span></button>))}</div></section>)}
@@ -949,7 +1047,7 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
           {!order.signatureUrl && order.status !== "Borrador" && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del cliente</h4><SignaturePad key={order.id} onChange={setSig} /><input value={sigBy} onChange={(e) => setSigBy(e.target.value)} placeholder="Nombre de quien firma" className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /><button disabled={!sig} onClick={() => onUpdate(order.id, { signatureUrl: sig, signedBy: sigBy })} className="mt-2 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Guardar firma</button></section>)}
           <section className="flex flex-wrap gap-2 pt-1">
             {canAdvance && <button disabled={needSign} onClick={() => onAdvance(order.id, next)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Marcar {next}</button>}
-            {needSign && <button onClick={approveNoSign} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
+            {needSign && <button onClick={() => setNoSignOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
             {next === "Facturada" && !ger && <span className="self-center text-xs text-slate-400">La facturación la realiza Gerencia.</span>}
             <button onClick={() => orderReceiptPDF(order, ger)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Comprobante PDF</button>
             {ger && onExport && <button onClick={() => onExport(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Exportar</button>}
@@ -961,24 +1059,33 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
         </div>
       </div>
       {zoom && <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4" onClick={(e) => { e.stopPropagation(); setZoom(null); }}><img src={zoom.url} alt={zoom.cat} className="max-h-[90vh] max-w-full rounded-lg" /><button className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white"><X className="h-5 w-5" /></button></div>}
+      {noSignOpen && <ReasonDialog onClose={() => setNoSignOpen(false)} onConfirm={(reason) => { onUpdate(order.id, { status: "Aprobada", noSignReason: reason }); setNoSignOpen(false); }} />}
     </div>
   );
 }
 
+function ReasonDialog({ onClose, onConfirm }) {
+  const [reason, setReason] = useState("");
+  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onClick={(e) => { e.stopPropagation(); onClose(); }}><div className="mobile-sheet-content w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600"><AlertTriangle className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Aprobar sin firma</h2><p className="mt-1 text-xs text-slate-500">Registrá el motivo para mantener la trazabilidad de la orden.</p></div></div><L label="Motivo"><textarea autoFocus rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej. Cliente ausente; conformidad recibida por teléfono" className="u-input resize-none" /></L><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!reason.trim()} onClick={() => onConfirm(reason.trim())} className="rounded-lg bg-amber-600 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Aprobar</button></div></div></div>;
+}
+
 /* ===================================== ÓRDENES: NUEVA ===================================== */
 function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
-  const [clientMode, setClientMode] = useState("existing");
-  const [clientId, setClientId] = useState(clients[0]?.id || "");
-  const [newClient, setNewClient] = useState({ name: "", site: "" });
-  const [contact, setContact] = useState(""); const [tech, setTech] = useState(me.name);
-  const [service, setService] = useState(SERVICE_TYPES[1]);
-  const [equipo, setEquipo] = useState(""); const [sintoma, setSintoma] = useState(""); const [solucion, setSolucion] = useState(""); const [category, setCategory] = useState("");
+  const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
+  const [step, setStep] = useState(draft?.step || 0);
+  const [clientMode, setClientMode] = useState(draft?.clientMode || "existing");
+  const [clientId, setClientId] = useState(draft?.clientId || clients[0]?.id || "");
+  const [newClient, setNewClient] = useState(draft?.newClient || { name: "", site: "" });
+  const [contact, setContact] = useState(draft?.contact || ""); const [tech, setTech] = useState(draft?.tech || me.name);
+  const [service, setService] = useState(draft?.service || SERVICE_TYPES[1]);
+  const [equipo, setEquipo] = useState(draft?.equipo || ""); const [sintoma, setSintoma] = useState(draft?.sintoma || ""); const [solucion, setSolucion] = useState(draft?.solucion || ""); const [category, setCategory] = useState(draft?.category || "");
   const [photos, setPhotos] = useState([]); const [analyzing, setAnalyzing] = useState(false);
-  const [rate, setRate] = useState(DEFAULT_RATE); const [laborHours, setLaborHours] = useState(""); const [technicians, setTechnicians] = useState(1); const [laborBillable, setLaborBillable] = useState(true);
-  const [materials, setMaterials] = useState([]); const [location, setLocation] = useState(null); const [geoMsg, setGeoMsg] = useState("");
+  const [rate, setRate] = useState(draft?.rate ?? DEFAULT_RATE); const [laborHours, setLaborHours] = useState(draft?.laborHours || ""); const [technicians, setTechnicians] = useState(draft?.technicians || 1); const [laborBillable, setLaborBillable] = useState(draft?.laborBillable ?? true);
+  const [materials, setMaterials] = useState(draft?.materials || []); const [location, setLocation] = useState(draft?.location || null); const [geoMsg, setGeoMsg] = useState("");
   const [signatureUrl, setSignatureUrl] = useState(null); const [signedBy, setSignedBy] = useState("");
   const [noSignReason, setNoSignReason] = useState("");
   const [saving, setSaving] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(!!draft);
   const [running, setRunning] = useState(false); const startRef = useRef(0); const [elapsed, setElapsed] = useState(0);
   useEffect(() => { if (!running) return; const t = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000); return () => clearInterval(t); }, [running]);
   const toggleTimer = () => { if (!running) { startRef.current = Date.now() - elapsed * 1000; setRunning(true); } else { setRunning(false); setLaborHours((elapsed / 3600 + (Number(laborHours) || 0)).toFixed(2)); setElapsed(0); } };
@@ -994,16 +1101,24 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
   const preview = orderTotals({ laborHours, rate, laborBillable, materials });
   const canSave = client && client.name && (laborHours || materials.length || solucion);
   const canComplete = canSave && (!!signatureUrl || !!noSignReason.trim());
+  const steps = ["Cliente", "Trabajo", "Recursos", "Cierre"];
+  const stepReady = step === 0 ? !!client?.name : step === 1 ? !!(equipo || solucion || photos.length) : step === 2 ? !!(laborHours || materials.length) : canComplete;
+  useEffect(() => {
+    const timer = setTimeout(() => { saveOrderDraft(me.id, { step, clientMode, clientId, newClient, contact, tech, service, equipo, sintoma, solucion, category, rate, laborHours, technicians, laborBillable, materials, location }); setDraftSaved(true); }, 500);
+    setDraftSaved(false); return () => clearTimeout(timer);
+  }, [me.id, step, clientMode, clientId, newClient, contact, tech, service, equipo, sintoma, solucion, category, rate, laborHours, technicians, laborBillable, materials, location]);
   const save = async (status) => {
     setSaving(true);
     const o = { client: client.name, site: client.site || "", contact, tech, service, date: todayStr(), createdAt: new Date().toISOString(), equipo, sintoma, solucion, category, location, photos, signatureUrl, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), laborHours: Number(laborHours) || 0, technicians: Number(technicians) || 1, rate: Number(rate) || DEFAULT_RATE, laborBillable, materials: materials.map((m) => ({ ...m, qty: Number(m.qty) || 0, price: Number(m.price) || 0 })), status };
     if (clientMode === "new" && newClient.name) o._newClient = { id: "c" + Date.now(), name: newClient.name, site: newClient.site };
-    await onSave(o); setSaving(false);
+    const saved = await onSave(o); if (saved) clearOrderDraft(me.id); setSaving(false);
   };
   return (
     <div className="min-h-screen bg-slate-100" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
-      <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100"><div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-3"><button onClick={onCancel} className="rounded-md p-1 text-slate-300 hover:bg-ink-800"><ChevronLeft className="h-5 w-5" /></button><div className="leading-tight"><div className="text-sm font-semibold">Nueva orden</div><div className="font-mono text-[11px] text-brand-400">{folioPreview}</div></div></div></header>
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100"><div className="mx-auto max-w-lg px-3 py-3 sm:px-4"><div className="flex items-center gap-3"><button onClick={onCancel} aria-label="Volver" className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800"><ChevronLeft className="h-5 w-5" /></button><div className="min-w-0 flex-1 leading-tight"><div className="text-sm font-semibold">Nueva orden · {steps[step]}</div><div className="font-mono text-[11px] text-brand-400">{folioPreview}</div></div><span className={`text-[11px] ${draftSaved ? "text-emerald-400" : "text-slate-400"}`}>{draftSaved ? "Guardado" : "Guardando…"}</span></div><div className="mt-3 grid grid-cols-4 gap-1">{steps.map((label, index) => <button key={label} onClick={() => index <= step && setStep(index)} className="text-left" aria-label={`Paso ${index + 1}: ${label}`}><span className={`block h-1.5 rounded-full ${index <= step ? "bg-brand-500" : "bg-slate-700"}`} /><span className={`mt-1 block truncate text-[9px] ${index === step ? "text-white" : "text-slate-500"}`}>{label}</span></button>)}</div></div></header>
       <main className="mx-auto max-w-lg space-y-4 px-3 py-4 pb-40 sm:px-4 sm:py-5 sm:pb-32">
+        {draft && <div className="flex items-start gap-2 rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-700"><RefreshCw className="mt-0.5 h-4 w-4 shrink-0" />Recuperamos el borrador guardado en este teléfono.</div>}
+        {step === 0 && (<>
         <Section title="Cliente y sitio">
           <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => setClientMode("existing")}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => setClientMode("new")}>Cliente nuevo</Toggle></div>
           {clientMode === "existing" ? (<select value={clientId} onChange={(e) => setClientId(e.target.value)} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name} — {c.site}</option>)}</select>) : (<div className="space-y-2"><input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className="u-input" /><input value={newClient.site} onChange={(e) => setNewClient({ ...newClient, site: e.target.value })} placeholder="Sitio / ubicación" className="u-input" /></div>)}
@@ -1012,6 +1127,8 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
           <div className="mt-2 flex items-center gap-2"><button onClick={captureLocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><MapPin className="h-3.5 w-3.5" /> Capturar ubicación</button>{location && <span className="text-xs text-emerald-600">{location.lat.toFixed(4)}, {location.lng.toFixed(4)}</span>}{geoMsg && <span className="text-xs text-slate-500">{geoMsg}</span>}</div>
         </Section>
         <Section title="Tipo de servicio"><div className="flex flex-wrap gap-2">{SERVICE_TYPES.map((s) => (<button key={s} onClick={() => setService(s)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${service === s ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}>{s}</button>))}</div></Section>
+        </>)}
+        {step === 1 && (
         <Section title="Documentación del trabajo">
           <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-500"><Sparkles className="h-3.5 w-3.5 text-brand-500" /> Las fotos autocompletan equipo y descripción con IA</div>
           <div className="grid grid-cols-3 gap-2"><PhotoBtn icon={Camera} label="Antes" cat="antes" capture onPick={addPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" capture onPick={addPhoto} /><PhotoBtn icon={Upload} label="Después" cat="después" onPick={addPhoto} /></div>
@@ -1022,6 +1139,8 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
           <input value={sintoma} onChange={(e) => setSintoma(e.target.value)} placeholder="Síntoma o falla reportada" className="u-input mt-2" />
           <textarea value={solucion} onChange={(e) => setSolucion(e.target.value)} rows={3} placeholder="Trabajo realizado / solución aplicada" className="u-input mt-2 resize-none" />
         </Section>
+        )}
+        {step === 2 && (<>
         <Section title="Mano de obra">
           <div className="flex items-center gap-2"><button onClick={toggleTimer} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-white ${running ? "bg-rose-500 hover:bg-rose-400" : "bg-emerald-600 hover:bg-emerald-500"}`}>{running ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />} {running ? "Detener" : "Cronómetro"}</button>{(running || elapsed > 0) && <span className="font-mono text-sm text-slate-600"><Clock className="mr-1 inline h-3.5 w-3.5" />{fmt}</span>}</div>
           <div className={`mt-2 grid gap-2 ${ger ? "grid-cols-2 min-[430px]:grid-cols-3" : "grid-cols-2"}`}><L label="Horas"><input type="number" value={laborHours} onChange={(e) => setLaborHours(e.target.value)} placeholder="0" className="u-input" /></L><L label="Técnicos"><input type="number" value={technicians} onChange={(e) => setTechnicians(e.target.value)} className="u-input" /></L>{ger && <L label="Tarifa/h"><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} className="u-input" /></L>}</div>
@@ -1033,10 +1152,13 @@ function NewOrder({ ger, me, clients, parts = [], onSave, onCancel }) {
           <button onClick={addMaterial} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Plus className="h-3.5 w-3.5" /> Agregar material</button>
           {!ger && <p className="mt-2 text-[11px] text-slate-400">Registra qué materiales usaste y en qué cantidad. Los precios los asigna Gerencia.</p>}
         </Section>
+        </>)}
+        {step === 3 && (<>
         <Section title="Conformidad del cliente"><SignaturePad onChange={setSignatureUrl} /><input value={signedBy} onChange={(e) => setSignedBy(e.target.value)} placeholder="Nombre de quien firma" className="u-input mt-2" />{!signatureUrl && (<div className="mt-2"><p className="mb-1 text-[11px] text-amber-600">Se recomienda la firma del cliente. Si no es posible, indica el motivo para poder completar igual:</p><input value={noSignReason} onChange={(e) => setNoSignReason(e.target.value)} placeholder="Motivo (ej. cliente ausente)" className="u-input" /></div>)}</Section>
-        {ger && (<Box className="p-4"><div className="flex items-center justify-between text-sm text-slate-600"><span>Mano de obra</span><span>{money(preview.labor)}</span></div><div className="flex items-center justify-between text-sm text-slate-600"><span>Materiales</span><span>{money(preview.mats)}</span></div><div className="mt-1 flex items-center justify-between border-t border-slate-100 pt-1 text-base font-semibold text-slate-900"><span>Total</span><span>{money(preview.total)}</span></div></Box>)}
+        <Box className="p-4"><h3 className="mb-3 text-sm font-semibold text-slate-900">Resumen antes de enviar</h3><div className="space-y-1.5 text-sm text-slate-600"><div className="flex justify-between gap-3"><span>Cliente</span><span className="text-right font-medium text-slate-800">{client?.name || "—"}</span></div><div className="flex justify-between gap-3"><span>Servicio</span><span className="text-right font-medium text-slate-800">{service}</span></div><div className="flex justify-between gap-3"><span>Horas</span><span className="font-medium text-slate-800">{laborHours || 0}</span></div><div className="flex justify-between gap-3"><span>Materiales</span><span className="font-medium text-slate-800">{materials.length}</span></div>{ger && <><div className="flex justify-between gap-3 border-t border-slate-100 pt-2"><span>Mano de obra</span><span>{money(preview.labor)}</span></div><div className="flex justify-between gap-3"><span>Materiales</span><span>{money(preview.mats)}</span></div><div className="flex justify-between gap-3 font-semibold text-slate-900"><span>Total</span><span>{money(preview.total)}</span></div></>}</div></Box>
+        </>)}
       </main>
-      <div className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-4"><div className="mx-auto max-w-lg">{canSave && !signatureUrl && !noSignReason.trim() && <div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-600"><FileSignature className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Para completar, capta la firma o indica un motivo. También puedes guardar como borrador.</div>}<div className="grid grid-cols-2 gap-2"><button disabled={saving} onClick={() => save("Borrador")} className="min-w-0 rounded-lg border border-slate-200 px-2 py-2.5 text-sm font-medium leading-tight text-slate-600 hover:bg-slate-50 disabled:opacity-50">Guardar borrador</button><button onClick={() => save("Completada")} disabled={!canComplete || saving} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-lg bg-brand-500 px-2 py-2.5 text-sm font-semibold leading-tight text-white hover:bg-brand-400 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />} Guardar y completar</button></div></div></div>
+      <div className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-4"><div className="mx-auto max-w-lg">{step === 3 && canSave && !signatureUrl && !noSignReason.trim() && <div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-600"><FileSignature className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Para completar, capta la firma o indica un motivo.</div>}<div className="grid grid-cols-[auto_1fr_auto] gap-2">{step > 0 ? <button onClick={() => setStep((value) => value - 1)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Atrás</button> : <button disabled={saving || !canSave} onClick={() => save("Borrador")} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 disabled:opacity-50">Borrador</button>}<div />{step < steps.length - 1 ? <button onClick={() => setStep((value) => value + 1)} disabled={!stepReady} className="inline-flex items-center gap-1 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Continuar <ChevronRight className="h-4 w-4" /></button> : <button onClick={() => save("Completada")} disabled={!canComplete || saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />} Completar orden</button>}</div></div></div>
     </div>
   );
 }
@@ -1056,6 +1178,18 @@ function SignaturePad({ onChange }) {
 }
 
 /* ===================================== PROYECTOS: TABLERO ===================================== */
+function FieldTaskList({ tasks, projects, onOpen, onMove }) {
+  const open = tasks.filter((t) => t.status !== "Hecho");
+  const groups = [
+    { id: "overdue", title: "Vencidas", items: open.filter(isOverdue), tone: "border-rose-200 bg-rose-50/50", icon: AlertTriangle },
+    { id: "today", title: "Para hoy", items: open.filter((t) => t.due === todayStr()), tone: "border-brand-200 bg-brand-50/40", icon: Calendar },
+    { id: "active", title: "En progreso", items: open.filter((t) => t.status === "En progreso" && !isOverdue(t) && t.due !== todayStr()), tone: "border-violet-200 bg-violet-50/40", icon: Clock },
+    { id: "upcoming", title: "Próximas", items: open.filter((t) => !isOverdue(t) && t.due !== todayStr() && t.status !== "En progreso"), tone: "border-slate-200 bg-white", icon: ListTodo },
+  ];
+  const projectById = (id) => projects.find((p) => p.id === id);
+  return <div className="space-y-4">{groups.map(({ id, title, items, tone, icon: Icon }) => items.length > 0 && <section key={id}><div className="mb-2 flex items-center gap-2"><Icon className="h-4 w-4 text-slate-500" /><h3 className="text-sm font-semibold text-slate-800">{title}</h3><span className="rounded-full bg-slate-200 px-2 text-xs text-slate-600">{items.length}</span></div><div className="space-y-2">{items.map((task) => { const index = T_STATUS.indexOf(task.status); return <article key={task.id} className={`rounded-xl border p-3 ${tone}`}><button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><Chip className={`${prioMeta[task.priority]} ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip>{task._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente</Chip>}</div><h4 className="mt-2 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><p className="mt-1 text-xs text-slate-500">{projectById(task.project)?.name || task.id}{task.due ? ` · ${task.due}` : ""}</p></button><div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3"><span className="text-xs font-medium text-slate-600">{task.status}</span><button onClick={() => onOpen(task)} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Ver detalle</button>{index < T_STATUS.length - 1 && <button onClick={() => onMove(task.id, 1)} className="rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white">Avanzar</button>}</div></article>; })}</div></section>)}</div>;
+}
+
 function Board({ tasks, userById, onOpen, onMove }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1229,14 +1363,14 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" });
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({});
+  const [pendingDelete, setPendingDelete] = useState(null);
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
   const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: Number(nf.price) || 0, cost: Number(nf.cost) || 0, stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0 }); setNf({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" }); } catch (e) { onErr(e); } };
   const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, stock: p.stock ?? 0, minStock: p.minStock ?? 0 }); };
   const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), unit: ef.unit.trim() || "u", price: Number(ef.price) || 0, cost: Number(ef.cost) || 0, stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0 }); setEditId(null); } catch (e) { onErr(e); } };
-  const del = (p) => { if (window.confirm(`¿Eliminar el repuesto "${p.name}"?`)) wrap(onRemove)(p.id); };
   const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
   const sorted = [...parts].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  return (
+  return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2">
         {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} repuesto(s) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
@@ -1276,7 +1410,7 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
                     <span className={`rounded-md px-2 py-1.5 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
                     <span className="rounded-md border border-slate-200 bg-white/60 px-2 py-1.5 text-xs text-slate-500">Mín: {p.minStock}</span>
                     <button onClick={() => startEdit(p)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
-                    <button onClick={() => del(p)} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                    <button onClick={() => setPendingDelete(p)} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </div>
               );
@@ -1299,12 +1433,15 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
         </div>
       </Panel></div>
     </div>
-  );
+    {pendingDelete && <ConfirmDialog title="Eliminar repuesto" message={`Se eliminará “${pendingDelete.name}” del catálogo. Esta acción no modifica órdenes anteriores.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
+  </>;
 }
 
 /* ===================================== CLIENTES ===================================== */
 function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", site: "", code: "" });
+  const [editingClient, setEditingClient] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
   const suggest = (name) => (name || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
   const add = async () => {
     if (!nf.name.trim()) return;
@@ -1312,11 +1449,7 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
     catch (e) { onErr(e); }
   };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
-  const editName = (c) => { const v = prompt("Nombre del cliente:", c.name); if (v && v.trim()) wrap(onPatch)(c.id, { name: v.trim() }); };
-  const editSite = (c) => { const v = prompt("Sitio / ubicación:", c.site || ""); if (v !== null) wrap(onPatch)(c.id, { site: v.trim() }); };
-  const editCode = (c) => { const v = prompt("Código del cliente (aparece en el N° de OT):", c.code || ""); if (v && v.trim()) wrap(onPatch)(c.id, { code: v.trim().toUpperCase() }); };
-  const del = (c) => { const n = orders.filter((o) => (o.client || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()).length; if (window.confirm(`¿Eliminar el cliente "${c.name}"?${n ? ` Tiene ${n} orden(es) asociadas (no se borran).` : ""}`)) wrap(onRemove)(c.id); };
-  return (
+  return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2"><Panel title={`Clientes (${clients.length})`}>
         <div className="space-y-2">
@@ -1326,10 +1459,8 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
               <span className="grid h-9 min-w-[3rem] place-items-center rounded-md bg-slate-800 px-2 font-mono text-xs font-bold text-white" title="Código del cliente">{c.code || "—"}</span>
               <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{c.name}</div><div className="break-words text-xs text-slate-500">{c.site || "—"} · {ords} orden(es)</div></div>
               <div className="flex w-full items-center justify-end gap-1 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
-                <button onClick={() => editCode(c)} title="Editar código" className="rounded-md border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Código</button>
-                <button onClick={() => editName(c)} title="Editar nombre" aria-label="Editar nombre" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-slate-50 hover:text-brand-600"><Pencil className="h-4 w-4" /></button>
-                <button onClick={() => editSite(c)} title="Editar sitio" aria-label="Editar sitio" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-slate-50 hover:text-brand-600"><MapPin className="h-4 w-4" /></button>
-                <button onClick={() => del(c)} title="Eliminar" aria-label="Eliminar cliente" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                <button onClick={() => setEditingClient(c)} title="Editar cliente" className="inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
+                <button onClick={() => setPendingDelete(c)} title="Eliminar" aria-label="Eliminar cliente" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
               </div>
             </div>
           ); })}
@@ -1345,14 +1476,23 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
         </div>
       </Panel></div>
     </div>
-  );
+    {editingClient && <ClientEditor value={editingClient} onClose={() => setEditingClient(null)} onSave={async (form) => { await wrap(onPatch)(editingClient.id, form); setEditingClient(null); }} />}
+    {pendingDelete && <ConfirmDialog title="Eliminar cliente" message={`Se eliminará “${pendingDelete.name}”. ${orders.filter((o) => (o.client || "").trim().toLowerCase() === (pendingDelete.name || "").trim().toLowerCase()).length || "No tiene"} orden(es) asociadas permanecerán en el historial.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
+  </>;
+}
+
+function ClientEditor({ value, onClose, onSave }) {
+  const [form, setForm] = useState({ name: value.name || "", site: value.site || "", code: value.code || "" });
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="u-input" /></L><L label="Sitio / ubicación"><input value={form.site} onChange={(e) => setForm({ ...form, site: e.target.value })} className="u-input" /></L><L label="Código"><input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" /></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.code.trim()} onClick={() => onSave({ name: form.name.trim(), site: form.site.trim(), code: form.code.trim() })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
 }
 
 function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "" });
+  const [passwordUser, setPasswordUser] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
   const add = async () => { if (!nf.name.trim() || !nf.email.trim()) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "" }); } catch (e) { onErr(e); } };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
-  return (
+  return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2"><Panel title={`Empleados (${users.length}) · directorio compartido`}>
         <div className="space-y-2">{users.map((u) => { const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
@@ -1362,7 +1502,8 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
-              <button onClick={() => wrap(onRemove)(u.id)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
+              <button onClick={() => setPasswordUser(u)} title="Restablecer contraseña" aria-label={`Restablecer contraseña de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><KeyRound className="h-4 w-4" /></button>
+              <button onClick={() => setPendingDelete(u)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
             </div>
           </div>
         ); })}</div>
@@ -1371,5 +1512,14 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="(opcional; usa la de por defecto)" className="u-input" /></L><L label="Rol"><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L><button onClick={add} disabled={!nf.name.trim() || !nf.email.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">Este directorio se usa en Órdenes y en Proyectos. El técnico luego cambia su contraseña con el administrador.</p></div>
       </Panel></div>
     </div>
-  );
+    {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { await wrap(onPatch)(passwordUser.id, { password }); setPasswordUser(null); }} />}
+    {pendingDelete && <ConfirmDialog title="Eliminar empleado" message={`Se eliminará el acceso de “${pendingDelete.name}”. Sus órdenes y tareas históricas no se borrarán.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
+  </>;
+}
+
+function PasswordResetDialog({ user, onClose, onSave }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const valid = password.length >= 6 && password === confirm;
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-50 text-brand-600"><KeyRound className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Restablecer contraseña</h2><p className="text-xs text-slate-500">{user.name} deberá cambiarla al ingresar.</p></div></div><div className="space-y-3"><L label="Contraseña temporal"><input autoFocus type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="u-input" /></L><L label="Repetir contraseña"><input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="u-input" /></L>{confirm && password !== confirm && <p className="text-xs text-rose-600">Las contraseñas no coinciden.</p>}<p className="text-[11px] text-slate-400">Mínimo 6 caracteres.</p></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!valid} onClick={() => onSave(password)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Restablecer</button></div></div></div>;
 }

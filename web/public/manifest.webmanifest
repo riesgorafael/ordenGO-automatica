@@ -1,0 +1,11 @@
+{
+  "name": "OrdenGO Suite",
+  "short_name": "OrdenGO",
+  "description": "Órdenes de campo, proyectos e inventario para AUTOMATICA ARG.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f1f5f9",
+  "theme_color": "#2E2E2D",
+  "lang": "es",
+  "categories": ["business", "productivity"]
+}

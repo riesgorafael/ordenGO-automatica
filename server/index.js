@@ -12,8 +12,37 @@ const JWT_SECRET = process.env.JWT_SECRET || "cambia-esto-en-produccion";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const app = express();
-app.use(cors());
+app.disable("x-powered-by");
+const allowedOrigins = String(process.env.CORS_ORIGIN || "").split(",").map((value) => value.trim()).filter(Boolean);
+app.use(cors(allowedOrigins.length ? {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Origen no permitido"));
+  },
+} : { origin: false }));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()");
+  next();
+});
 app.use(express.json({ limit: "12mb" }));
+
+const loginAttempts = new Map();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+function loginRateLimit(req, res, next) {
+  const key = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  const entry = !current || now - current.startedAt > LOGIN_WINDOW_MS ? { count: 0, startedAt: now } : current;
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) return res.status(429).json({ error: "Demasiados intentos. Espera 15 minutos e inténtalo nuevamente." });
+  entry.count += 1;
+  loginAttempts.set(key, entry);
+  req.loginAttemptKey = key;
+  next();
+}
 
 /* ------------------------------------------------ DB init + seed ------------------------------------------------ */
 async function initDb() {
@@ -133,12 +162,13 @@ async function tecCanProject(user, projectId) {
 }
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { email, password } = req.body || {};
   const { rows } = await pool.query("SELECT * FROM users WHERE email=$1", [String(email || "").toLowerCase()]);
   const u = rows[0];
   if (!u || !u.active || !bcrypt.compareSync(password || "", u.password_hash))
     return res.status(401).json({ error: "Correo o contraseña inválidos" });
+  loginAttempts.delete(req.loginAttemptKey);
   const token = jwt.sign({ id: u.id, role: u.role, name: u.name }, JWT_SECRET, { expiresIn: "7d" });
   res.json({ token, user: pubUser(u) });
 });
@@ -419,7 +449,11 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   if (active !== undefined) { sets.push(`active=$${i++}`); vals.push(active); }
   if (name !== undefined) { sets.push(`name=$${i++}`); vals.push(name); }
   if (color !== undefined) { sets.push(`color=$${i++}`); vals.push(color); }
-  if (password) { sets.push(`password_hash=$${i++}`); vals.push(bcrypt.hashSync(password, 10)); }
+  if (password) {
+    if (String(password).length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+    sets.push(`password_hash=$${i++}`); vals.push(bcrypt.hashSync(password, 10));
+    sets.push("mustchangepassword=true");
+  }
   if (!sets.length) return res.status(400).json({ error: "Nada que actualizar" });
   vals.push(req.params.id);
   await pool.query(`UPDATE users SET ${sets.join(",")} WHERE id=$${i}`, vals);
