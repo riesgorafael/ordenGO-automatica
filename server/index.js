@@ -157,6 +157,19 @@ async function initDb() {
     }
     await pool.query("INSERT INTO app_settings(key,value) VALUES('default_rate_usd_50_v1',$1)", [{ currency: "USD", defaultRate: 50 }]);
   }
+
+  // Completa órdenes históricas que habían quedado con materiales en cero.
+  const materialPriceMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='order_inventory_prices_v1'");
+  if (materialPriceMigration.rowCount === 0) {
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    for (const row of orderRows.rows) {
+      const materials = await materialsFromInventory(row.data.materials, true);
+      if (JSON.stringify(materials) !== JSON.stringify(row.data.materials || [])) {
+        await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, materials }]);
+      }
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('order_inventory_prices_v1',$1)", [{ source: "parts", currency: "USD" }]);
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
@@ -172,6 +185,27 @@ function stripMoney(o) {
   if (x.status === "Facturada") x.status = "Aprobada";
   if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; delete y.cost; return y; });
   return x;
+}
+async function materialsFromInventory(materials, onlyMissing = false) {
+  if (!Array.isArray(materials) || materials.length === 0) return [];
+  const inventory = (await pool.query("SELECT data FROM parts")).rows.map((row) => row.data);
+  return materials.map((material) => {
+    const normalizedName = String(material.name || "").trim().toLowerCase();
+    const part = inventory.find((item) => (material.partId && item.id === material.partId) || String(item.name || "").trim().toLowerCase() === normalizedName);
+    if (!part) return material;
+    return {
+      ...material,
+      partId: part.id,
+      name: part.name,
+      unit: part.unit || material.unit,
+      price: onlyMissing && Number(material.price) > 0 ? Number(material.price) : (Number(part.price) || 0),
+      cost: onlyMissing && Number(material.cost) > 0 ? Number(material.cost) : (Number(part.cost) || 0),
+      partNumber: material.partNumber || part.partNumber || "",
+      brand: material.brand || part.brand || "",
+      model: material.model || part.model || "",
+      supplier: material.supplier || part.supplier || "",
+    };
+  });
 }
 function codeFromName(name) {
   return (String(name || "CLI").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3)) || "CLI";
@@ -396,6 +430,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
   o.currency = "USD";
   if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
+  o.materials = await materialsFromInventory(o.materials);
   if (!o.id) {
     const year = new Date().getFullYear();
     const cl = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data)
@@ -407,7 +442,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
     o.rate = Number(process.env.DEFAULT_RATE) || 50; o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
-    if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, price: 0, cost: 0, billable: true }));
+    if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
   await pool.query("INSERT INTO orders(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [o.id, o]);
