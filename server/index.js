@@ -236,6 +236,30 @@ const billableHoursValue = (order, now = Date.now()) => {
   const onSiteMs = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
   return onSiteMs > 0 && onSiteMs < 3600000 ? 2 : Math.round((effective + waiting) * 100) / 100;
 };
+const timelineErrorsValue = (technical, now = Date.now()) => {
+  const errors = [];
+  const points = [["aviso", technical?.reportedAt], ["llegada", technical?.arrivalAt], ["inicio", technical?.startedAt], ["finalización", technical?.completedAt]]
+    .filter(([, value]) => value)
+    .map(([label, value]) => [label, new Date(value).getTime()]);
+  for (let index = 1; index < points.length; index += 1) {
+    if (!Number.isFinite(points[index - 1][1]) || !Number.isFinite(points[index][1]) || points[index][1] < points[index - 1][1]) errors.push(`La ${points[index][0]} no puede ser anterior al ${points[index - 1][0]}.`);
+  }
+  const arrival = technical?.arrivalAt ? new Date(technical.arrivalAt).getTime() : NaN;
+  const end = technical?.completedAt ? new Date(technical.completedAt).getTime() : now;
+  if (Number.isFinite(arrival) && Number.isFinite(end) && end >= arrival) {
+    const onSiteMinutes = Math.max(1, Math.ceil((end - arrival) / 60000));
+    const sessions = Array.isArray(technical?.workSessions) ? technical.workSessions : [];
+    const effectiveMs = sessions.length ? sessions.reduce((total, session) => {
+      const start = new Date(session.start).getTime(); const sessionEnd = new Date(session.end || end).getTime();
+      return total + (Number.isFinite(start) && Number.isFinite(sessionEnd) ? Math.max(0, sessionEnd - start) : 0);
+    }, 0) : (technical?.startedAt ? Math.max(0, end - new Date(technical.startedAt).getTime()) : 0);
+    if (Math.ceil(effectiveMs / 60000) > onSiteMinutes) errors.push("El tiempo efectivo no puede superar el tiempo total en planta.");
+    if ((Number(technical?.billableWaitMinutes) || 0) > onSiteMinutes) errors.push("La espera registrada no puede superar el tiempo total en planta.");
+    if ((Number(technical?.downtimeMinutes) || 0) > onSiteMinutes) errors.push("La parada productiva no puede superar el tiempo total en planta.");
+  }
+  if ((Number(technical?.billableWaitMinutes) || 0) > 0 && !technical?.billableWaitReason?.trim()) errors.push("Debe indicarse el motivo de la espera por condiciones del sitio.");
+  return errors;
+};
 async function notify(userId, text, link) {
   if (!userId) return;
   const id = "n" + Date.now() + Math.floor(Math.random() * 100000);
@@ -488,8 +512,8 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact"];
-const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedBy", "noSignReason"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason"];
 
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
@@ -512,6 +536,8 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
     if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
+  const chronologyErrors = timelineErrorsValue(o.technical);
+  if (o.status !== "Borrador" && chronologyErrors.length) return res.status(400).json({ error: chronologyErrors.join(" ") });
   o.billableHours = billableHoursValue(o);
   await pool.query("INSERT INTO orders(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [o.id, o]);
   res.json(isTec(req.user.role) ? stripMoney(o) : o);
@@ -535,6 +561,8 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   merged.currency = "USD";
+  const chronologyErrors = timelineErrorsValue(merged.technical);
+  if (("technical" in patch || "status" in patch) && merged.status !== "Borrador" && chronologyErrors.length) return res.status(400).json({ error: chronologyErrors.join(" ") });
   merged.billableHours = billableHoursValue(merged);
   if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
     merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];

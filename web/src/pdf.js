@@ -5,6 +5,18 @@ import { LOGO, LOGO_RATIO } from "./logo.js";
 const LOGO_W = 42;
 
 const money = (n) => "USD " + (Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatDate = (value) => {
+  if (!value) return "—";
+  const plain = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (plain) return `${plain[3]}/${plain[2]}/${plain[1]}`;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+};
+const formatStamp = (value) => {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+};
 const billedHours = (o) => {
   if (o.billableHours !== undefined && o.billableHours !== null && o.billableHours !== "") return Math.max(0, Number(o.billableHours) || 0);
   const effective = Math.max(0, Number(o.laborHours) || 0), waiting = Math.max(0, Number(o.technical?.billableWaitMinutes) || 0) / 60;
@@ -13,7 +25,6 @@ const billedHours = (o) => {
   const onSite = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
   return onSite > 0 && onSite < 3600000 ? 2 : Math.round((effective + waiting) * 100) / 100;
 };
-const durationFromHours = (hours) => { const minutes = Math.max(0, Math.round((Number(hours) || 0) * 60)); return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`; };
 function totals(o) {
   const hours = billedHours(o);
   const labor = o.laborBillable ? hours * (Number(o.technicians) || 1) * (Number(o.rate) || 0) : 0;
@@ -49,7 +60,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   y += 6;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   doc.text(`Folio: ${order.id}`, W - M, y, { align: "right" }); y += 4;
-  doc.text(`Fecha: ${order.date || ""}`, W - M, y, { align: "right" });
+  doc.text(`Fecha: ${formatDate(order.date)}`, W - M, y, { align: "right" });
   y = Math.max(y, (y - 10) + lh) ; // asegura espacio bajo el logo
   doc.setDrawColor(226, 232, 240); doc.line(M, y + 2, W - M, y + 2); y += 9;
 
@@ -58,11 +69,11 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   const kv = (k, v) => { doc.setFont("helvetica", "bold"); doc.text(k, M, y); doc.setFont("helvetica", "normal"); doc.text(String(v || "—"), M + 46, y); y += 5.5; };
   kv("Cliente:", order.client);
   kv("Sitio:", order.site);
-  if (order.contact) kv("Contacto:", order.contact);
+  if (order.contact && (internal || String(order.contact).trim().toLowerCase() !== String(order.signedBy || "").trim().toLowerCase())) kv("Solicitante / contacto:", order.contact);
   kv("Servicio:", order.service);
-  kv("Estado:", order.status);
+  if (internal) kv("Estado de la orden:", order.status);
   if (order.tech) kv("Técnico:", order.tech);
-  if (order.category) kv("Clasificación:", order.category);
+  if (internal && order.category) kv("Clasificación:", order.category);
   if (order.location?.label && order.location.label !== order.site) kv("Ubicación:", order.location.label);
   if (technical.assetTag) kv("TAG del activo:", technical.assetTag);
   if (technical.manufacturer || technical.model) kv("Fabricante / modelo:", [technical.manufacturer, technical.model].filter(Boolean).join(" / "));
@@ -76,7 +87,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     const w = doc.getTextWidth(label + " ");
     doc.setFont("helvetica", "normal");
     const lines = doc.splitTextToSize(String(val), W - 2 * M - w);
-    doc.text(lines, M + w, y); y += lines.length * 4.6 + 1.5;
+    doc.text(lines, M + w, y); y += lines.length * 4.6 + 2.2;
   };
 
   /* Detalle */
@@ -90,23 +101,22 @@ export function buildOrderReceiptPDF(order, audience = "client") {
 
   if (technical.reportedAt || technical.arrivalAt || technical.startedAt || technical.completedAt || technical.downtimeMinutes) {
     section("Cronología del servicio");
-    const stamp = (value) => value ? new Date(value).toLocaleString("es-AR") : "—";
     const duration = (milliseconds) => { const minutes = Math.max(0, Math.round(milliseconds / 60000)); return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`; };
     const sessions = Array.isArray(technical.workSessions) ? technical.workSessions : [];
     const effectiveMs = sessions.length ? sessions.reduce((total, session) => total + Math.max(0, new Date(session.end || technical.completedAt || Date.now()) - new Date(session.start)), 0) : (technical.startedAt ? Math.max(0, new Date(technical.completedAt || Date.now()) - new Date(technical.startedAt)) : 0);
-    para("Aviso recibido:", stamp(technical.reportedAt)); para("Llegada al sitio:", stamp(technical.arrivalAt));
-    para("Inicio:", stamp(technical.startedAt)); para("Finalización:", stamp(technical.completedAt));
-    if (technical.reportedAt && technical.arrivalAt) para("Tiempo de respuesta:", duration(new Date(technical.arrivalAt) - new Date(technical.reportedAt)));
+    para("Aviso registrado:", formatStamp(technical.reportedAt)); para("Llegada al sitio:", formatStamp(technical.arrivalAt));
+    para("Inicio de intervención:", formatStamp(technical.startedAt)); para("Finalización:", formatStamp(technical.completedAt));
+    if (technical.reportedAt && technical.arrivalAt && new Date(technical.arrivalAt) - new Date(technical.reportedAt) >= 60000) para("Tiempo de respuesta:", duration(new Date(technical.arrivalAt) - new Date(technical.reportedAt)));
     if (effectiveMs) para("Tiempo efectivo de intervención:", duration(effectiveMs));
     if (technical.arrivalAt && technical.completedAt) para("Tiempo total en planta:", duration(new Date(technical.completedAt) - new Date(technical.arrivalAt)));
-    if (technical.billableWaitMinutes) para("Espera facturable imputable al cliente:", `${technical.billableWaitMinutes} minutos`);
-    if (technical.downtimeMinutes) para("Parada de producción (no facturable):", `${technical.downtimeMinutes} minutos`);
+    if (internal && technical.billableWaitMinutes) para("Espera por condiciones del sitio:", `${technical.billableWaitMinutes} minutos${technical.billableWaitReason ? ` - ${technical.billableWaitReason}` : ""}`);
+    if (technical.downtimeMinutes) para("Parada productiva informada:", `${technical.downtimeMinutes} minutos`);
   }
 
-  if (technical.deviceType || technical.firmware || technical.programVersion || technical.backupRef || technical.ioVerified || technical.alarmsVerified || technical.setpointChanges) {
+  if (technical.deviceType || technical.firmware || technical.programVersion || technical.backupRef || technical.ioVerified || technical.alarmsVerified) {
     section("Registro de automatización");
     para("Dispositivo:", technical.deviceType); para("Firmware:", technical.firmware); para("Versión de programa:", technical.programVersion);
-    para("Respaldo:", technical.backupRef); para("E/S verificadas:", technical.ioVerified); para("Alarmas e interlocks:", technical.alarmsVerified); para("Cambios de parámetros:", technical.setpointChanges);
+    para("Respaldo:", technical.backupRef); para("E/S verificadas:", technical.ioVerified); para("Alarmas e interlocks:", technical.alarmsVerified);
   }
 
   if (technical.installationScope || technical.requiredDocuments || technical.mountingWiring || technical.commissioning || technical.trainingProvided) {
@@ -128,15 +138,15 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     section("Atención de emergencia"); para("Criticidad:", technical.emergencyPriority); para("Impacto productivo:", technical.productionImpact); para("Restablecimiento temporal:", technical.temporaryRestoration);
   }
 
-  if (technical.measurementsBefore || technical.measurementsAfter || technical.testsPerformed || technical.testResult || technical.finalCondition) {
-    section("Verificación y puesta en servicio");
-    para("Mediciones iniciales:", technical.measurementsBefore); para("Mediciones finales:", technical.measurementsAfter);
-    para("Pruebas realizadas:", technical.testsPerformed); para("Resultado / aceptación:", technical.testResult); para("Estado final:", technical.finalCondition);
+  if (technical.measurementsBefore || technical.setpointChanges || technical.measurementsAfter || technical.testsPerformed || technical.testResult || technical.finalCondition) {
+    brk(42); section("Parámetros, verificación y puesta en servicio");
+    para("Condición / valor inicial:", technical.measurementsBefore); para("Cambio aplicado:", technical.setpointChanges); para("Condición / valor final:", technical.measurementsAfter);
+    para("Prueba funcional:", technical.testsPerformed); para("Criterio / resultado:", technical.testResult); para("Condición final del activo:", technical.finalCondition);
   }
 
   if (technical.recommendations || technical.pendingActions || technical.followUpDate) {
-    section("Recomendaciones y pendientes");
-    para("Recomendaciones:", technical.recommendations); para("Acciones pendientes:", technical.pendingActions); para("Seguimiento sugerido:", technical.followUpDate);
+    brk(30); section("Recomendaciones y compromisos");
+    para("Recomendación técnica:", technical.recommendations); para("Acción pendiente:", technical.pendingActions); para("Fecha de seguimiento:", formatDate(technical.followUpDate));
   }
 
   /* Registro fotográfico */
@@ -156,7 +166,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
           const drawW = props.width * scale, drawH = props.height * scale;
           doc.addImage(p.url, fmt, x + (frameW - drawW) / 2, y + (frameH - drawH) / 2, drawW, drawH, undefined, "NONE");
         } catch {}
-        const stamp = p.ts ? new Date(p.ts).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+        const stamp = p.ts ? formatStamp(p.ts) : "";
         doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(71, 85, 105);
         doc.text(`IMAGEN ${i + offset + 1} - ${String(p.cat || "EVIDENCIA").toUpperCase()}`, x, y + frameH + 4);
         if (stamp) { doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139); doc.text(stamp, x + frameW, y + frameH + 4, { align: "right" }); }
@@ -190,14 +200,14 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   }
 
   /* Mano de obra */
-  section("Mano de obra");
-  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
-  const chargedHours = billedHours(order), actualWithWait = (Number(order.laborHours) || 0) + (Math.max(0, Number(order.technical?.billableWaitMinutes) || 0) / 60);
-  doc.text(`Tiempo efectivo: ${durationFromHours(order.laborHours)}${order.technicians ? `    ·    Técnicos: ${order.technicians}` : ""}`, M, y); y += 5;
-  if (order.technical?.billableWaitMinutes) { doc.text(`Espera facturable imputable al cliente: ${order.technical.billableWaitMinutes} minutos`, M, y); y += 5; }
-  doc.text(`Horas facturables: ${chargedHours} h${chargedHours > actualWithWait ? " (mínimo de servicio aplicado)" : ""}`, M, y); y += 5;
-  if (priced) { doc.text(`Tarifa por hora y por técnico en planta: ${money(order.rate)}`, M, y); y += 5; doc.text(`Cálculo: ${chargedHours} h × ${order.technicians || 1} técnico(s) = ${chargedHours * (Number(order.technicians) || 1)} horas-técnico`, M, y); y += 5; }
-  y += 2;
+  if (internal) {
+    section("Mano de obra y facturación");
+    const chargedHours = billedHours(order), actualWithWait = (Number(order.laborHours) || 0) + (Math.max(0, Number(order.technical?.billableWaitMinutes) || 0) / 60);
+    para("Horas facturables:", `${chargedHours} h${chargedHours > actualWithWait ? " (mínimo de servicio aplicado)" : ""}`);
+    para("Técnicos en planta:", order.technicians || 1);
+    para("Tarifa por hora y por técnico:", money(order.rate));
+    para("Cálculo:", `${chargedHours} h x ${order.technicians || 1} técnico(s) = ${chargedHours * (Number(order.technicians) || 1)} horas-técnico`);
+  }
 
   /* Totales (solo con importes) */
   if (priced) {
@@ -236,6 +246,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   doc.setFontSize(9); doc.setTextColor(71, 85, 105);
   doc.text(`Firma del cliente${order.signedBy ? "  ·  " + order.signedBy : ""}`, M, y);
   if (technical.signerRole || technical.signerCompany) { y += 4.5; doc.setFontSize(8); doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" · "), M, y); }
+  if (order.signedAt) { y += 4.5; doc.setFontSize(8); doc.text(`Conformidad registrada: ${formatStamp(order.signedAt)}`, M, y); }
   if (order.noSignReason) { y += 5; doc.setFontSize(8); doc.setTextColor(180, 83, 9); doc.text(doc.splitTextToSize(`Orden aprobada sin firma. Motivo: ${order.noSignReason}`, W - 2 * M), M, y); }
 
   /* Pie y numeración */
@@ -243,7 +254,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   for (let page = 1; page <= pages; page++) {
     doc.setPage(page); doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-    doc.text(`Generado el ${new Date().toLocaleString("es-AR")} - ${internal ? "Uso interno y confidencial" : "Reporte para el Cliente"}`, M, 290);
+    doc.text(`Generado el ${formatStamp(new Date())} - ${internal ? "Uso interno y confidencial" : "Reporte para el Cliente"}`, M, 290);
     doc.text(`Página ${page} de ${pages}`, W - M, 290, { align: "right" });
   }
 
