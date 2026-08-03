@@ -80,9 +80,15 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   if (technical.reportedAt || technical.arrivalAt || technical.startedAt || technical.completedAt || technical.downtimeMinutes) {
     section("Cronología del servicio");
     const stamp = (value) => value ? new Date(value).toLocaleString("es-AR") : "—";
+    const duration = (milliseconds) => { const minutes = Math.max(0, Math.round(milliseconds / 60000)); return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`; };
+    const sessions = Array.isArray(technical.workSessions) ? technical.workSessions : [];
+    const effectiveMs = sessions.length ? sessions.reduce((total, session) => total + Math.max(0, new Date(session.end || technical.completedAt || Date.now()) - new Date(session.start)), 0) : (technical.startedAt ? Math.max(0, new Date(technical.completedAt || Date.now()) - new Date(technical.startedAt)) : 0);
     para("Aviso recibido:", stamp(technical.reportedAt)); para("Llegada al sitio:", stamp(technical.arrivalAt));
     para("Inicio:", stamp(technical.startedAt)); para("Finalización:", stamp(technical.completedAt));
-    if (technical.downtimeMinutes) para("Tiempo de parada:", `${technical.downtimeMinutes} minutos`);
+    if (technical.reportedAt && technical.arrivalAt) para("Tiempo de respuesta:", duration(new Date(technical.arrivalAt) - new Date(technical.reportedAt)));
+    if (effectiveMs) para("Tiempo efectivo de intervención:", duration(effectiveMs));
+    if (technical.arrivalAt && technical.completedAt) para("Tiempo total en planta:", duration(new Date(technical.completedAt) - new Date(technical.arrivalAt)));
+    if (technical.downtimeMinutes) para("Parada de producción:", `${technical.downtimeMinutes} minutos`);
   }
 
   if (technical.workPermit || technical.lotoApplied || technical.ppe || technical.safetyNotes) {
@@ -95,6 +101,25 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     section("Registro de automatización");
     para("Dispositivo:", technical.deviceType); para("Firmware:", technical.firmware); para("Versión de programa:", technical.programVersion);
     para("Respaldo:", technical.backupRef); para("E/S verificadas:", technical.ioVerified); para("Alarmas e interlocks:", technical.alarmsVerified); para("Cambios de parámetros:", technical.setpointChanges);
+  }
+
+  if (technical.installationScope || technical.requiredDocuments || technical.mountingWiring || technical.commissioning || technical.trainingProvided) {
+    section("Registro de instalación");
+    para("Alcance:", technical.installationScope); para("Documentación:", technical.requiredDocuments); para("Montaje y conexionado:", technical.mountingWiring);
+    para("Puesta en marcha:", technical.commissioning); para("Capacitación:", technical.trainingProvided);
+  }
+
+  if (technical.preventiveChecklist || technical.cleaningAdjustments || technical.wearFindings) {
+    section("Mantenimiento preventivo");
+    para("Inspección / checklist:", technical.preventiveChecklist); para("Limpieza y ajustes:", technical.cleaningAdjustments); para("Desgaste y hallazgos:", technical.wearFindings);
+  }
+
+  if (technical.warrantyReference || technical.warrantyDecision) {
+    section("Validación de garantía"); para("Referencia:", technical.warrantyReference); para("Dictamen:", technical.warrantyDecision);
+  }
+
+  if (technical.emergencyPriority || technical.productionImpact || technical.temporaryRestoration) {
+    section("Atención de emergencia"); para("Criticidad:", technical.emergencyPriority); para("Impacto productivo:", technical.productionImpact); para("Restablecimiento temporal:", technical.temporaryRestoration);
   }
 
   if (technical.measurementsBefore || technical.measurementsAfter || technical.testsPerformed || technical.testResult || technical.finalCondition) {

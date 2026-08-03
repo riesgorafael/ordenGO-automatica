@@ -505,7 +505,9 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   merged.currency = "USD";
-  if (patch.status && patch.status !== prev.status) {
+  if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
+    merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  } else if (patch.status && patch.status !== prev.status) {
     merged.activity = [...(prev.activity || []), { type: "status", text: `Cambió el estado a ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (req.user.role === "admin" && Object.keys(patch).length) {
     merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
