@@ -6,12 +6,12 @@ const LOGO_W = 42;
 
 const money = (n) => "USD " + (Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function totals(o) {
-  const labor = o.laborBillable ? (Number(o.laborHours) || 0) * (Number(o.rate) || 0) : 0;
+  const labor = o.laborBillable ? (Number(o.laborHours) || 0) * (Number(o.technicians) || 1) * (Number(o.rate) || 0) : 0;
   const mats = (o.materials || []).filter((m) => m.billable).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.price) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
 function costs(o) {
-  const labor = (Number(o.laborHours) || 0) * (Number(o.laborCost) || 0);
+  const labor = (Number(o.laborHours) || 0) * (Number(o.technicians) || 1) * (Number(o.laborCost) || 0);
   const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
@@ -162,7 +162,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   section("Mano de obra");
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
   doc.text(`Horas: ${order.laborHours || 0}${order.technicians ? `    ·    Técnicos: ${order.technicians}` : ""}`, M, y); y += 5;
-  if (priced) { doc.text(`Tarifa por hora: ${money(order.rate)}`, M, y); y += 5; }
+  if (priced) { doc.text(`Tarifa por hora y por técnico en planta: ${money(order.rate)}`, M, y); y += 5; doc.text(`Cálculo: ${order.laborHours || 0} h × ${order.technicians || 1} técnico(s) = ${(Number(order.laborHours) || 0) * (Number(order.technicians) || 1)} horas-técnico`, M, y); y += 5; }
   y += 2;
 
   /* Totales (solo con importes) */
@@ -243,7 +243,7 @@ export function monthlyReportPDF(month, monthLabel, rows, sum) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
     doc.text("Cliente", M, y);
     doc.text("Órd", M + 74, y, { align: "right" });
-    doc.text("Horas", M + 92, y, { align: "right" });
+    doc.text("Horas-téc.", M + 92, y, { align: "right" });
     doc.text("M. Obra", M + 120, y, { align: "right" });
     doc.text("Materiales", M + 150, y, { align: "right" });
     doc.text("Total", M + 180, y, { align: "right" });
