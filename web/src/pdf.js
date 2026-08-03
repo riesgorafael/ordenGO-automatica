@@ -4,7 +4,7 @@ import { LOGO, LOGO_RATIO } from "./logo.js";
 // Ancho del logo en el PDF (mm)
 const LOGO_W = 42;
 
-const money = (n) => "$" + (Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n) => "USD " + (Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function totals(o) {
   const labor = o.laborBillable ? (Number(o.laborHours) || 0) * (Number(o.rate) || 0) : 0;
   const mats = (o.materials || []).filter((m) => m.billable).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.price) || 0), 0);

@@ -28,7 +28,7 @@ services:
       DEMO_PASSWORD: ${DEMO_PASSWORD:-ordengo123}
       MONITOR_EMAIL: ${MONITOR_EMAIL:-monitor.oficina@empresa.com}
       MONITOR_PASSWORD: ${MONITOR_PASSWORD:-ordengo123}
-      DEFAULT_RATE: ${DEFAULT_RATE:-0}
+      DEFAULT_RATE: ${DEFAULT_RATE:-50}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
       PORT: 3000

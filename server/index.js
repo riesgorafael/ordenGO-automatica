@@ -106,7 +106,7 @@ async function initDb() {
     for (const t of tasks) await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [t.id, t]);
 
     const orders = [
-      { id: "OT-2026-014", client: "Embotelladora Andina", site: "Línea de llenado 3", contact: "Ing. Salazar", service: "Mantenimiento correctivo", date: "2026-07-15", equipo: "Variador de frecuencia banda 3", sintoma: "Sobrecorriente intermitente", solucion: "Reemplazo de ventilador de disipador.", category: "Sobrecalentamiento", photos: [], signatureUrl: null, signedBy: "", laborHours: 3.5, technicians: 1, rate: 850, laborBillable: true, materials: [{ name: "Ventilador disipador VFD", qty: 1, price: 1200, billable: true }], status: "Completada", tech: "Luis Mora" },
+      { id: "OT-2026-014", client: "Embotelladora Andina", site: "Línea de llenado 3", contact: "Ing. Salazar", service: "Mantenimiento correctivo", date: "2026-07-15", equipo: "Variador de frecuencia banda 3", sintoma: "Sobrecorriente intermitente", solucion: "Reemplazo de ventilador de disipador.", category: "Sobrecalentamiento", photos: [], signatureUrl: null, signedBy: "", laborHours: 3.5, technicians: 1, rate: 50, laborBillable: true, materials: [{ name: "Ventilador disipador VFD", qty: 1, price: 1200, billable: true }], status: "Completada", tech: "Luis Mora" },
     ];
     for (const o of orders) await pool.query("INSERT INTO orders(id,data) VALUES($1,$2)", [o.id, o]);
     console.log("→ Datos de demostración sembrados.");
@@ -141,6 +141,21 @@ async function initDb() {
     }
     await pool.query("INSERT INTO app_settings(key,value) VALUES('monitor_oficina_v1',$1)", [{ userId: monitor.id, email: monitorEmail }]);
     console.log("→ Usuario Monitor Oficina creado con acceso a los proyectos existentes.");
+  }
+
+  // Corrige únicamente el valor predeterminado histórico; conserva tarifas personalizadas.
+  const usdRateMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='default_rate_usd_50_v1'");
+  if (usdRateMigration.rowCount === 0) {
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    for (const row of orderRows.rows) {
+      const currentRate = Number(row.data.rate);
+      if (!row.data.rate || currentRate === 850) {
+        await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, rate: 50, currency: "USD" }]);
+      } else if (!row.data.currency) {
+        await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, currency: "USD" }]);
+      }
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('default_rate_usd_50_v1',$1)", [{ currency: "USD", defaultRate: 50 }]);
   }
 }
 
@@ -375,9 +390,12 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
 const TEC_PATCH = ["signatureUrl", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedBy", "noSignReason"];
 
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
+  o.currency = "USD";
+  if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
   if (!o.id) {
     const year = new Date().getFullYear();
     const cl = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data)
@@ -388,7 +406,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   }
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
-    o.rate = Number(process.env.DEFAULT_RATE) || 0; o.laborBillable = true; o.laborCost = 0;
+    o.rate = Number(process.env.DEFAULT_RATE) || 50; o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
     if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, price: 0, cost: 0, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
@@ -404,11 +422,17 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
     const clean = {}; for (const k of TEC_PATCH) if (k in patch) clean[k] = patch[k];
     if (clean.status === "Facturada") delete clean.status;
     patch = clean;
+  } else if (req.user.role === "gerente") {
+    const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
+    patch = clean;
   }
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
+  merged.currency = "USD";
   if (patch.status && patch.status !== prev.status) {
     merged.activity = [...(prev.activity || []), { type: "status", text: `Cambió el estado a ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  } else if (req.user.role === "admin" && Object.keys(patch).length) {
+    merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   }
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
