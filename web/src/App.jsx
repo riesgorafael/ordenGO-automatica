@@ -715,7 +715,7 @@ function ActionCenter({ orders, tasks, parts, onGo }) {
   const stale = tasks.filter(isStale).length;
   const low = parts.filter((p) => Number(p.stock) <= Number(p.minStock)).length;
   const actions = [
-    { id: "billing", label: "Listas para facturar", value: pendingBilling, icon: DollarSign, tone: "text-amber-700 bg-amber-50 border-amber-200" },
+    { id: "billing", label: "Listas para facturar", value: pendingBilling, icon: FileText, tone: "text-amber-700 bg-amber-50 border-amber-200" },
     { id: "projects", label: "Tareas vencidas", value: overdue, icon: AlertTriangle, tone: "text-rose-700 bg-rose-50 border-rose-200" },
     { id: "projects", label: "Tareas estancadas", value: stale, icon: Clock, tone: "text-violet-700 bg-violet-50 border-violet-200" },
     { id: "inventory", label: "Stock crítico", value: low, icon: Wrench, tone: "text-emerald-700 bg-emerald-50 border-emerald-200" },
@@ -758,7 +758,7 @@ function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
     const arr = [];
     for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); const ym = d.toISOString().slice(0, 7); arr.push({ ym, name: monthLabelShort(ym), value: 0 }); }
     const idx = Object.fromEntries(arr.map((a, i) => [a.ym, i]));
-    real.forEach((o) => { const k = monthKey(o.date); if (k in idx) arr[idx[k]].value += tot(o); });
+    facturadas.forEach((o) => { const k = monthKey(o.date); if (k in idx) arr[idx[k]].value += tot(o); });
     return arr.map((a) => ({ ...a, value: Math.round(a.value) }));
   })();
 
@@ -797,7 +797,10 @@ function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
   const tech = Object.values(byTech).sort((a, b) => b.horas - a.horas);
 
   const periodLabel = { mes: "este mes", trim: "último trimestre", anio: "este año" }[period];
-  const fmtK = (n) => (Math.abs(n) >= 1000 ? "$" + (n / 1000).toFixed(0) + "k" : "$" + n);
+  const fmtK = (value) => {
+    const amount = Number(value) || 0;
+    return `USD ${Math.abs(amount) >= 1000 ? `${(amount / 1000).toFixed(0)}k` : Math.round(amount)}`;
+  };
 
   return (
     <div className="space-y-5">
@@ -846,7 +849,7 @@ function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Aging */}
-        <Panel title="Cobranzas por antigüedad (por facturar)">
+        <Panel title="Pendientes de facturación por antigüedad">
           {pendingTotal === 0 ? <Empty text="Nada pendiente de facturar." /> : (
             <div style={{ width: "100%", height: 220 }}>
               <ResponsiveContainer>
@@ -876,7 +879,7 @@ function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
         </Panel>
 
         {/* Top clientes */}
-        <Panel title={`Top clientes (${periodLabel})`}>
+        <Panel title={`Valor de órdenes por cliente (${periodLabel})`}>
           {topClients.length === 0 ? <Empty text="Sin datos en el período." /> : (
             <div style={{ width: "100%", height: 220 }}>
               <ResponsiveContainer>
@@ -965,7 +968,7 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
         <Metric label="Mis tareas abiertas" value={myTasks.length} icon={LayoutGrid} tint="text-brand-600" />
         <Metric label="Tareas vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" />
         <Metric label="Mis órdenes activas" value={myOrders.length} icon={ClipboardList} tint="text-emerald-600" />
-        {ger && <Metric label="Por facturar" value={pend.length} icon={DollarSign} tint="text-amber-600" />}
+        {ger && <Metric label="Por facturar" value={pend.length} icon={FileText} tint="text-amber-600" />}
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel title="Mis tareas">
