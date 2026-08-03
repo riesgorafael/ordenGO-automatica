@@ -182,10 +182,31 @@ async function initDb() {
     }
     await pool.query("INSERT INTO app_settings(key,value) VALUES('integer_unit_quantities_v1',$1)", [{ unit: "u", step: 1 }]);
   }
+
+  const wholeMoneyMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='whole_usd_values_v1'");
+  if (wholeMoneyMigration.rowCount === 0) {
+    const partRows = await pool.query("SELECT id,data FROM parts");
+    for (const row of partRows.rows) {
+      const data = { ...row.data, price: wholeMoneyValue(row.data.price), cost: wholeMoneyValue(row.data.cost) };
+      await pool.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [row.id, data]);
+    }
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    for (const row of orderRows.rows) {
+      const data = {
+        ...row.data,
+        rate: wholeMoneyValue(row.data.rate || 50),
+        laborCost: wholeMoneyValue(row.data.laborCost),
+        materials: (row.data.materials || []).map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) })),
+      };
+      await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, data]);
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('whole_usd_values_v1',$1)", [{ currency: "USD", step: 1 }]);
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
 const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, mustChangePassword: u.mustchangepassword || false });
+const wholeMoneyValue = (value) => Math.max(0, Math.round(Number(value) || 0));
 async function notify(userId, text, link) {
   if (!userId) return;
   const id = "n" + Date.now() + Math.floor(Math.random() * 100000);
@@ -204,15 +225,15 @@ async function materialsFromInventory(materials, onlyMissing = false) {
   return materials.map((material) => {
     const normalizedName = String(material.name || "").trim().toLowerCase();
     const part = inventory.find((item) => (material.partId && item.id === material.partId) || String(item.name || "").trim().toLowerCase() === normalizedName);
-    if (!part) return material;
+    if (!part) return { ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) };
     return {
       ...material,
       partId: part.id,
       name: part.name,
       unit: part.unit || material.unit,
       qty: part.unit === "u" ? Math.max(1, Math.round(Number(material.qty) || 1)) : (Number(material.qty) || 0),
-      price: onlyMissing && Number(material.price) > 0 ? Number(material.price) : (Number(part.price) || 0),
-      cost: onlyMissing && Number(material.cost) > 0 ? Number(material.cost) : (Number(part.cost) || 0),
+      price: onlyMissing && Number(material.price) > 0 ? wholeMoneyValue(material.price) : wholeMoneyValue(part.price),
+      cost: onlyMissing && Number(material.cost) > 0 ? wholeMoneyValue(material.cost) : wholeMoneyValue(part.cost),
       partNumber: material.partNumber || part.partNumber || "",
       brand: material.brand || part.brand || "",
       model: material.model || part.model || "",
@@ -417,7 +438,8 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
 /* ------------------------------------------------ Repuestos / Inventario ------------------------------------------------ */
 app.post("/api/parts", auth, requireRole("admin", "gerente"), async (req, res) => {
   const p = { ...(req.body || {}) }; if (!p.id) p.id = "sp" + Date.now();
-  ["price", "cost", "stock", "minStock"].forEach((k) => { if (p[k] !== undefined) p[k] = Number(p[k]) || 0; });
+  ["price", "cost"].forEach((k) => { if (p[k] !== undefined) p[k] = wholeMoneyValue(p[k]); });
+  ["stock", "minStock"].forEach((k) => { if (p[k] !== undefined) p[k] = Number(p[k]) || 0; });
   await pool.query("INSERT INTO parts(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [p.id, p]);
   res.json(p);
 });
@@ -425,7 +447,8 @@ app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, r
   const { rows } = await pool.query("SELECT data FROM parts WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const patch = { ...(req.body || {}) };
-  ["price", "cost", "stock", "minStock"].forEach((k) => { if (patch[k] !== undefined) patch[k] = Number(patch[k]) || 0; });
+  ["price", "cost"].forEach((k) => { if (patch[k] !== undefined) patch[k] = wholeMoneyValue(patch[k]); });
+  ["stock", "minStock"].forEach((k) => { if (patch[k] !== undefined) patch[k] = Number(patch[k]) || 0; });
   const merged = { ...rows[0].data, ...patch, id: req.params.id };
   await pool.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   res.json(merged);
@@ -443,6 +466,8 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
   o.currency = "USD";
   if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
+  o.rate = wholeMoneyValue(o.rate || 50);
+  o.laborCost = wholeMoneyValue(o.laborCost);
   o.materials = await materialsFromInventory(o.materials);
   if (!o.id) {
     const year = new Date().getFullYear();
@@ -454,7 +479,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   }
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
-    o.rate = Number(process.env.DEFAULT_RATE) || 50; o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
+    o.rate = wholeMoneyValue(process.env.DEFAULT_RATE || 50); o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
     if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
@@ -474,6 +499,9 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
     const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
     patch = clean;
   }
+  if ("rate" in patch) patch.rate = wholeMoneyValue(patch.rate);
+  if ("laborCost" in patch) patch.laborCost = wholeMoneyValue(patch.laborCost);
+  if (Array.isArray(patch.materials)) patch.materials = patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   merged.currency = "USD";
