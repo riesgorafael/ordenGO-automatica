@@ -48,7 +48,7 @@ function drawServiceSummaryPage(doc, order, valued = false) {
   const W = 210, M = 15, technical = order.technical || {}, t = totals(order);
   drawLogo(doc, M, 12);
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
-  ["CUIT: 20-35196020-6", "Rivadavia 1379 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 623176 / 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
+  ["CUIT: 20-35196020-6", "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text(valued ? "CONSTANCIA DE SERVICIO VALORIZADA" : "CONSTANCIA DE SERVICIO", W - M, 16, { align: "right" });
   doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
@@ -104,15 +104,16 @@ function drawServiceSummaryPage(doc, order, valued = false) {
 
   const signatureY = 245;
   if (order.signatureUrl && order.signatureUrl !== "signed") { try { doc.addImage(order.signatureUrl, "PNG", M + 8, signatureY - 23, 44, 20); } catch {} }
+  if (order.technicianSignatureUrl) { try { doc.addImage(order.technicianSignatureUrl, "PNG", W - M - 58, signatureY - 23, 44, 20); } catch {} }
   doc.setDrawColor(100, 116, 139); doc.line(M, signatureY, M + 72, signatureY); doc.line(W - M - 72, signatureY, W - M, signatureY);
   doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
   doc.text("CONFORMIDAD DEL CLIENTE", M + 36, signatureY + 5, { align: "center" }); doc.text("RESPONSABLE AUTOMÁTICA ARG", W - M - 36, signatureY + 5, { align: "center" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
   doc.text(order.signedBy || "Nombre y firma", M + 36, signatureY + 10, { align: "center" });
   doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" - ") || "Cargo / empresa", M + 36, signatureY + 14, { align: "center" });
-  doc.text(order.tech || "Técnico responsable", W - M - 36, signatureY + 10, { align: "center" });
+  doc.text(order.technicianSignedBy || order.tech || "Técnico responsable", W - M - 36, signatureY + 10, { align: "center" });
   doc.text(order.signedAt ? `Conformidad: ${formatStamp(order.signedAt)}` : "Fecha y hora", M + 36, signatureY + 18, { align: "center" });
-  doc.text(`Servicio: ${formatStamp(technical.completedAt || order.createdAt)}`, W - M - 36, signatureY + 14, { align: "center" });
+  doc.text(`Firma: ${formatStamp(order.technicianSignedAt || technical.completedAt || order.createdAt)}`, W - M - 36, signatureY + 14, { align: "center" });
 }
 
 export function buildOrderReceiptPDF(order, audience = "client") {
@@ -315,17 +316,23 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     if ((order.activity || []).length) para("Trazabilidad:", (order.activity || []).map((entry) => `${entry.at ? new Date(entry.at).toLocaleString("es-AR") : ""} ${entry.byName || ""}: ${entry.text || ""}`.trim()).join("\n"));
   }
 
-  /* Firma: en reportes para cliente ya está en la constancia de la primera página. */
+  /* Firmas: en reportes para cliente ya están en la constancia de la primera página. */
   if (internal) {
-    brk(40);
-    section("Conformidad del cliente");
+    brk(48);
+    section("Firmas y conformidad");
     if (order.signatureUrl && order.signatureUrl !== "signed") {
       try { doc.addImage(order.signatureUrl, "PNG", M, y, 50, 22); } catch {}
-      y += 24;
-    } else { y += 4; }
-    doc.setDrawColor(148, 163, 184); doc.line(M, y, M + 62, y); y += 4;
+    }
+    if (order.technicianSignatureUrl) {
+      try { doc.addImage(order.technicianSignatureUrl, "PNG", W - M - 62, y, 50, 22); } catch {}
+    }
+    y += 24;
+    doc.setDrawColor(148, 163, 184); doc.line(M, y, M + 62, y); doc.line(W - M - 62, y, W - M, y); y += 4;
     doc.setFontSize(9); doc.setTextColor(71, 85, 105);
     doc.text(`Firma del cliente${order.signedBy ? "  ·  " + order.signedBy : ""}`, M, y);
+    doc.text("Firma del técnico", W - M, y, { align: "right" });
+    doc.setFontSize(8); doc.text(order.technicianSignedBy || order.tech || "Técnico responsable", W - M, y + 4.5, { align: "right" });
+    if (order.technicianSignedAt) doc.text(`Registrada: ${formatStamp(order.technicianSignedAt)}`, W - M, y + 9, { align: "right" });
     if (technical.signerRole || technical.signerCompany) { y += 4.5; doc.setFontSize(8); doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" · "), M, y); }
     if (order.signedAt) { y += 4.5; doc.setFontSize(8); doc.text(`Conformidad registrada: ${formatStamp(order.signedAt)}`, M, y); }
     if (order.noSignReason) { y += 5; doc.setFontSize(8); doc.setTextColor(180, 83, 9); doc.text(doc.splitTextToSize(`Orden aprobada sin firma. Motivo: ${order.noSignReason}`, W - 2 * M), M, y); }

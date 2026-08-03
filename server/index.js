@@ -513,8 +513,8 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "quoteNumber", "customerPO"];
-const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "quoteNumber", "customerPO"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "quoteNumber", "customerPO"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO"];
 
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
@@ -539,6 +539,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   }
   const chronologyErrors = timelineErrorsValue(o.technical);
   if (o.status !== "Borrador" && chronologyErrors.length) return res.status(400).json({ error: chronologyErrors.join(" ") });
+  if (["Completada", "Aprobada", "Facturada"].includes(o.status) && !o.technicianSignatureUrl) return res.status(400).json({ error: "La firma del técnico responsable es obligatoria para completar la orden." });
   o.billableHours = billableHoursValue(o);
   await pool.query("INSERT INTO orders(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [o.id, o]);
   res.json(isTec(req.user.role) ? stripMoney(o) : o);
@@ -564,6 +565,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   merged.currency = "USD";
   const chronologyErrors = timelineErrorsValue(merged.technical);
   if (("technical" in patch || "status" in patch) && merged.status !== "Borrador" && chronologyErrors.length) return res.status(400).json({ error: chronologyErrors.join(" ") });
+  if (patch.status && ["Completada", "Aprobada", "Facturada"].includes(merged.status) && !merged.technicianSignatureUrl) return res.status(400).json({ error: "La firma del técnico responsable es obligatoria para completar la orden." });
   merged.billableHours = billableHoursValue(merged);
   if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
     merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
