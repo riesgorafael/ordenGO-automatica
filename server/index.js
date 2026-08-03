@@ -170,6 +170,18 @@ async function initDb() {
     }
     await pool.query("INSERT INTO app_settings(key,value) VALUES('order_inventory_prices_v1',$1)", [{ source: "parts", currency: "USD" }]);
   }
+
+  const unitQuantityMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='integer_unit_quantities_v1'");
+  if (unitQuantityMigration.rowCount === 0) {
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    for (const row of orderRows.rows) {
+      const materials = await materialsFromInventory(row.data.materials, true);
+      if (JSON.stringify(materials) !== JSON.stringify(row.data.materials || [])) {
+        await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, materials }]);
+      }
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('integer_unit_quantities_v1',$1)", [{ unit: "u", step: 1 }]);
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
@@ -198,6 +210,7 @@ async function materialsFromInventory(materials, onlyMissing = false) {
       partId: part.id,
       name: part.name,
       unit: part.unit || material.unit,
+      qty: part.unit === "u" ? Math.max(1, Math.round(Number(material.qty) || 1)) : (Number(material.qty) || 0),
       price: onlyMissing && Number(material.price) > 0 ? Number(material.price) : (Number(part.price) || 0),
       cost: onlyMissing && Number(material.cost) > 0 ? Number(material.cost) : (Number(part.cost) || 0),
       partNumber: material.partNumber || part.partNumber || "",
