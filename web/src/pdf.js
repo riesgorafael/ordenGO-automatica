@@ -126,8 +126,8 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     para("Inspección / checklist:", technical.preventiveChecklist); para("Limpieza y ajustes:", technical.cleaningAdjustments); para("Desgaste y hallazgos:", technical.wearFindings);
   }
 
-  if (technical.warrantyReference || technical.warrantyDecision) {
-    section("Validación de garantía"); para("Referencia:", technical.warrantyReference); para("Dictamen:", technical.warrantyDecision);
+  if (order.service === "Garantía" && (technical.warrantyReference || technical.warrantyDecision || technical.warranty)) {
+    section("Validación de garantía"); para("Referencia:", technical.warrantyReference); para("Dictamen:", technical.warrantyDecision); para("Cobertura y vigencia:", technical.warranty);
   }
 
   if (technical.emergencyPriority || technical.productionImpact || technical.temporaryRestoration) {
@@ -225,9 +225,9 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     y += 42;
   }
 
-  if (internal && (technical.warranty || technical.recurrence || technical.internalNotes || (order.activity || []).length)) {
+  if (internal && (technical.recurrence || technical.internalDisposition || technical.internalOwner || technical.internalNotes || (order.activity || []).length)) {
     section("Gestión interna");
-    para("Garantía:", technical.warranty); para("Recurrencia:", technical.recurrence); para("Notas internas:", technical.internalNotes);
+    para("Recurrencia:", technical.recurrence); para("Próxima acción:", technical.internalDisposition); para("Responsable:", technical.internalOwner); para("Notas internas:", technical.internalNotes);
     if ((order.activity || []).length) para("Trazabilidad:", (order.activity || []).map((entry) => `${entry.at ? new Date(entry.at).toLocaleString("es-AR") : ""} ${entry.byName || ""}: ${entry.text || ""}`.trim()).join("\n"));
   }
 
