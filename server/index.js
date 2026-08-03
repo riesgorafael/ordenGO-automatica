@@ -158,6 +158,16 @@ async function initDb() {
     await pool.query("INSERT INTO app_settings(key,value) VALUES('default_rate_usd_50_v1',$1)", [{ currency: "USD", defaultRate: 50 }]);
   }
 
+  // Repite la corrección para órdenes creadas posteriormente desde borradores antiguos con la tarifa ARS 850.
+  const legacyRateMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='legacy_rate_850_to_usd_50_v2'");
+  if (legacyRateMigration.rowCount === 0) {
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    for (const row of orderRows.rows) {
+      if (Number(row.data.rate) === 850) await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, rate: 50, currency: "USD" }]);
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('legacy_rate_850_to_usd_50_v2',$1)", [{ from: 850, to: 50, currency: "USD" }]);
+  }
+
   // Completa órdenes históricas que habían quedado con materiales en cero.
   const materialPriceMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='order_inventory_prices_v1'");
   if (materialPriceMigration.rowCount === 0) {
@@ -202,11 +212,30 @@ async function initDb() {
     }
     await pool.query("INSERT INTO app_settings(key,value) VALUES('whole_usd_values_v1',$1)", [{ currency: "USD", step: 1 }]);
   }
+
+  const billingPolicyMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='billing_minimum_2h_under_1h_v1'");
+  if (billingPolicyMigration.rowCount === 0) {
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    for (const row of orderRows.rows) {
+      const data = { ...row.data, billableHours: billableHoursValue(row.data) };
+      await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, data]);
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('billing_minimum_2h_under_1h_v1',$1)", [{ thresholdHours: 1, minimumHours: 2 }]);
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
 const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, mustChangePassword: u.mustchangepassword || false });
 const wholeMoneyValue = (value) => Math.max(0, Math.round(Number(value) || 0));
+const normalizedRateValue = (value) => { const rate = wholeMoneyValue(value); return !rate || rate === 850 ? 50 : rate; };
+const billableHoursValue = (order, now = Date.now()) => {
+  const effective = Math.max(0, Number(order?.laborHours) || 0);
+  const waiting = Math.max(0, Number(order?.technical?.billableWaitMinutes) || 0) / 60;
+  const arrival = order?.technical?.arrivalAt ? new Date(order.technical.arrivalAt).getTime() : NaN;
+  const end = order?.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : now;
+  const onSiteMs = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
+  return onSiteMs > 0 && onSiteMs < 3600000 ? 2 : Math.round((effective + waiting) * 100) / 100;
+};
 async function notify(userId, text, link) {
   if (!userId) return;
   const id = "n" + Date.now() + Math.floor(Math.random() * 100000);
@@ -466,7 +495,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
   o.currency = "USD";
   if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
-  o.rate = wholeMoneyValue(o.rate || 50);
+  o.rate = normalizedRateValue(o.rate);
   o.laborCost = wholeMoneyValue(o.laborCost);
   o.materials = await materialsFromInventory(o.materials);
   if (!o.id) {
@@ -479,10 +508,11 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   }
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
-    o.rate = wholeMoneyValue(process.env.DEFAULT_RATE || 50); o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
+    o.rate = normalizedRateValue(process.env.DEFAULT_RATE || 50); o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
     if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
+  o.billableHours = billableHoursValue(o);
   await pool.query("INSERT INTO orders(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [o.id, o]);
   res.json(isTec(req.user.role) ? stripMoney(o) : o);
 });
@@ -499,12 +529,13 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
     const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
     patch = clean;
   }
-  if ("rate" in patch) patch.rate = wholeMoneyValue(patch.rate);
+  if ("rate" in patch) patch.rate = normalizedRateValue(patch.rate);
   if ("laborCost" in patch) patch.laborCost = wholeMoneyValue(patch.laborCost);
   if (Array.isArray(patch.materials)) patch.materials = patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   merged.currency = "USD";
+  merged.billableHours = billableHoursValue(merged);
   if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
     merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (patch.status && patch.status !== prev.status) {

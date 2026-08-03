@@ -5,13 +5,24 @@ import { LOGO, LOGO_RATIO } from "./logo.js";
 const LOGO_W = 42;
 
 const money = (n) => "USD " + (Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const billedHours = (o) => {
+  if (o.billableHours !== undefined && o.billableHours !== null && o.billableHours !== "") return Math.max(0, Number(o.billableHours) || 0);
+  const effective = Math.max(0, Number(o.laborHours) || 0), waiting = Math.max(0, Number(o.technical?.billableWaitMinutes) || 0) / 60;
+  const arrival = o.technical?.arrivalAt ? new Date(o.technical.arrivalAt).getTime() : NaN;
+  const end = o.technical?.completedAt ? new Date(o.technical.completedAt).getTime() : Date.now();
+  const onSite = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
+  return onSite > 0 && onSite < 3600000 ? 2 : Math.round((effective + waiting) * 100) / 100;
+};
+const durationFromHours = (hours) => { const minutes = Math.max(0, Math.round((Number(hours) || 0) * 60)); return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`; };
 function totals(o) {
-  const labor = o.laborBillable ? (Number(o.laborHours) || 0) * (Number(o.technicians) || 1) * (Number(o.rate) || 0) : 0;
+  const hours = billedHours(o);
+  const labor = o.laborBillable ? hours * (Number(o.technicians) || 1) * (Number(o.rate) || 0) : 0;
   const mats = (o.materials || []).filter((m) => m.billable).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.price) || 0), 0);
-  return { labor, mats, total: labor + mats };
+  return { labor, mats, total: labor + mats, hours };
 }
 function costs(o) {
-  const labor = (Number(o.laborHours) || 0) * (Number(o.technicians) || 1) * (Number(o.laborCost) || 0);
+  const actualHours = (Number(o.laborHours) || 0) + (Math.max(0, Number(o.technical?.billableWaitMinutes) || 0) / 60);
+  const labor = actualHours * (Number(o.technicians) || 1) * (Number(o.laborCost) || 0);
   const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
@@ -88,7 +99,8 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     if (technical.reportedAt && technical.arrivalAt) para("Tiempo de respuesta:", duration(new Date(technical.arrivalAt) - new Date(technical.reportedAt)));
     if (effectiveMs) para("Tiempo efectivo de intervención:", duration(effectiveMs));
     if (technical.arrivalAt && technical.completedAt) para("Tiempo total en planta:", duration(new Date(technical.completedAt) - new Date(technical.arrivalAt)));
-    if (technical.downtimeMinutes) para("Parada de producción:", `${technical.downtimeMinutes} minutos`);
+    if (technical.billableWaitMinutes) para("Espera facturable imputable al cliente:", `${technical.billableWaitMinutes} minutos`);
+    if (technical.downtimeMinutes) para("Parada de producción (no facturable):", `${technical.downtimeMinutes} minutos`);
   }
 
   if (technical.workPermit || technical.lotoApplied || technical.ppe || technical.safetyNotes) {
@@ -186,8 +198,11 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   /* Mano de obra */
   section("Mano de obra");
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
-  doc.text(`Horas: ${order.laborHours || 0}${order.technicians ? `    ·    Técnicos: ${order.technicians}` : ""}`, M, y); y += 5;
-  if (priced) { doc.text(`Tarifa por hora y por técnico en planta: ${money(order.rate)}`, M, y); y += 5; doc.text(`Cálculo: ${order.laborHours || 0} h × ${order.technicians || 1} técnico(s) = ${(Number(order.laborHours) || 0) * (Number(order.technicians) || 1)} horas-técnico`, M, y); y += 5; }
+  const chargedHours = billedHours(order), actualWithWait = (Number(order.laborHours) || 0) + (Math.max(0, Number(order.technical?.billableWaitMinutes) || 0) / 60);
+  doc.text(`Tiempo efectivo: ${durationFromHours(order.laborHours)}${order.technicians ? `    ·    Técnicos: ${order.technicians}` : ""}`, M, y); y += 5;
+  if (order.technical?.billableWaitMinutes) { doc.text(`Espera facturable imputable al cliente: ${order.technical.billableWaitMinutes} minutos`, M, y); y += 5; }
+  doc.text(`Horas facturables: ${chargedHours} h${chargedHours > actualWithWait ? " (mínimo de servicio aplicado)" : ""}`, M, y); y += 5;
+  if (priced) { doc.text(`Tarifa por hora y por técnico en planta: ${money(order.rate)}`, M, y); y += 5; doc.text(`Cálculo: ${chargedHours} h × ${order.technicians || 1} técnico(s) = ${chargedHours * (Number(order.technicians) || 1)} horas-técnico`, M, y); y += 5; }
   y += 2;
 
   /* Totales (solo con importes) */
