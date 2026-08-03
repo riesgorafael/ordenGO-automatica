@@ -253,9 +253,10 @@ const timelineErrorsValue = (technical, now = Date.now()) => {
       const start = new Date(session.start).getTime(); const sessionEnd = new Date(session.end || end).getTime();
       return total + (Number.isFinite(start) && Number.isFinite(sessionEnd) ? Math.max(0, sessionEnd - start) : 0);
     }, 0) : (technical?.startedAt ? Math.max(0, end - new Date(technical.startedAt).getTime()) : 0);
-    if (Math.ceil(effectiveMs / 60000) > onSiteMinutes) errors.push("El tiempo efectivo no puede superar el tiempo total en planta.");
-    if ((Number(technical?.billableWaitMinutes) || 0) > onSiteMinutes) errors.push("La espera registrada no puede superar el tiempo total en planta.");
-    if ((Number(technical?.downtimeMinutes) || 0) > onSiteMinutes) errors.push("La parada productiva no puede superar el tiempo total en planta.");
+    const effectiveMinutes = Math.ceil(effectiveMs / 60000);
+    if (effectiveMinutes > onSiteMinutes) errors.push(`El tiempo efectivo (${effectiveMinutes} min) supera el tiempo total en planta (${onSiteMinutes} min). Revisa los horarios.`);
+    const waitMinutes = Number(technical?.billableWaitMinutes) || 0;
+    if (waitMinutes > onSiteMinutes) errors.push(`La espera registrada (${waitMinutes} min) supera el tiempo total en planta (${onSiteMinutes} min). Revisa la llegada, la finalización o la espera.`);
   }
   if ((Number(technical?.billableWaitMinutes) || 0) > 0 && !technical?.billableWaitReason?.trim()) errors.push("Debe indicarse el motivo de la espera por condiciones del sitio.");
   return errors;
