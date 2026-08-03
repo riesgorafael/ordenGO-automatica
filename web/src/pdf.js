@@ -103,12 +103,6 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     if (technical.downtimeMinutes) para("Parada de producción (no facturable):", `${technical.downtimeMinutes} minutos`);
   }
 
-  if (technical.workPermit || technical.lotoApplied || technical.ppe || technical.safetyNotes) {
-    section("Seguridad");
-    para("Permiso / autorización:", technical.workPermit); para("LOTO:", technical.lotoApplied ? "Aplicado" : "No informado");
-    para("EPP:", technical.ppe); para("Condiciones y medidas:", technical.safetyNotes);
-  }
-
   if (technical.deviceType || technical.firmware || technical.programVersion || technical.backupRef || technical.ioVerified || technical.alarmsVerified || technical.setpointChanges) {
     section("Registro de automatización");
     para("Dispositivo:", technical.deviceType); para("Firmware:", technical.firmware); para("Versión de programa:", technical.programVersion);
@@ -164,7 +158,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
         } catch {}
         const stamp = p.ts ? new Date(p.ts).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
         doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(71, 85, 105);
-        doc.text(`FOTO ${i + offset + 1} - ${String(p.cat || "EVIDENCIA").toUpperCase()}`, x, y + frameH + 4);
+        doc.text(`IMAGEN ${i + offset + 1} - ${String(p.cat || "EVIDENCIA").toUpperCase()}`, x, y + frameH + 4);
         if (stamp) { doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139); doc.text(stamp, x + frameW, y + frameH + 4, { align: "right" }); }
       });
       y += rowH;
@@ -249,7 +243,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   for (let page = 1; page <= pages; page++) {
     doc.setPage(page); doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-    doc.text(`Generado el ${new Date().toLocaleString("es-AR")} - ${internal ? "Uso interno y confidencial" : "Reporte para cliente sin costos internos"}`, M, 290);
+    doc.text(`Generado el ${new Date().toLocaleString("es-AR")} - ${internal ? "Uso interno y confidencial" : "Reporte para el Cliente"}`, M, 290);
     doc.text(`Página ${page} de ${pages}`, W - M, 290, { align: "right" });
   }
 
