@@ -44,19 +44,93 @@ function drawLogo(doc, M, y) {
   return h;
 }
 
+function drawServiceSummaryPage(doc, order, valued = false) {
+  const W = 210, M = 15, technical = order.technical || {}, t = totals(order);
+  drawLogo(doc, M, 12);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
+  ["CUIT: 20-35196020-6", "Rivadavia 1379 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 623176 / 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
+  doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+  doc.text(valued ? "CONSTANCIA DE SERVICIO VALORIZADA" : "CONSTANCIA DE SERVICIO", W - M, 16, { align: "right" });
+  doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+  doc.text(`Orden de trabajo: ${order.id || "—"}`, W - M, 23, { align: "right" });
+  doc.text(`Fecha: ${formatDate(order.date)}`, W - M, 28, { align: "right" });
+  doc.text(`Responsable: ${order.tech || "—"}`, W - M, 33, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
+
+  const heading = (text, y) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, y); };
+  const field = (label, value, x, y, width = 70) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+    const lines = doc.splitTextToSize(String(value || "—"), width);
+    doc.text(lines.slice(0, 2), x + 31, y);
+  };
+
+  heading("Cliente y servicio", 58);
+  field("Cliente", order.client, M, 66, 62); field("OT asociada", order.id, 110, 66, 52);
+  field("Sitio", order.site, M, 73, 62); field("Presupuesto", order.quoteNumber, 110, 73, 52);
+  field("Contacto", order.contact, M, 80, 62); field("Orden de compra", order.customerPO, 110, 80, 52);
+  field("Servicio", order.service, M, 87, 62); field("Técnico", order.tech, 110, 87, 52);
+  field("Equipo", order.equipo, M, 94, 62); field("TAG", technical.assetTag, 110, 94, 52);
+
+  heading("Detalle del servicio", 106);
+  doc.setFillColor(248, 250, 252); doc.setDrawColor(226, 232, 240); doc.roundedRect(M, 111, W - 2 * M, 39, 2, 2, "FD");
+  const summaryLine = (label, value, y) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, M + 4, y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+    doc.text(doc.splitTextToSize(String(value || "—"), 139).slice(0, 2), M + 34, y);
+  };
+  summaryLine("Solicitud", order.sintoma, 118);
+  summaryLine("Trabajo", order.solucion, 129);
+  summaryLine("Resultado", [technical.finalCondition, technical.testResult].filter(Boolean).join(" - "), 140);
+
+  let observationsY = 161;
+  if (valued) {
+    heading("Resumen valorizado - USD", 160);
+    const rows = [["Mano de obra", `${t.hours} h x ${order.technicians || 1} técnico(s)`, t.labor], ["Materiales y repuestos", `${(order.materials || []).length} ítem(s)`, t.mats]];
+    doc.setFontSize(8.5); doc.setDrawColor(226, 232, 240);
+    rows.forEach(([label, detail, amount], index) => {
+      const rowY = 168 + index * 8; doc.setFont("helvetica", "bold"); doc.setTextColor(15, 23, 42); doc.text(label, M, rowY);
+      doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139); doc.text(detail, M + 48, rowY);
+      doc.setTextColor(15, 23, 42); doc.text(money(amount), W - M, rowY, { align: "right" }); doc.line(M, rowY + 3, W - M, rowY + 3);
+    });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text("TOTAL", M, 187); doc.text(money(t.total), W - M, 187, { align: "right" });
+    observationsY = 198;
+  }
+
+  heading("Observaciones y compromisos", observationsY);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+  const observations = [technical.recommendations, technical.pendingActions].filter(Boolean).join("  ");
+  doc.text(doc.splitTextToSize(observations || "Sin observaciones adicionales.", W - 2 * M).slice(0, valued ? 6 : 10), M, observationsY + 7);
+
+  const signatureY = 245;
+  if (order.signatureUrl && order.signatureUrl !== "signed") { try { doc.addImage(order.signatureUrl, "PNG", M + 8, signatureY - 23, 44, 20); } catch {} }
+  doc.setDrawColor(100, 116, 139); doc.line(M, signatureY, M + 72, signatureY); doc.line(W - M - 72, signatureY, W - M, signatureY);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
+  doc.text("CONFORMIDAD DEL CLIENTE", M + 36, signatureY + 5, { align: "center" }); doc.text("RESPONSABLE AUTOMÁTICA ARG", W - M - 36, signatureY + 5, { align: "center" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+  doc.text(order.signedBy || "Nombre y firma", M + 36, signatureY + 10, { align: "center" });
+  doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" - ") || "Cargo / empresa", M + 36, signatureY + 14, { align: "center" });
+  doc.text(order.tech || "Técnico responsable", W - M - 36, signatureY + 10, { align: "center" });
+  doc.text(order.signedAt ? `Conformidad: ${formatStamp(order.signedAt)}` : "Fecha y hora", M + 36, signatureY + 18, { align: "center" });
+  doc.text(`Servicio: ${formatStamp(technical.completedAt || order.createdAt)}`, W - M - 36, signatureY + 14, { align: "center" });
+}
+
 export function buildOrderReceiptPDF(order, audience = "client") {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   const internal = audience === "internal";
+  const valued = audience === "valued";
   const priced = internal;
+  const showSales = internal || valued;
   const technical = order.technical || {};
   let y = 16;
+  if (!internal) { drawServiceSummaryPage(doc, order, valued); doc.addPage(); }
   const brk = (need = 8) => { if (y + need > 282) { doc.addPage(); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139); doc.text(`${order.id} - CONTINUACIÓN`, M, 14); doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17); y = 24; } };
 
   /* Encabezado con logo */
   const lh = drawLogo(doc, M, y - 4);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
-  doc.text(internal ? "INFORME TÉCNICO INTERNO" : "REPORTE DE SERVICIO TÉCNICO", W - M, y, { align: "right" });
+  doc.text(internal ? "INFORME TÉCNICO INTERNO" : "ANEXO TÉCNICO DE SERVICIO", W - M, y, { align: "right" });
   y += 6;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   doc.text(`Folio: ${order.id}`, W - M, y, { align: "right" }); y += 4;
@@ -72,6 +146,8 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   if (order.contact && (internal || String(order.contact).trim().toLowerCase() !== String(order.signedBy || "").trim().toLowerCase())) kv("Solicitante / contacto:", order.contact);
   kv("Servicio:", order.service);
   if (internal) kv("Estado de la orden:", order.status);
+  if (internal && order.quoteNumber) kv("Presupuesto:", order.quoteNumber);
+  if (internal && order.customerPO) kv("Orden de compra:", order.customerPO);
   if (order.tech) kv("Técnico:", order.tech);
   if (internal && order.category) kv("Clasificación:", order.category);
   if (order.location?.label && order.location.label !== order.site) kv("Ubicación:", order.location.label);
@@ -181,18 +257,22 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     section("Materiales y repuestos");
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139);
     doc.text("Cant.", M, y); doc.text("Descripción", M + 16, y);
-    if (priced) { doc.text("Costo u.", W - M - 38, y, { align: "right" }); doc.text("Venta u.", W - M, y, { align: "right" }); }
+    if (internal) { doc.text("Costo u.", W - M - 38, y, { align: "right" }); doc.text("Venta u.", W - M, y, { align: "right" }); }
+    else if (valued) { doc.text("P. unit.", W - M - 38, y, { align: "right" }); doc.text("Subtotal", W - M, y, { align: "right" }); }
     y += 2; doc.setDrawColor(241, 245, 249); doc.line(M, y, W - M, y); y += 4;
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(9);
     (order.materials || []).forEach((m) => {
       brk(8);
       doc.text(String(m.qty || 0), M, y);
       const trace = [m.partNumber && `P/N ${m.partNumber}`, m.brand, m.model, m.serial && `S/N ${m.serial}`, internal && m.supplier && `Prov. ${m.supplier}`].filter(Boolean).join(" · ");
-      const nm = doc.splitTextToSize(`${String(m.name || "—")}${trace ? `\n${trace}` : ""}`, priced ? 95 : 150);
+      const nm = doc.splitTextToSize(`${String(m.name || "—")}${trace ? `\n${trace}` : ""}`, internal ? 95 : showSales ? 105 : 150);
       doc.text(nm, M + 16, y);
-      if (priced) {
+      if (internal) {
         doc.text(money(m.cost), W - M - 38, y, { align: "right" });
         doc.text(money(m.price), W - M, y, { align: "right" });
+      } else if (valued) {
+        doc.text(money(m.price), W - M - 38, y, { align: "right" });
+        doc.text(money((Number(m.qty) || 0) * (Number(m.price) || 0)), W - M, y, { align: "right" });
       }
       y += Math.max(nm.length * 4.3, 5);
     });
@@ -235,26 +315,28 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     if ((order.activity || []).length) para("Trazabilidad:", (order.activity || []).map((entry) => `${entry.at ? new Date(entry.at).toLocaleString("es-AR") : ""} ${entry.byName || ""}: ${entry.text || ""}`.trim()).join("\n"));
   }
 
-  /* Firma */
-  brk(40);
-  section("Conformidad del cliente");
-  if (order.signatureUrl && order.signatureUrl !== "signed") {
-    try { doc.addImage(order.signatureUrl, "PNG", M, y, 50, 22); } catch {}
-    y += 24;
-  } else { y += 4; }
-  doc.setDrawColor(148, 163, 184); doc.line(M, y, M + 62, y); y += 4;
-  doc.setFontSize(9); doc.setTextColor(71, 85, 105);
-  doc.text(`Firma del cliente${order.signedBy ? "  ·  " + order.signedBy : ""}`, M, y);
-  if (technical.signerRole || technical.signerCompany) { y += 4.5; doc.setFontSize(8); doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" · "), M, y); }
-  if (order.signedAt) { y += 4.5; doc.setFontSize(8); doc.text(`Conformidad registrada: ${formatStamp(order.signedAt)}`, M, y); }
-  if (order.noSignReason) { y += 5; doc.setFontSize(8); doc.setTextColor(180, 83, 9); doc.text(doc.splitTextToSize(`Orden aprobada sin firma. Motivo: ${order.noSignReason}`, W - 2 * M), M, y); }
+  /* Firma: en reportes para cliente ya está en la constancia de la primera página. */
+  if (internal) {
+    brk(40);
+    section("Conformidad del cliente");
+    if (order.signatureUrl && order.signatureUrl !== "signed") {
+      try { doc.addImage(order.signatureUrl, "PNG", M, y, 50, 22); } catch {}
+      y += 24;
+    } else { y += 4; }
+    doc.setDrawColor(148, 163, 184); doc.line(M, y, M + 62, y); y += 4;
+    doc.setFontSize(9); doc.setTextColor(71, 85, 105);
+    doc.text(`Firma del cliente${order.signedBy ? "  ·  " + order.signedBy : ""}`, M, y);
+    if (technical.signerRole || technical.signerCompany) { y += 4.5; doc.setFontSize(8); doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" · "), M, y); }
+    if (order.signedAt) { y += 4.5; doc.setFontSize(8); doc.text(`Conformidad registrada: ${formatStamp(order.signedAt)}`, M, y); }
+    if (order.noSignReason) { y += 5; doc.setFontSize(8); doc.setTextColor(180, 83, 9); doc.text(doc.splitTextToSize(`Orden aprobada sin firma. Motivo: ${order.noSignReason}`, W - 2 * M), M, y); }
+  }
 
   /* Pie y numeración */
   const pages = doc.getNumberOfPages();
   for (let page = 1; page <= pages; page++) {
     doc.setPage(page); doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-    doc.text(`Generado el ${formatStamp(new Date())} - ${internal ? "Uso interno y confidencial" : "Reporte para el Cliente"}`, M, 290);
+    doc.text(`Generado el ${formatStamp(new Date())} - ${internal ? "Uso interno y confidencial" : valued ? "Constancia valorizada para el Cliente" : "Reporte para el Cliente"}`, M, 290);
     doc.text(`Página ${page} de ${pages}`, W - M, 290, { align: "right" });
   }
 
@@ -262,6 +344,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
 }
 
 export function clientOrderReportPDF(order) { buildOrderReceiptPDF(order, "client").save(`${order.id}_cliente.pdf`); }
+export function valuedClientReportPDF(order) { buildOrderReceiptPDF(order, "valued").save(`${order.id}_cliente_valorizado.pdf`); }
 export function internalOrderReportPDF(order) { buildOrderReceiptPDF(order, "internal").save(`${order.id}_interno.pdf`); }
 
 export function monthlyReportPDF(month, monthLabel, rows, sum) {
