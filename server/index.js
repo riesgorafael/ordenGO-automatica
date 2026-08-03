@@ -57,6 +57,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS tasks   ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS notifications ( id text PRIMARY KEY, user_id text, text text, link text, read boolean DEFAULT false, created_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS parts ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS app_settings ( key text PRIMARY KEY, value jsonb, updated_at timestamptz DEFAULT now());
   `);
   // Migración idempotente para instalaciones existentes
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
@@ -64,6 +65,8 @@ async function initDb() {
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
   const adminPass = process.env.ADMIN_PASSWORD || "admin1234";
   const demoPass = process.env.DEMO_PASSWORD || "ordengo123";
+  const monitorEmail = (process.env.MONITOR_EMAIL || "monitor.oficina@empresa.com").toLowerCase();
+  const monitorPass = process.env.MONITOR_PASSWORD || demoPass;
 
   if ((await pool.query("SELECT count(*)::int n FROM users")).rows[0].n === 0) {
     const seed = [
@@ -71,6 +74,7 @@ async function initDb() {
       { id: "u2", name: "Ana Gómez", email: "ana@empresa.com", role: "gerente", color: "#0ea5e9", pass: demoPass },
       { id: "u3", name: "Luis Mora", email: "luis@empresa.com", role: "tecnico", color: "#10b981", pass: demoPass },
       { id: "u4", name: "María Ruiz", email: "maria@empresa.com", role: "tecnico", color: "#f59e0b", pass: demoPass },
+      { id: "u-monitor-oficina", name: "Monitor Oficina", email: monitorEmail, role: "monitor_oficina", color: "#14b8a6", pass: monitorPass },
     ];
     for (const u of seed)
       await pool.query("INSERT INTO users(id,name,email,password_hash,role,color) VALUES($1,$2,$3,$4,$5,$6)",
@@ -117,6 +121,27 @@ async function initDb() {
     ];
     for (const p of parts) await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]);
   }
+
+  // Alta única del monitor para instalaciones existentes. El marcador evita recrearlo
+  // si el administrador decide eliminarlo más adelante.
+  const monitorMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='monitor_oficina_v1'");
+  if (monitorMigration.rowCount === 0) {
+    let monitor = (await pool.query("SELECT * FROM users WHERE email=$1", [monitorEmail])).rows[0];
+    if (!monitor) {
+      await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword) VALUES($1,$2,$3,$4,$5,$6,true,true)",
+        ["u-monitor-oficina", "Monitor Oficina", monitorEmail, bcrypt.hashSync(monitorPass, 10), "monitor_oficina", "#14b8a6"]);
+      monitor = (await pool.query("SELECT * FROM users WHERE email=$1", [monitorEmail])).rows[0];
+    }
+    const projectRows = await pool.query("SELECT id,data FROM projects");
+    for (const row of projectRows.rows) {
+      const allowedUsers = Array.isArray(row.data.allowedUsers) ? row.data.allowedUsers : [];
+      if (!allowedUsers.includes(monitor.id)) {
+        await pool.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, allowedUsers: [...allowedUsers, monitor.id] }]);
+      }
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('monitor_oficina_v1',$1)", [{ userId: monitor.id, email: monitorEmail }]);
+    console.log("→ Usuario Monitor Oficina creado con acceso a los proyectos existentes.");
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
@@ -152,14 +177,22 @@ function auth(req, res, next) {
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: "No autorizado" });
 // Roles "técnicos" (campo u oficina): nunca ven importes ni el estado "Facturada"
 const isTec = (r) => r === "tecnico" || r === "tecnico_oficina";
-const requireOrdersAccess = (req, res, next) => req.user.role === "tecnico_oficina" ? res.status(403).json({ error: "El rol Técnico de oficina no tiene acceso a órdenes de trabajo" }) : next();
+const isMonitor = (r) => r === "monitor_oficina";
+const isProjectScoped = (r) => isTec(r) || isMonitor(r);
+const requireOrdersAccess = (req, res, next) => (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? res.status(403).json({ error: "Este perfil no tiene acceso a órdenes de trabajo" }) : next();
+const requireProjectWrite = (req, res, next) => isMonitor(req.user.role) ? res.status(403).json({ error: "Monitor Oficina tiene acceso de solo visualización" }) : next();
 // ¿El usuario (si es técnico) tiene permiso sobre este proyecto?
 async function tecCanProject(user, projectId) {
-  if (!isTec(user.role)) return true;
+  if (!isProjectScoped(user.role)) return true;
   if (!projectId) return false;
   const { rows } = await pool.query("SELECT data FROM projects WHERE id=$1", [projectId]);
   const p = rows[0]?.data;
   return !!(p && Array.isArray(p.allowedUsers) && p.allowedUsers.includes(user.id));
+}
+async function assigneeIsAllowed(userId) {
+  if (!userId) return true;
+  const user = (await pool.query("SELECT role,active FROM users WHERE id=$1", [userId])).rows[0];
+  return !!(user && user.active && !isMonitor(user.role));
 }
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
@@ -200,8 +233,9 @@ app.get("/api/bootstrap", auth, async (req, res) => {
   ]);
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
-  // Los técnicos (campo/oficina) solo ven los proyectos que el administrador les habilitó.
-  const canSeeProject = (p) => !tec || (Array.isArray(p.allowedUsers) && p.allowedUsers.includes(req.user.id));
+  // Técnicos y monitores solo ven los proyectos que el administrador les habilitó.
+  const scoped = isProjectScoped(req.user.role);
+  const canSeeProject = (p) => !scoped || (Array.isArray(p.allowedUsers) && p.allowedUsers.includes(req.user.id));
   const visibleProjects = allProjects.filter(canSeeProject);
   const allowedProjectIds = new Set(visibleProjects.map((p) => p.id));
   res.json({
@@ -209,8 +243,8 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     users: u.rows.map(pubUser),
     clients: cl.rows.map((r) => r.data),
     projects: visibleProjects,
-    orders: req.user.role === "tecnico_oficina" ? [] : or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
-    tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !tec || allowedProjectIds.has(t.project)),
+    orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
   });
@@ -231,7 +265,7 @@ app.post("/api/notifications/read-all", auth, async (req, res) => {
 });
 
 /* ------------------------------------------------ Clientes ------------------------------------------------ */
-app.post("/api/clients", auth, async (req, res) => {
+app.post("/api/clients", auth, requireProjectWrite, async (req, res) => {
   const c = { ...(req.body || {}) };
   const existing = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data);
   // Evita duplicados por nombre (reutiliza el existente)
@@ -267,6 +301,10 @@ app.delete("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req
 /* ------------------------------------------------ Proyectos ------------------------------------------------ */
 app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res) => {
   const p = req.body || {}; if (!p.id) p.id = "p" + Date.now();
+  if (!Array.isArray(p.allowedUsers)) {
+    const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
+    p.allowedUsers = monitors;
+  }
   await pool.query("INSERT INTO projects(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2", [p.id, p]);
   res.json(p);
 });
@@ -291,6 +329,7 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
   const key = (String(body.key || src.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)) || "PRJ";
   const newId = "p" + Date.now();
   const assignee = body.assignee || null;                 // reasignar todas las tareas (opcional)
+  if (assignee && !(await assigneeIsAllowed(assignee))) return res.status(400).json({ error: "El responsable seleccionado no admite asignación de tareas" });
   const resetStatus = body.resetStatus !== false;         // por defecto, arranca en "Por hacer"
   const allowedUsers = Array.isArray(body.allowedUsers) ? body.allowedUsers : (assignee ? [assignee] : (src.allowedUsers || []));
   const project = { ...src, id: newId, key, name: body.name || `${src.name} (copia)`, allowedUsers };
@@ -391,9 +430,10 @@ app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req,
 });
 
 /* ------------------------------------------------ Tareas ------------------------------------------------ */
-app.post("/api/tasks", auth, async (req, res) => {
+app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
   if (!(await tecCanProject(req.user, t.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
+  if (!(await assigneeIsAllowed(t.assignee))) return res.status(400).json({ error: "Monitor Oficina no puede ser responsable de tareas" });
   const existing = (await pool.query("SELECT data FROM tasks WHERE id=$1", [t.id])).rows[0]?.data;
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [t.id, t]);
   // Notifica al responsable si es una asignación nueva (a otra persona)
@@ -401,11 +441,12 @@ app.post("/api/tasks", auth, async (req, res) => {
     await notify(t.assignee, `Te asignaron la tarea ${t.id}: ${t.title}`, "task:" + t.id);
   res.json(t);
 });
-app.patch("/api/tasks/:id", auth, async (req, res) => {
+app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const prev = rows[0].data; const patch = req.body || {};
   if (!(await tecCanProject(req.user, prev.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
+  if (patch.assignee !== undefined && !(await assigneeIsAllowed(patch.assignee))) return res.status(400).json({ error: "Monitor Oficina no puede ser responsable de tareas" });
   const merged = { ...prev, ...patch };
   if (patch.status && patch.status !== prev.status)
     merged.activity = [...(prev.activity || []), { type: "status", text: `Estado: ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
@@ -414,7 +455,7 @@ app.patch("/api/tasks/:id", auth, async (req, res) => {
     await notify(patch.assignee, `Te asignaron la tarea ${merged.id}: ${merged.title}`, "task:" + merged.id);
   res.json(merged);
 });
-app.post("/api/tasks/:id/comment", auth, async (req, res) => {
+app.post("/api/tasks/:id/comment", auth, requireProjectWrite, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   if (!(await tecCanProject(req.user, rows[0].data.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
@@ -440,6 +481,13 @@ app.post("/api/users", auth, requireRole("admin"), async (req, res) => {
     await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword) VALUES($1,$2,$3,$4,$5,$6,true,true)",
       [id, name, email.toLowerCase(), hash, role || "tecnico", color || "#0ea5e9"]);
   } catch { return res.status(400).json({ error: "Ese correo ya está registrado" }); }
+  if (role === "monitor_oficina") {
+    const projectRows = await pool.query("SELECT id,data FROM projects");
+    for (const row of projectRows.rows) {
+      const allowedUsers = Array.isArray(row.data.allowedUsers) ? row.data.allowedUsers : [];
+      if (!allowedUsers.includes(id)) await pool.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, allowedUsers: [...allowedUsers, id] }]);
+    }
+  }
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [id]);
   res.json(pubUser(rows[0]));
 });
@@ -458,6 +506,14 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   if (!sets.length) return res.status(400).json({ error: "Nada que actualizar" });
   vals.push(req.params.id);
   await pool.query(`UPDATE users SET ${sets.join(",")} WHERE id=$${i}`, vals);
+  if (role === "monitor_oficina") {
+    await pool.query("UPDATE tasks SET data=data-'assignee', updated_at=now() WHERE data->>'assignee'=$1", [req.params.id]);
+    const projectRows = await pool.query("SELECT id,data FROM projects");
+    for (const row of projectRows.rows) {
+      const allowedUsers = Array.isArray(row.data.allowedUsers) ? row.data.allowedUsers : [];
+      if (!allowedUsers.includes(req.params.id)) await pool.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, allowedUsers: [...allowedUsers, req.params.id] }]);
+    }
+  }
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.params.id]);
   res.json(pubUser(rows[0]));
 });

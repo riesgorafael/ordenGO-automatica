@@ -16,7 +16,7 @@ import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, q
 /* ===================================== CONFIG ===================================== */
 const CUR = "$";
 const DEFAULT_RATE = 850;
-const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina" };
+const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
 const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#6366f1"];
 const money = (n) => `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -198,8 +198,9 @@ export default function App() {
 
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
-  const isOffice = me.role === "tecnico_oficina";
-  const activeProjectView = isMgr ? pTab : techTaskView;
+  const isMonitor = me.role === "monitor_oficina";
+  const isOffice = me.role === "tecnico_oficina" || isMonitor;
+  const activeProjectView = isMgr || isMonitor ? pTab : techTaskView;
   const userById = (id) => users.find((u) => u.id === id);
 
   /* Órdenes */
@@ -301,7 +302,9 @@ export default function App() {
   if (!isOffice && module === "orders" && oView === "new")
     return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} onCancel={() => setOView("list")} onSave={onSaveOrder} />;
 
-  const modTabs = [
+  const modTabs = isMonitor ? [
+    { id: "projects", label: "Proyectos", icon: LayoutGrid },
+  ] : [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
@@ -312,7 +315,7 @@ export default function App() {
   ];
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
-  const activeModule = allowedIds.includes(module) ? module : "inicio";
+  const activeModule = allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio");
   const mobilePrimaryTabs = modTabs.length > 5 ? modTabs.slice(0, 4) : modTabs;
   const mobileExtraTabs = modTabs.length > 5 ? modTabs.slice(4) : [];
   const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
@@ -328,7 +331,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             {activeModule === "orders" && <button onClick={() => setOView("new")} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
-            {activeModule === "projects" && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
+            {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><Search className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
@@ -386,9 +389,9 @@ export default function App() {
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
-                {(isMgr ? [["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar], ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar]]).map(([id, lb, Ic]) => {
-                  const active = isMgr ? pTab === id : techTaskView === id;
-                  return <button key={id} onClick={() => isMgr ? setPTab(id) : setTechTaskView(id)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>;
+                {(isMgr || isMonitor ? [["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar], ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar]]).map(([id, lb, Ic]) => {
+                  const active = isMgr || isMonitor ? pTab === id : techTaskView === id;
+                  return <button key={id} onClick={() => isMgr || isMonitor ? setPTab(id) : setTechTaskView(id)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>;
                 })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
@@ -397,7 +400,7 @@ export default function App() {
               {activeProjectView !== "reports" && (<>
                 <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
-                {(isMgr || activeProjectView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
+                {!isMonitor && (isMgr || activeProjectView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
                 {activeProjectView === "board" && <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>}
                 {isMgr && activeProjectView === "board" && <button onClick={createProject} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
                 {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => setDupProj(projects.find((p) => p.id === pProj))} title="Duplicar proyecto con sus tareas" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
@@ -407,9 +410,10 @@ export default function App() {
               </>)}
             </div>
             {(() => {
-              const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
-              if (pTab === "reports" && isMgr) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
-              if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name)} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
+              const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
+              if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
+              if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name)} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
+              if (isMonitor) return <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly />;
               if (isMgr) return <Board tasks={vis} userById={userById} onOpen={setEditing} onMove={moveTask} />;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
               return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} userById={userById} onOpen={setEditing} onMove={moveTask} />;
@@ -423,7 +427,7 @@ export default function App() {
       </main>
 
       {oDetail && <OrderDetail ger={isMgr} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} me={me} />}
-      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active)} projects={projects} canAssign={isMgr} canDelete={isMgr} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
+      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
@@ -470,7 +474,7 @@ export default function App() {
       </nav>
 
       {/* Botón de acción flotante (móvil) */}
-      {(activeModule === "orders" || activeModule === "projects") && (
+      {!isMonitor && (activeModule === "orders" || activeModule === "projects") && (
         <button onClick={() => (activeModule === "orders" ? setOView("new") : setEditing(null))} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
@@ -1259,7 +1263,7 @@ function FieldTaskList({ tasks, projects, onOpen, onMove }) {
   return <div className="space-y-4">{groups.map(({ id, title, items, tone, icon: Icon }) => items.length > 0 && <section key={id}><div className="mb-2 flex items-center gap-2"><Icon className="h-4 w-4 text-slate-500" /><h3 className="text-sm font-semibold text-slate-800">{title}</h3><span className="rounded-full bg-slate-200 px-2 text-xs text-slate-600">{items.length}</span></div><div className="space-y-2">{items.map((task) => { const index = T_STATUS.indexOf(task.status); return <article key={task.id} className={`rounded-xl border p-3 ${tone}`}><button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><Chip className={`${prioMeta[task.priority]} ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip>{task._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente</Chip>}</div><h4 className="mt-2 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><p className="mt-1 text-xs text-slate-500">{projectById(task.project)?.name || task.id}{task.due ? ` · ${dueLabel(task.due)}` : ""}</p></button><div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3"><span className="text-xs font-medium text-slate-600">{task.status}</span><button onClick={() => onOpen(task)} className="ml-auto min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Ver detalle</button>{index < T_STATUS.length - 1 && <button onClick={() => onMove(task.id, 1)} className="min-h-10 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white">Avanzar</button>}</div></article>; })}</div></section>)}</div>;
 }
 
-function TaskColumn({ status, tasks, userById, onOpen, onMove, roomy = false }) {
+function TaskColumn({ status, tasks, userById, onOpen, onMove, roomy = false, readOnly = false }) {
   const col = tasks.filter((task) => task.status === status);
   const meta = T_STYLE[status];
   const limit = WIP_LIMITS[status];
@@ -1271,14 +1275,14 @@ function TaskColumn({ status, tasks, userById, onOpen, onMove, roomy = false }) 
       {col.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-xs text-slate-400">Sin tareas en esta etapa</div>}
       {col.map((task) => { const index = T_STATUS.indexOf(task.status); const age = daysSince(task._updatedAt); return <article key={task.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><Chip className={`${typeMeta[task.type]} ring-1 ring-inset ring-black/5`}>{task.type}</Chip>{isOverdue(task) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Vencida</Chip>}{isStale(task) && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="h-3 w-3" />Estancada</Chip>}</div><h4 className="mt-1.5 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{task.id}</span>{task.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{dueLabel(task.due)}</span>}{task.status !== "Hecho" && task._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "Actualizada hoy" : `Hace ${age}d`}</span>}</div></button>
-        <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3"><div className="flex min-w-0 items-center gap-1.5"><Avatar user={userById(task.assignee)} size={24} /><Chip className={`${prioMeta[task.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip></div><div className="flex gap-1"><button onClick={() => onMove(task.id, -1)} disabled={index === 0} aria-label={`Mover ${task.title} hacia atrás`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button><button onClick={() => onMove(task.id, 1)} disabled={index === T_STATUS.length - 1} aria-label={`Avanzar ${task.title}`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button></div></div>
+        <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3"><div className="flex min-w-0 items-center gap-1.5"><Avatar user={userById(task.assignee)} size={24} /><Chip className={`${prioMeta[task.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip></div>{!readOnly && <div className="flex gap-1"><button onClick={() => onMove(task.id, -1)} disabled={index === 0} aria-label={`Mover ${task.title} hacia atrás`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button><button onClick={() => onMove(task.id, 1)} disabled={index === T_STATUS.length - 1} aria-label={`Avanzar ${task.title}`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button></div>}</div>
       </article>; })}
     </div>
   </section>;
 }
 
-function Board({ tasks, userById, onOpen, onMove }) {
-  return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{T_STATUS.map((status) => <TaskColumn key={status} status={status} tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} />)}</div>;
+function Board({ tasks, userById, onOpen, onMove, readOnly = false }) {
+  return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{T_STATUS.map((status) => <TaskColumn key={status} status={status} tasks={tasks} userById={userById} onOpen={onOpen} onMove={onMove} readOnly={readOnly} />)}</div>;
 }
 
 function TechnicianBoard({ tasks, userById, onOpen, onMove }) {
@@ -1348,25 +1352,25 @@ function ActivitySection({ entity, onSend, userById }) {
 }
 
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
-function TaskModal({ task, me, users, projects, canAssign, canDelete, nextId, onClose, onSave, onDelete, onComment, prefill }) {
+function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, prefill }) {
   const editingExisting = !!task;
   const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
   const save = () => { if (!f.title.trim()) return; onSave({ ...f, id: f.id || nextId(f.project), createdAt: f.createdAt || todayStr() }); };
-  const assignable = canAssign ? users : users.filter((u) => u.id === me.id);
+  const assignable = readOnly || canAssign ? users : users.filter((u) => u.id === me.id);
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">{editingExisting ? f.id : "Nueva tarea"}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="space-y-3">
-          <input value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="Título de la tarea" className="u-input text-sm font-medium" />
-          <textarea value={f.desc} onChange={(e) => set({ desc: e.target.value })} rows={3} placeholder="Descripción / criterios" className="u-input resize-none" />
-          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto"><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={editingExisting} className="u-input">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} className="u-input">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
-          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} className="u-input">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} className="u-input">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} className="u-input">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
-          <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} className="u-input" /></L>
+          <input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={readOnly} placeholder="Título de la tarea" className="u-input text-sm font-medium disabled:bg-slate-50" />
+          <textarea value={f.desc} onChange={(e) => set({ desc: e.target.value })} disabled={readOnly} rows={3} placeholder="Descripción / criterios" className="u-input resize-none disabled:bg-slate-50" />
+          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto"><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={editingExisting || readOnly} className="u-input disabled:bg-slate-50">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
+          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
+          <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50" /></L>
         </div>
-        {editingExisting && onComment && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
-        <div className="mt-5 flex gap-2">{editingExisting && canDelete && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button><button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button></div>
+        {editingExisting && onComment && !readOnly && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
+        <div className="mt-5 flex gap-2">{editingExisting && canDelete && !readOnly && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">{readOnly ? "Cerrar" : "Cancelar"}</button>{!readOnly && <button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button>}</div>
       </div>
     </div>
   );
@@ -1378,7 +1382,7 @@ function Reports({ tasks, users, projects, proj }) {
   const wip = tasks.filter((t) => t.status === "En progreso" || t.status === "En revisión").length;
   const overdue = tasks.filter(isOverdue).length;
   const byStatus = T_STATUS.map((s) => ({ name: s, value: tasks.filter((t) => t.status === s).length, fill: T_STYLE[s].bar }));
-  const byAssignee = users.filter((u) => u.active).map((u) => ({ name: u.name.split(" ")[0], value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }));
+  const byAssignee = users.filter((u) => u.active && u.role !== "monitor_oficina").map((u) => ({ name: u.name.split(" ")[0], value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }));
   const projList = proj === "all" ? projects : projects.filter((p) => p.id === proj);
   return (
     <div className="space-y-5">
@@ -1395,14 +1399,14 @@ function ChartBox({ data }) {
 /* ===================================== EQUIPO (ADMIN) ===================================== */
 /* ===================================== ACCESO POR PROYECTO ===================================== */
 function ProjectAccess({ project, users, onClose, onSave }) {
-  const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina"));
+  const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina" || u.role === "monitor_oficina"));
   const [sel, setSel] = useState(new Set(project.allowedUsers || []));
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Accesos del proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-        <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá qué técnicos pueden ver este proyecto y sus tareas. La gerencia siempre lo ve.</p>
+        <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá qué técnicos y monitores pueden ver este proyecto y sus tareas. La gerencia siempre lo ve.</p>
         <div className="space-y-1.5">
           {techs.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">No hay técnicos cargados.</div>}
           {techs.map((u) => (
@@ -1424,7 +1428,7 @@ function ProjectAccess({ project, users, onClose, onSave }) {
 
 /* ===================================== DUPLICAR PROYECTO ===================================== */
 function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) {
-  const people = users.filter((u) => u.active);
+  const people = users.filter((u) => u.active && u.role !== "monitor_oficina");
   const suggestKey = (project.key || "PRJ");
   const [name, setName] = useState(`${project.name} (copia)`);
   const [key, setKey] = useState(suggestKey);
@@ -1595,10 +1599,10 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2"><Panel title={`Empleados (${users.length}) · directorio compartido`}>
-        <div className="space-y-2">{users.map((u) => { const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
+        <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}</div><div className="break-all text-xs text-slate-500">{u.email} · {load} tarea(s) · {ords} orden(es)</div></div>
+            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? " · Solo visualización · no computa carga" : ` · ${load} tarea(s) · ${ords} orden(es)`}</div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
@@ -1609,7 +1613,7 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         ); })}</div>
       </Panel></div>
       <div><Panel title="Nuevo empleado">
-        <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="(opcional; usa la de por defecto)" className="u-input" /></L><L label="Rol"><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L><button onClick={add} disabled={!nf.name.trim() || !nf.email.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">Este directorio se usa en Órdenes y en Proyectos. El técnico luego cambia su contraseña con el administrador.</p></div>
+        <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="(opcional; usa la de por defecto)" className="u-input" /></L><L label="Rol"><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L><button onClick={add} disabled={!nf.name.trim() || !nf.email.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">Los monitores son perfiles de solo visualización: no reciben tareas ni órdenes y no aparecen en métricas de carga.</p></div>
       </Panel></div>
     </div>
     {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { await wrap(onPatch)(passwordUser.id, { password }); setPasswordUser(null); }} />}
