@@ -347,7 +347,8 @@ export default function App() {
   const deleteProject = async (id) => {
     const cur = projects.find((p) => p.id === id); if (!cur) return;
     const n = tasks.filter((t) => t.project === id).length;
-    setConfirmDialog({ title: `Eliminar ${cur.name}`, message: `Se eliminará el proyecto${n ? ` junto con ${n} tarea(s)` : ""}. Esta acción no se puede deshacer.`, confirmLabel: "Eliminar proyecto", danger: true, action: async () => { try { await api.deleteProject(id); setProjects((x) => x.filter((y) => y.id !== id)); setTasks((x) => x.filter((t) => t.project !== id)); setPProj("all"); } catch (e) { err(e); } } });
+    const linkedBudget = budgets.find((budget) => budget.projectId === id);
+    setConfirmDialog({ title: `Eliminar ${cur.name}`, message: `Se eliminará el proyecto${n ? ` junto con ${n} tarea(s)` : ""}.${linkedBudget ? ` El presupuesto ${linkedBudget.number || linkedBudget.id} se conservará y volverá a habilitarse para crear otro proyecto.` : ""} Esta acción no se puede deshacer.`, confirmLabel: "Eliminar proyecto", danger: true, action: async () => { try { const result = await api.deleteProject(id); setProjects((x) => x.filter((y) => y.id !== id)); setTasks((x) => x.filter((t) => t.project !== id)); if (result?.budgets?.length) setBudgets((items) => items.map((item) => result.budgets.find((budget) => budget.id === item.id) || item)); setPProj("all"); toast("Proyecto eliminado y presupuesto desvinculado", "success"); } catch (e) { err(e); } } });
   };
   const saveAccess = async (id, allowedUsers) => {
     try { const p = await api.updateProject(id, { allowedUsers }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); setAccessProj(null); toast("Accesos actualizados", "success"); } catch (e) { err(e); }

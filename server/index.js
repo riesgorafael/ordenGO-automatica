@@ -462,10 +462,31 @@ app.patch("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req
   res.json(merged);
 });
 app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  // Elimina el proyecto y sus tareas asociadas
-  await pool.query("DELETE FROM tasks WHERE data->>'project' = $1", [req.params.id]);
-  await pool.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
-  res.status(204).end();
+  const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!project) return res.status(404).json({ error: "No existe" });
+  const financialCount = Number((await pool.query("SELECT count(*)::int AS count FROM financial_movements WHERE data->>'projectId'=$1", [req.params.id])).rows[0]?.count || 0);
+  if (financialCount > 0) return res.status(409).json({ error: `No se puede eliminar: el proyecto tiene ${financialCount} movimiento(s) financiero(s) asociado(s). Elimina o reasigna primero esos registros.` });
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const linkedBudgets = (await db.query("SELECT id,data FROM budgets WHERE data->>'projectId'=$1", [req.params.id])).rows;
+    const updatedBudgets = [];
+    for (const row of linkedBudgets) {
+      const { projectId, ...rest } = row.data;
+      const budget = { ...rest, stage: "Aprobado", probability: 100, activity: [...(row.data.activity || []), { type: "project_unlinked", text: `Proyecto ${project.key || project.name} eliminado; presupuesto habilitado para una nueva conversión`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
+      await db.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [row.id, budget]);
+      updatedBudgets.push(budget);
+    }
+    await db.query("DELETE FROM tasks WHERE data->>'project'=$1", [req.params.id]);
+    await db.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
+    await db.query("COMMIT");
+    res.json({ deletedProjectId: req.params.id, budgets: updatedBudgets });
+  } catch (error) {
+    await db.query("ROLLBACK");
+    res.status(500).json({ error: "No se pudo eliminar y desvincular el proyecto." });
+  } finally {
+    db.release();
+  }
 });
 
 /* ------------------------------------------------ Presupuestos ------------------------------------------------ */
@@ -479,6 +500,7 @@ const normalizeBudget = (input, previous = {}) => {
   budget.currency = "USD";
   budget.stage = BUDGET_STAGES.includes(budget.stage) ? budget.stage : "Borrador";
   budget.probability = BUDGET_STAGE_PROBABILITY[budget.stage];
+  if (budget.projectId) { budget.stage = "Aprobado"; budget.probability = 100; }
   budget.number = String(budget.number || budget.id || "").trim().slice(0, 40);
   budget.durationDays = Math.max(0, Math.round(Number(budget.durationDays) || 0));
   budget.teamSize = Math.max(1, Math.round(Number(budget.teamSize) || 1));
