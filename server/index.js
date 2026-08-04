@@ -384,7 +384,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     users: u.rows.map(pubUser),
     clients: cl.rows.map((r) => r.data),
     projects: visibleProjects,
-    budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
     finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => {
       const { attachmentUrl, ...summary } = r.data;
       return { ...summary, hasAttachment: Boolean(attachmentUrl), _updatedAt: r.updated_at };
@@ -471,21 +471,26 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
 /* ------------------------------------------------ Presupuestos ------------------------------------------------ */
 const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Rechazado"];
 const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Rechazado": 0 };
+const LABOR_ROLE_COST = { "Programador": 50, "Ingeniero": 25, "Asesor": 20, "Programador AUX": 45, "Tablerista": 17, "Dibujante": 17, "Administrativo": 6, "Ayudante": 5, "Programador Aprendiz": 7 };
+const LABOR_DEFAULT_ROLE = { "Mano de obra": "Ingeniero", "Ingeniería": "Ingeniero", "Programación": "Programador", "Montaje": "Tablerista", "Puesta en marcha": "Ingeniero" };
 const normalizeBudget = (input, previous = {}) => {
   const budget = { ...previous, ...(input || {}) };
   delete budget._updatedAt;
   budget.currency = "USD";
   budget.stage = BUDGET_STAGES.includes(budget.stage) ? budget.stage : "Borrador";
   budget.probability = BUDGET_STAGE_PROBABILITY[budget.stage];
-  budget.number = String(budget.number || "").trim().slice(0, 40);
+  budget.number = String(budget.number || budget.id || "").trim().slice(0, 40);
   budget.durationDays = Math.max(0, Math.round(Number(budget.durationDays) || 0));
   budget.teamSize = Math.max(1, Math.round(Number(budget.teamSize) || 1));
-  budget.items = Array.isArray(budget.items) ? budget.items.map((item) => ({
-    ...item,
-    qty: Math.max(0, Number(item.qty) || 0),
-    unitPrice: Math.max(0, Number(item.unitPrice) || 0),
-    unitCost: Math.max(0, Number(item.unitCost) || 0),
-  })) : [];
+  budget.targetMargin = Math.min(90, Math.max(0, Number(budget.targetMargin) || 35));
+  budget.items = Array.isArray(budget.items) ? budget.items.map((item) => {
+    const laborRole = LABOR_ROLE_COST[item.description] != null ? item.description : LABOR_DEFAULT_ROLE[item.type];
+    const isLabor = Boolean(laborRole && LABOR_ROLE_COST[laborRole] != null);
+    const originalCost = Math.max(0, Number(item.unitCost) || 0);
+    const unitCost = isLabor ? LABOR_ROLE_COST[laborRole] : originalCost;
+    const suggestedSale = Math.round((unitCost / (1 - budget.targetMargin / 100)) * 100) / 100;
+    return { ...item, description: isLabor ? laborRole : item.description, unit: isLabor ? "h" : item.unit, qty: Math.max(0, Number(item.qty) || 0), unitPrice: Math.max(0, originalCost <= 0 && isLabor ? suggestedSale : Number(item.unitPrice) || 0), unitCost };
+  }) : [];
   budget.amount = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0) * 100) / 100;
   budget.estimatedCost = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitCost, 0) * 100) / 100;
   return budget;
