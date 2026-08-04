@@ -617,7 +617,7 @@ export default function App() {
         )}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
-        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} users={users} me={me} onSaveBranding={saveBranding} onResetPassword={patchUser} onChangeOwnPassword={() => setPwOpen(true)} onErr={err} />}
+        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
         </div>
@@ -2197,11 +2197,10 @@ function ClientEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="u-input" /></L><L label="Sitio / ubicación"><input value={form.site} onChange={(e) => setForm({ ...form, site: e.target.value })} className="u-input" /></L><L label="Código"><input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" /></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.code.trim()} onClick={() => onSave({ name: form.name.trim(), site: form.site.trim(), code: form.code.trim() })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
 }
 
-function SettingsModule({ branding, users, me, onSaveBranding, onResetPassword, onChangeOwnPassword, onErr }) {
+function SettingsModule({ branding, onSaveBranding }) {
   const [form, setForm] = useState({ ...DEFAULT_BRANDING, ...branding });
   const [saving, setSaving] = useState(false);
   const [logoError, setLogoError] = useState("");
-  const [passwordUser, setPasswordUser] = useState(null);
   useEffect(() => { setForm({ ...DEFAULT_BRANDING, ...branding }); }, [branding]);
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const chooseTheme = (theme) => setForm((current) => ({ ...current, theme: theme.id, primaryColor: theme.primaryColor, headerColor: theme.headerColor }));
@@ -2217,7 +2216,7 @@ function SettingsModule({ branding, users, me, onSaveBranding, onResetPassword, 
   };
   const save = async () => { setSaving(true); await onSaveBranding(form); setSaving(false); };
   return <div className="space-y-5">
-    <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad visual, tema y seguridad de acceso de la aplicación.</p></div>
+    <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad visual y tema general de la aplicación.</p></div>
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
       <Box className="overflow-hidden">
         <div className="border-b border-slate-100 p-4"><div className="flex items-center gap-2"><Palette className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Marca y apariencia</h3><p className="text-[11px] text-slate-500">Los cambios se aplican a todos los usuarios y dispositivos.</p></div></div></div>
@@ -2230,11 +2229,8 @@ function SettingsModule({ branding, users, me, onSaveBranding, onResetPassword, 
       </Box>
       <div className="space-y-5">
         <Panel title="Vista previa"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold text-white" style={{ background: form.primaryColor }}>Crear registro</button></div></div></div></Panel>
-        <Panel title="Tu contraseña"><p className="text-xs leading-relaxed text-slate-500">Para cambiar tu propia contraseña debes confirmar la actual. Nadie puede consultar una contraseña existente.</p><button onClick={onChangeOwnPassword} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-700"><KeyRound className="h-4 w-4" /> Cambiar mi contraseña</button></Panel>
       </div>
     </div>
-    <Box className="p-4"><div className="mb-3 flex items-start gap-2"><Settings2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Usuarios y recuperación de acceso</h3><p className="text-[11px] text-slate-500">Genera una contraseña temporal cuando un usuario la olvida. Se le exigirá reemplazarla en su próximo ingreso.</p></div></div><div className="motion-list grid grid-cols-1 gap-2 md:grid-cols-2">{users.map((user) => { const own = user.id === me.id; return <div key={user.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><Avatar user={user} size={36} /><div className="min-w-0 flex-1"><b className="block truncate text-sm text-slate-800">{user.name}{own ? " · Tú" : ""}</b><span className="block truncate text-xs text-slate-500">{user.email} · {ROLES[user.role]}</span>{user.mustChangePassword && <span className="mt-1 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">Cambio pendiente</span>}</div><button onClick={() => own ? onChangeOwnPassword() : setPasswordUser(user)} aria-label={own ? "Cambiar mi contraseña" : `Restablecer contraseña de ${user.name}`} title={own ? "Cambiar mi contraseña" : "Restablecer contraseña"} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"><KeyRound className="h-4 w-4" /></button></div>; })}</div></Box>
-    {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { try { await onResetPassword(passwordUser.id, { password }); setPasswordUser(null); } catch (error) { onErr(error); } }} />}
   </div>;
 }
 
