@@ -345,7 +345,7 @@ export default function App() {
   }, [me, module, oTab, pTab]);
 
   useEffect(() => {
-    if (!me || !online || module !== "orders" || oView !== "list") return;
+    if (!me || !online || module !== "orders") return;
     let cancelled = false;
     const refreshOrders = async () => {
       try {
@@ -359,7 +359,7 @@ export default function App() {
     document.addEventListener("visibilitychange", onVisibility);
     void refreshOrders();
     return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refreshOrders); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [me?.id, online, module, oView]);
+  }, [me?.id, online, module]);
 
   useEffect(() => {
     if (!online || !me || !offlineCount) return;
@@ -544,7 +544,7 @@ export default function App() {
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
   if (!isOffice && module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} prefill={orderPrefill} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
+    return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
@@ -577,7 +577,7 @@ export default function App() {
             <div className="leading-tight border-l border-ink-800 pl-2.5"><div className="text-sm font-semibold">{branding.appName || "OrdenGO"}</div><div className="text-[11px] text-slate-400">{branding.subtitle || "Campo + Proyectos"}</div></div>
           </div>
           <div className="flex items-center gap-2">
-            {activeModule === "orders" && <button onClick={() => { setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
+            {activeModule === "orders" && <button onClick={() => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
             {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "finances" && <button onClick={() => setFinanceCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Movimiento</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
@@ -730,7 +730,7 @@ export default function App() {
 
       {/* Botón de acción flotante (móvil) */}
       {!isMonitor && (activeModule === "orders" || activeModule === "projects" || activeModule === "budgets" || activeModule === "finances") && (
-        <button onClick={() => activeModule === "orders" ? setOView("new") : activeModule === "budgets" ? setBudgetCreateSignal((value) => value + 1) : activeModule === "finances" ? setFinanceCreateSignal((value) => value + 1) : setEditing(null)} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : "Nueva tarea"}>
+        <button onClick={() => { if (activeModule === "orders") { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); } else if (activeModule === "budgets") setBudgetCreateSignal((value) => value + 1); else if (activeModule === "finances") setFinanceCreateSignal((value) => value + 1); else setEditing(null); }} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
       )}
@@ -1774,10 +1774,15 @@ function ReasonDialog({ onClose, onConfirm }) {
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, me, clients, parts = [], prefill = null, onSave, onCancel }) {
+function NewOrder({ ger, me, clients, parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted }) {
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
   const [currentOrderId, setCurrentOrderId] = useState(initial.existingOrderId || "");
+  useEffect(() => {
+    if (!online || !currentOrderId || currentOrderId.startsWith("PEND-") || knownOrders.some((order) => order.id === currentOrderId)) return;
+    clearOrderDraft(me.id);
+    onDeleted?.(currentOrderId);
+  }, [online, currentOrderId, knownOrders, me.id, onDeleted]);
   const [step, setStep] = useState(initial.step || 0);
   const [clientMode, setClientMode] = useState(initial.clientMode || "existing");
   const [clientId, setClientId] = useState(initial.clientId || clients[0]?.id || "");
