@@ -470,12 +470,14 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
 
 /* ------------------------------------------------ Presupuestos ------------------------------------------------ */
 const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Rechazado"];
+const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Rechazado": 0 };
 const normalizeBudget = (input, previous = {}) => {
   const budget = { ...previous, ...(input || {}) };
   delete budget._updatedAt;
   budget.currency = "USD";
   budget.stage = BUDGET_STAGES.includes(budget.stage) ? budget.stage : "Borrador";
-  budget.probability = Math.min(100, Math.max(0, Math.round(Number(budget.probability) || 0)));
+  budget.probability = BUDGET_STAGE_PROBABILITY[budget.stage];
+  budget.number = String(budget.number || "").trim().slice(0, 40);
   budget.durationDays = Math.max(0, Math.round(Number(budget.durationDays) || 0));
   budget.teamSize = Math.max(1, Math.round(Number(budget.teamSize) || 1));
   budget.items = Array.isArray(budget.items) ? budget.items.map((item) => ({
@@ -498,6 +500,9 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res)
     const next = Math.max(0, ...rows.map((row) => Number(String(row.id).split("-").pop()) || 0)) + 1;
     budget.id = `PRES-${year}-${String(next).padStart(3, "0")}`;
   }
+  budget.number = budget.number || budget.id;
+  const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id=$1 OR data->>'number'=$1 LIMIT 1", [budget.number])).rows[0];
+  if (duplicateNumber) return res.status(409).json({ error: "Ya existe un presupuesto con ese número." });
   budget.createdAt = budget.createdAt || new Date().toISOString();
   budget.activity = [...(budget.activity || []), { type: "created", text: "Presupuesto creado", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   await pool.query("INSERT INTO budgets(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [budget.id, budget]);
@@ -509,7 +514,11 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req,
   if (!current) return res.status(404).json({ error: "No existe" });
   const budget = normalizeBudget(req.body, current);
   budget.id = req.params.id;
+  budget.number = budget.number || budget.id;
+  const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id<>$2 AND (id=$1 OR data->>'number'=$1) LIMIT 1", [budget.number, req.params.id])).rows[0];
+  if (duplicateNumber) return res.status(409).json({ error: "Ya existe un presupuesto con ese número." });
   const changes = [];
+  if ((budget.number || budget.id) !== (current.number || current.id)) changes.push(`Número: ${current.number || current.id} → ${budget.number}`);
   if (budget.stage !== current.stage) changes.push(`Estado: ${current.stage} → ${budget.stage}`);
   if (budget.nextFollowUp !== current.nextFollowUp || budget.nextAction !== current.nextAction) changes.push("Seguimiento actualizado");
   if (!changes.length) changes.push("Presupuesto actualizado");
@@ -522,7 +531,7 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req,
     if (project) {
       const linkedProject = { ...project, budgetId: budget.id, clientId: budget.clientId || project.clientId || "", client: budget.client || project.client || "", site: budget.site || project.site || "" };
       await pool.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [budget.projectId, linkedProject]);
-      const financeLink = JSON.stringify({ budgetId: budget.id, budgetTitle: budget.title || "", clientId: linkedProject.clientId, clientName: linkedProject.client, linkageSource: "approved-project-budget", linkedAt: new Date().toISOString() });
+      const financeLink = JSON.stringify({ budgetId: budget.id, budgetNumber: budget.number || budget.id, budgetTitle: budget.title || "", clientId: linkedProject.clientId, clientName: linkedProject.client, linkageSource: "approved-project-budget", linkedAt: new Date().toISOString() });
       await pool.query("UPDATE financial_movements SET data=data || $2::jsonb, updated_at=now() WHERE data->>'kind'='expense' AND data->>'projectId'=$1", [budget.projectId, financeLink]);
     }
   }
@@ -595,11 +604,13 @@ const applyApprovedBudgetLink = async (movement) => {
   movement.clientName = project.client || budget?.client || movement.clientName || "";
   if (budget?.stage === "Aprobado") {
     movement.budgetId = budget.id;
+    movement.budgetNumber = budget.number || budget.id;
     movement.budgetTitle = budget.title || "";
     movement.linkageSource = "approved-project-budget";
     movement.linkedAt = movement.linkedAt || new Date().toISOString();
   } else {
     movement.budgetId = "";
+    movement.budgetNumber = "";
     movement.budgetTitle = "";
     movement.linkageSource = "project-without-approved-budget";
   }
