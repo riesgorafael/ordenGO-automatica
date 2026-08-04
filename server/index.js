@@ -382,7 +382,9 @@ const isMonitor = (r) => r === "monitor_oficina";
 const isProjectScoped = (r) => isTec(r) || isMonitor(r);
 const requireOrdersAccess = (req, res, next) => (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? res.status(403).json({ error: "Este perfil no tiene acceso a órdenes de trabajo" }) : next();
 const requireProjectWrite = (req, res, next) => isMonitor(req.user.role) ? res.status(403).json({ error: "Monitor Oficina tiene acceso de solo visualización" }) : next();
-const orderVisibleToUser = (user, order) => user.role !== "tecnico" || String(order?.tech || "").trim().toLowerCase() === String(user.name || "").trim().toLowerCase();
+const normName = (name) => String(name || "").trim().toLowerCase();
+const orderAssignedNames = (order) => [order?.tech, ...(Array.isArray(order?.assignedTechs) ? order.assignedTechs : [])].map(normName).filter(Boolean);
+const orderVisibleToUser = (user, order) => user.role !== "tecnico" || orderAssignedNames(order).includes(normName(user.name));
 const TECH_ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada"]);
 const ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Aprobada", "Facturada"]);
 const orderBusinessErrors = (order) => {
@@ -392,6 +394,7 @@ const orderBusinessErrors = (order) => {
     if (!String(order?.client || "").trim()) errors.push("El cliente es obligatorio.");
     if (!String(order?.site || "").trim()) errors.push("El sitio de intervención es obligatorio.");
     if (!String(order?.tech || "").trim()) errors.push("El técnico responsable es obligatorio.");
+    if (!String(order?.equipo || "").trim() && !String(order?.technical?.assetTag || "").trim()) errors.push("El equipo o activo intervenido es obligatorio.");
   }
   if (["Completada", "Aprobada", "Facturada"].includes(order?.status)) {
     if (!order?.technical?.completedAt) errors.push("La finalización debe registrarse desde la cronología.");
@@ -1027,8 +1030,9 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials"];
-const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs"];
+const sanitizeAssignedTechs = (value) => Array.isArray(value) ? [...new Set(value.map((name) => String(name || "").trim()).filter(Boolean))].slice(0, 8) : [];
 
 app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC");
@@ -1040,9 +1044,11 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
   o.status = o.status || "Borrador";
   if (o.status === "En progreso") o.status = "En proceso de ejecución";
+  o.assignedTechs = sanitizeAssignedTechs(o.assignedTechs);
   if (isTec(req.user.role)) {
     delete o.budgetId; delete o.budgetNumber; delete o.projectId; delete o.quoteNumber; delete o.customerPO;
     o.tech = req.user.name;
+    o.assignedTechs = [...new Set([req.user.name, ...o.assignedTechs])];
     if (!TECH_ORDER_STATUSES.has(o.status)) o.status = "Borrador";
   }
   if (o.budgetId) {
@@ -1093,9 +1099,11 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   if (!orderVisibleToUser(req.user, rows[0].data)) return res.status(403).json({ error: "Esta orden está asignada a otro técnico" });
   let patch = req.body || {};
+  if ("assignedTechs" in patch) patch.assignedTechs = sanitizeAssignedTechs(patch.assignedTechs);
   if (isTec(req.user.role)) {
     const clean = {}; for (const k of TEC_PATCH) if (k in patch) clean[k] = patch[k];
     if (clean.status && !TECH_ORDER_STATUSES.has(clean.status)) delete clean.status;
+    if (clean.assignedTechs) clean.assignedTechs = [...new Set([req.user.name, ...clean.assignedTechs])];
     patch = clean;
   } else if (req.user.role === "gerente") {
     const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
