@@ -901,6 +901,7 @@ const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "st
 
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
+  if (o.status === "En progreso") o.status = "En proceso de ejecución";
   if (isTec(req.user.role)) {
     delete o.budgetId; delete o.budgetNumber; delete o.projectId; delete o.quoteNumber; delete o.customerPO;
   }
@@ -956,6 +957,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
     const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
     patch = clean;
   }
+  if (patch.status === "En progreso") patch.status = "En proceso de ejecución";
   if (req.user.role === "admin" && "budgetId" in patch) {
     if (!patch.budgetId) {
       patch.budgetId = ""; patch.budgetNumber = ""; patch.projectId = ""; patch.quoteNumber = ""; patch.customerPO = "";
@@ -974,6 +976,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   if (Array.isArray(patch.materials)) patch.materials = isTec(req.user.role) ? await materialsFromInventory(patch.materials) : patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
+  if (merged.status === "En progreso") merged.status = "En proceso de ejecución";
   merged.currency = "USD";
   const chronologyErrors = timelineErrorsValue(merged.technical);
   if (("technical" in patch || "status" in patch) && merged.status !== "Borrador" && chronologyErrors.length) return res.status(400).json({ error: chronologyErrors.join(" ") });
