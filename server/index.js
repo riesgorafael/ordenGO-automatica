@@ -901,6 +901,19 @@ const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "st
 
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
+  if (o.budgetId) {
+    const linkedBudget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [o.budgetId])).rows[0]?.data;
+    if (!linkedBudget) return res.status(400).json({ error: "El presupuesto vinculado ya no existe." });
+    if (!["Aprobado", "Facturado"].includes(linkedBudget.stage)) return res.status(400).json({ error: "Solo se pueden generar órdenes desde presupuestos aprobados o facturados." });
+    o.budgetNumber = linkedBudget.number || linkedBudget.id;
+    o.quoteNumber = linkedBudget.number || linkedBudget.id;
+    o.customerPO = linkedBudget.purchaseOrderNumber || o.customerPO || "";
+    o.client = linkedBudget.client || o.client || "";
+    o.site = linkedBudget.site || o.site || "";
+    o.contact = linkedBudget.contact || o.contact || "";
+    o.service = linkedBudget.service || o.service || "Automatización";
+    o.projectId = linkedBudget.projectId || o.projectId || "";
+  }
   o.currency = "USD";
   if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
   o.rate = normalizedRateValue(o.rate);
