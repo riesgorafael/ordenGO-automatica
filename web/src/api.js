@@ -27,6 +27,7 @@ async function req(path, opts = {}) {
 
 export const api = {
   login: (email, password) => req("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  getBranding: () => req("/branding"),
   bootstrap: () => req("/bootstrap"),
   changePassword: (current, next) => req("/me/password", { method: "POST", body: JSON.stringify({ current, next }) }),
 
@@ -65,6 +66,7 @@ export const api = {
   createUser: (u) => req("/users", { method: "POST", body: JSON.stringify(u) }),
   updateUser: (id, patch) => req("/users/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteUser: (id) => req("/users/" + id, { method: "DELETE" }),
+  updateBranding: (branding) => req("/settings/branding", { method: "PUT", body: JSON.stringify(branding) }),
 
   analyze: (image) => req("/ai/analyze", { method: "POST", body: JSON.stringify({ image }) }),
 

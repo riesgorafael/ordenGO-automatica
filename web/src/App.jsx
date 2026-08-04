@@ -5,7 +5,7 @@ import {
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
-  Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu,
+  Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
@@ -17,7 +17,26 @@ import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, q
 const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", ...(["admin", "gerente"].includes(role) ? ["clients", "inventory"] : []), ...(role === "admin" ? ["team"] : [])];
+const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", ...(["admin", "gerente"].includes(role) ? ["clients", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
+const BRAND_THEMES = [
+  { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
+  { id: "industrial", name: "Industrial", primaryColor: "#2563EB", headerColor: "#172033" },
+  { id: "energia", name: "Energía", primaryColor: "#059669", headerColor: "#16312A" },
+  { id: "control", name: "Control", primaryColor: "#7C3AED", headerColor: "#261B36" },
+  { id: "grafito", name: "Grafito", primaryColor: "#475569", headerColor: "#1E293B" },
+];
+const mixHex = (from, to, weight) => {
+  const parse = (hex) => [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16));
+  const [fr, fg, fb] = parse(from); const [tr, tg, tb] = parse(to);
+  return `#${[fr, fg, fb].map((value, index) => Math.round(value + ([tr, tg, tb][index] - value) * weight).toString(16).padStart(2, "0")).join("")}`;
+};
+const applyBrandingTheme = (branding) => {
+  const root = document.documentElement; const primary = branding.primaryColor || DEFAULT_BRANDING.primaryColor; const header = branding.headerColor || DEFAULT_BRANDING.headerColor;
+  [[50, mixHex(primary, "#FFFFFF", 0.94)], [100, mixHex(primary, "#FFFFFF", 0.86)], [200, mixHex(primary, "#FFFFFF", 0.7)], [300, mixHex(primary, "#FFFFFF", 0.5)], [400, mixHex(primary, "#FFFFFF", 0.24)], [500, primary], [600, mixHex(primary, "#000000", 0.12)], [700, mixHex(primary, "#000000", 0.3)]].forEach(([shade, color]) => root.style.setProperty(`--color-brand-${shade}`, color));
+  root.style.setProperty("--color-ink-900", header); root.style.setProperty("--color-ink-800", mixHex(header, "#FFFFFF", 0.08));
+  document.title = `${branding.appName || DEFAULT_BRANDING.appName} · ${branding.subtitle || DEFAULT_BRANDING.subtitle}`;
+};
 const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#6366f1"];
 const money = (n) => `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const wholeMoney = (value) => Math.max(0, Math.round(Number(value) || 0));
@@ -244,6 +263,7 @@ export default function App() {
   const [finances, setFinances] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [parts, setParts] = useState([]);
+  const [branding, setBranding] = useState(DEFAULT_BRANDING);
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
   const [oDetail, setODetail] = useState(null);
@@ -286,7 +306,7 @@ export default function App() {
 
   const boot = async () => {
     const d = await api.bootstrap();
-    setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders(d.orders); setTasks(d.tasks);
+    setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders(d.orders); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
@@ -297,9 +317,11 @@ export default function App() {
     } catch {}
   };
   useEffect(() => { (async () => {
+    try { setBranding(await api.getBranding()); } catch {}
     if (getToken()) { try { await boot(); } catch { setToken(null); } }
     setBooting(false);
   })(); }, []);
+  useEffect(() => { applyBrandingTheme(branding); }, [branding]);
   useEffect(() => { try { localStorage.setItem("ordengo_order_filters", JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} }, [oQ, oStatus, oBillable]);
   useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} }, [pProj, pQ, pMine, pStale]);
   useEffect(() => { try { localStorage.setItem("ordengo_tech_task_view", techTaskView); } catch {} }, [techTaskView]);
@@ -333,7 +355,7 @@ export default function App() {
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
   if (booting) return <div className="grid min-h-screen place-items-center bg-ink-900 text-slate-300"><div className="motion-page flex flex-col items-center gap-3" role="status" aria-label="Cargando OrdenGO"><div className="skeleton h-9 w-36 rounded-lg" /><Loader2 className="h-5 w-5 animate-spin" /></div></div>;
-  if (!me) return <Login onLogin={async (email, password) => { const r = await api.login(email, password); setToken(r.token); await boot(); }} />;
+  if (!me) return <Login branding={branding} onLogin={async (email, password) => { const r = await api.login(email, password); setToken(r.token); await boot(); }} />;
 
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
@@ -426,6 +448,7 @@ export default function App() {
   const addUser = async (nf) => { const u = await api.createUser(nf); setUsers((p) => [...p, u]); };
   const patchUser = async (id, patch) => { const u = await api.updateUser(id, patch); setUsers((p) => p.map((x) => (x.id === id ? u : x))); };
   const removeUser = async (id) => { await api.deleteUser(id); setUsers((p) => p.filter((x) => x.id !== id)); };
+  const saveBranding = async (value) => { try { const saved = await api.updateBranding(value); setBranding(saved); toast("Identidad visual actualizada", "success"); return saved; } catch (e) { err(e); return null; } };
 
   /* Notificaciones */
   const unread = notifs.filter((n) => !n.read).length;
@@ -478,6 +501,7 @@ export default function App() {
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2 }] : []),
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock }] : []),
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users }] : []),
+    ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2 }] : []),
   ];
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
@@ -492,8 +516,8 @@ export default function App() {
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <img src={LOGO_LIGHT} alt="AUTOMATICA ARG" className="h-7 w-auto" />
-            <div className="leading-tight border-l border-ink-800 pl-2.5"><div className="text-sm font-semibold">Orden<span className="text-brand-400">GO</span></div><div className="text-[11px] text-slate-400">Campo + Proyectos</div></div>
+            <img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-7 max-w-36 object-contain" />
+            <div className="leading-tight border-l border-ink-800 pl-2.5"><div className="text-sm font-semibold">{branding.appName || "OrdenGO"}</div><div className="text-[11px] text-slate-400">{branding.subtitle || "Campo + Proyectos"}</div></div>
           </div>
           <div className="flex items-center gap-2">
             {activeModule === "orders" && <button onClick={() => setOView("new")} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
@@ -593,6 +617,7 @@ export default function App() {
         )}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
+        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} users={users} me={me} onSaveBranding={saveBranding} onResetPassword={patchUser} onChangeOwnPassword={() => setPwOpen(true)} onErr={err} />}
 
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
         </div>
@@ -668,7 +693,7 @@ export default function App() {
 }
 
 /* ===================================== LOGIN ===================================== */
-function Login({ onLogin }) {
+function Login({ branding = DEFAULT_BRANDING, onLogin }) {
   const [email, setEmail] = useState(""); const [pass, setPass] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
@@ -682,10 +707,10 @@ function Login({ onLogin }) {
         <div className="pointer-events-none absolute -right-10 top-1/2 h-[30rem] w-[30rem] -translate-y-1/2 rounded-full border border-white/5" />
         <div className="pointer-events-none absolute left-0 top-0 h-64 w-64 bg-brand-500/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
-          <div className="mb-8 grid h-14 w-14 place-items-center rounded-2xl bg-white/5 ring-1 ring-white/10"><img src={LOGO_LIGHT} alt="" className="h-6 w-auto" /></div>
-          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-brand-400">AUTOMATICA ARG</div>
-          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Control operativo para decisiones confiables</h1>
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-400">Órdenes de campo, proyectos y gestión conectados en un entorno seguro para toda la organización.</p>
+          <div className="mb-8 flex min-h-14 w-fit min-w-14 items-center justify-center rounded-2xl bg-white/5 px-3 ring-1 ring-white/10"><img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-8 max-w-52 object-contain" /></div>
+          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-brand-400">{branding.companyName || "AUTOMATICA ARG"}</div>
+          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">{branding.appName || "OrdenGO"}</h1>
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-400">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
           <ul className="mt-8 space-y-3">
             {bullets.map((b) => (<li key={b} className="flex items-center gap-3 text-sm text-slate-200"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-brand-500/20 text-brand-400"><CheckCircle2 className="h-3.5 w-3.5" /></span>{b}</li>))}
           </ul>
@@ -695,7 +720,7 @@ function Login({ onLogin }) {
       {/* Tarjeta de acceso */}
       <div className="flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-sm">
-          <div className="mb-6 flex items-center gap-3 lg:hidden"><img src={LOGO} alt="AUTOMATICA ARG" className="h-8 w-auto" /></div>
+          <div className="mb-6 flex items-center gap-3 lg:hidden"><img src={branding.logoDataUrl || LOGO} alt={branding.companyName || branding.appName} className="h-10 max-w-52 object-contain" /><div><b className="block text-sm text-slate-800">{branding.appName}</b><span className="text-xs text-slate-500">{branding.subtitle}</span></div></div>
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
             <div className="h-1 bg-brand-500" />
             <div className="p-6 sm:p-7">
@@ -2172,6 +2197,47 @@ function ClientEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="u-input" /></L><L label="Sitio / ubicación"><input value={form.site} onChange={(e) => setForm({ ...form, site: e.target.value })} className="u-input" /></L><L label="Código"><input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" /></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.code.trim()} onClick={() => onSave({ name: form.name.trim(), site: form.site.trim(), code: form.code.trim() })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
 }
 
+function SettingsModule({ branding, users, me, onSaveBranding, onResetPassword, onChangeOwnPassword, onErr }) {
+  const [form, setForm] = useState({ ...DEFAULT_BRANDING, ...branding });
+  const [saving, setSaving] = useState(false);
+  const [logoError, setLogoError] = useState("");
+  const [passwordUser, setPasswordUser] = useState(null);
+  useEffect(() => { setForm({ ...DEFAULT_BRANDING, ...branding }); }, [branding]);
+  const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const chooseTheme = (theme) => setForm((current) => ({ ...current, theme: theme.id, primaryColor: theme.primaryColor, headerColor: theme.headerColor }));
+  const selectLogo = (file) => {
+    if (!file) return;
+    setLogoError("");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setLogoError("Usa una imagen PNG, JPG o WebP."); return; }
+    if (file.size > 1.5 * 1024 * 1024) { setLogoError("El archivo supera 1,5 MB. Reduce su tamaño antes de cargarlo."); return; }
+    const reader = new FileReader();
+    reader.onload = () => set("logoDataUrl", String(reader.result || ""));
+    reader.onerror = () => setLogoError("No se pudo leer la imagen.");
+    reader.readAsDataURL(file);
+  };
+  const save = async () => { setSaving(true); await onSaveBranding(form); setSaving(false); };
+  return <div className="space-y-5">
+    <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad visual, tema y seguridad de acceso de la aplicación.</p></div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
+      <Box className="overflow-hidden">
+        <div className="border-b border-slate-100 p-4"><div className="flex items-center gap-2"><Palette className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Marca y apariencia</h3><p className="text-[11px] text-slate-500">Los cambios se aplican a todos los usuarios y dispositivos.</p></div></div></div>
+        <div className="space-y-5 p-4">
+          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Logo</h4><div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center"><div className="grid min-h-20 w-full place-items-center rounded-lg p-3 sm:w-56" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Vista previa del logo" className="max-h-12 max-w-full object-contain" /></div><div className="flex-1"><div className="flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white"><Upload className="h-4 w-4" /> Cargar logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { selectLogo(event.target.files?.[0]); event.target.value = ""; }} /></label>{form.logoDataUrl && <button onClick={() => set("logoDataUrl", "")} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Usar logo original</button>}</div><p className="mt-2 text-[11px] text-slate-500">PNG transparente recomendado. Máximo 1,5 MB. También admite JPG y WebP.</p>{logoError && <p className="mt-1 text-xs font-medium text-rose-600">{logoError}</p>}</div></div></section>
+          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Identidad</h4><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Nombre de la aplicación"><input value={form.appName} maxLength={40} onChange={(event) => set("appName", event.target.value)} className="u-input" /></L><L label="Empresa"><input value={form.companyName} maxLength={80} onChange={(event) => set("companyName", event.target.value)} className="u-input" /></L><div className="sm:col-span-2"><L label="Subtítulo"><input value={form.subtitle} maxLength={80} onChange={(event) => set("subtitle", event.target.value)} className="u-input" /></L></div></div></section>
+          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tema</h4><div className="grid grid-cols-2 gap-2 sm:grid-cols-5">{BRAND_THEMES.map((theme) => { const active = form.theme === theme.id && form.primaryColor.toUpperCase() === theme.primaryColor; return <button key={theme.id} onClick={() => chooseTheme(theme)} aria-pressed={active} className={`rounded-xl border p-2.5 text-left ${active ? "border-brand-500 bg-brand-50 ring-2 ring-brand-500/15" : "border-slate-200 bg-white"}`}><span className="mb-2 flex gap-1"><i className="h-5 flex-1 rounded" style={{ background: theme.primaryColor }} /><i className="h-5 flex-1 rounded" style={{ background: theme.headerColor }} /></span><span className="block truncate text-[11px] font-semibold text-slate-700">{theme.name}</span></button>; })}</div><div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Color principal"><div className="flex gap-2"><input type="color" value={form.primaryColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", primaryColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.primaryColor} readOnly className="u-input font-mono uppercase" /></div></L><L label="Color de cabecera"><div className="flex gap-2"><input type="color" value={form.headerColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", headerColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.headerColor} readOnly className="u-input font-mono uppercase" /></div></L></div></section>
+        </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50 p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm(DEFAULT_BRANDING)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restaurar valores originales</button><button disabled={saving || !form.appName.trim() || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar apariencia</button></div>
+      </Box>
+      <div className="space-y-5">
+        <Panel title="Vista previa"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold text-white" style={{ background: form.primaryColor }}>Crear registro</button></div></div></div></Panel>
+        <Panel title="Tu contraseña"><p className="text-xs leading-relaxed text-slate-500">Para cambiar tu propia contraseña debes confirmar la actual. Nadie puede consultar una contraseña existente.</p><button onClick={onChangeOwnPassword} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-700"><KeyRound className="h-4 w-4" /> Cambiar mi contraseña</button></Panel>
+      </div>
+    </div>
+    <Box className="p-4"><div className="mb-3 flex items-start gap-2"><Settings2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Usuarios y recuperación de acceso</h3><p className="text-[11px] text-slate-500">Genera una contraseña temporal cuando un usuario la olvida. Se le exigirá reemplazarla en su próximo ingreso.</p></div></div><div className="motion-list grid grid-cols-1 gap-2 md:grid-cols-2">{users.map((user) => { const own = user.id === me.id; return <div key={user.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><Avatar user={user} size={36} /><div className="min-w-0 flex-1"><b className="block truncate text-sm text-slate-800">{user.name}{own ? " · Tú" : ""}</b><span className="block truncate text-xs text-slate-500">{user.email} · {ROLES[user.role]}</span>{user.mustChangePassword && <span className="mt-1 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">Cambio pendiente</span>}</div><button onClick={() => own ? onChangeOwnPassword() : setPasswordUser(user)} aria-label={own ? "Cambiar mi contraseña" : `Restablecer contraseña de ${user.name}`} title={own ? "Cambiar mi contraseña" : "Restablecer contraseña"} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"><KeyRound className="h-4 w-4" /></button></div>; })}</div></Box>
+    {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { try { await onResetPassword(passwordUser.id, { password }); setPasswordUser(null); } catch (error) { onErr(error); } }} />}
+  </div>;
+}
+
 function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "" });
   const [passwordUser, setPasswordUser] = useState(null);
@@ -2206,6 +2272,10 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
 function PasswordResetDialog({ user, onClose, onSave }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
   const valid = password.length >= 6 && password === confirm;
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-50 text-brand-600"><KeyRound className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Restablecer contraseña</h2><p className="text-xs text-slate-500">{user.name} deberá cambiarla al ingresar.</p></div></div><div className="space-y-3"><L label="Contraseña temporal"><input autoFocus type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="u-input" /></L><L label="Repetir contraseña"><input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="u-input" /></L>{confirm && password !== confirm && <p className="text-xs text-rose-600">Las contraseñas no coinciden.</p>}<p className="text-[11px] text-slate-400">Mínimo 6 caracteres.</p></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!valid} onClick={() => onSave(password)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Restablecer</button></div></div></div>;
+  const generate = () => { const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#"; const values = crypto.getRandomValues(new Uint32Array(12)); const next = Array.from(values, (value) => alphabet[value % alphabet.length]).join(""); setPassword(next); setConfirm(next); setShow(true); };
+  const submit = async () => { if (!valid || busy) return; setBusy(true); try { await onSave(password); } finally { setBusy(false); } };
+  return <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-50 text-brand-600"><KeyRound className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Restablecer contraseña</h2><p className="text-xs text-slate-500">{user.name} deberá cambiarla al ingresar.</p></div></div><div className="space-y-3"><button onClick={generate} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700"><KeyRound className="h-3.5 w-3.5" /> Generar contraseña temporal segura</button><L label="Contraseña temporal"><input autoFocus type={show ? "text" : "password"} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="u-input" /></L><L label="Repetir contraseña"><input type={show ? "text" : "password"} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="u-input" /></L><label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={show} onChange={(event) => setShow(event.target.checked)} /> Mostrar contraseña temporal</label>{confirm && password !== confirm && <p className="text-xs text-rose-600">Las contraseñas no coinciden.</p>}<p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">Comunícala por un canal seguro. No se podrá volver a consultar después de guardar.</p></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} disabled={busy} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!valid || busy} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Restablecer</button></div></div></div>;
 }

@@ -32,6 +32,30 @@ app.use(express.json({ limit: "12mb" }));
 const loginAttempts = new Map();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
+const DEFAULT_BRANDING = {
+  appName: "OrdenGO",
+  subtitle: "Campo + Proyectos",
+  companyName: "AUTOMATICA ARG",
+  theme: "automatica",
+  primaryColor: "#F18700",
+  headerColor: "#2E2E2D",
+  logoDataUrl: "",
+};
+const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
+const normalizeBranding = (value = {}) => ({
+  ...DEFAULT_BRANDING,
+  appName: String(value.appName || DEFAULT_BRANDING.appName).trim().slice(0, 40),
+  subtitle: String(value.subtitle || DEFAULT_BRANDING.subtitle).trim().slice(0, 80),
+  companyName: String(value.companyName || DEFAULT_BRANDING.companyName).trim().slice(0, 80),
+  theme: String(value.theme || DEFAULT_BRANDING.theme).trim().slice(0, 30),
+  primaryColor: validHexColor(value.primaryColor) ? value.primaryColor.toUpperCase() : DEFAULT_BRANDING.primaryColor,
+  headerColor: validHexColor(value.headerColor) ? value.headerColor.toUpperCase() : DEFAULT_BRANDING.headerColor,
+  logoDataUrl: String(value.logoDataUrl || ""),
+});
+async function loadBranding() {
+  const row = (await pool.query("SELECT value FROM app_settings WHERE key='branding_v1'")).rows[0];
+  return normalizeBranding(row?.value || {});
+}
 function loginRateLimit(req, res, next) {
   const key = req.ip || req.socket.remoteAddress || "unknown";
   const now = Date.now();
@@ -335,6 +359,10 @@ async function assigneeIsAllowed(userId) {
 }
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
+app.get("/api/branding", async (_req, res) => {
+  try { res.json(await loadBranding()); } catch { res.json(DEFAULT_BRANDING); }
+});
+
 app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { email, password } = req.body || {};
   const { rows } = await pool.query("SELECT * FROM users WHERE email=$1", [String(email || "").toLowerCase()]);
@@ -360,7 +388,7 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -371,6 +399,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC"),
     pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
     pool.query("SELECT data FROM parts ORDER BY data->>'name'"),
+    loadBranding(),
   ]);
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
@@ -393,7 +422,20 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
+    branding,
   });
+});
+
+/* ------------------------------------------------ Configuración de marca (solo Admin) ------------------------------------------------ */
+app.put("/api/settings/branding", auth, requireRole("admin"), async (req, res) => {
+  const input = req.body || {};
+  const logo = String(input.logoDataUrl || "");
+  if (logo && !/^data:image\/(png|jpeg|webp);base64,/i.test(logo)) return res.status(400).json({ error: "El logo debe ser una imagen PNG, JPG o WebP" });
+  if (Buffer.byteLength(logo, "utf8") > 2 * 1024 * 1024) return res.status(400).json({ error: "El logo no puede superar 2 MB" });
+  if (!validHexColor(input.primaryColor) || !validHexColor(input.headerColor)) return res.status(400).json({ error: "Los colores deben estar en formato hexadecimal" });
+  const branding = normalizeBranding(input);
+  await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('branding_v1',$1,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [branding]);
+  res.json(branding);
 });
 
 /* ------------------------------------------------ Notificaciones ------------------------------------------------ */
