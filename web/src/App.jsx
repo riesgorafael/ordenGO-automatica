@@ -882,7 +882,19 @@ function FinanceModule({ movements, projects, budgets, clients, createSignal, on
   const [editor, setEditor] = useState(null);
   const [newKind, setNewKind] = useState("expense");
   const [loadingEdit, setLoadingEdit] = useState("");
+  const [bnaQuote, setBnaQuote] = useState(null);
+  const [bnaLoading, setBnaLoading] = useState(true);
+  const [bnaError, setBnaError] = useState("");
+  const [usdToConvert, setUsdToConvert] = useState("1");
   useEffect(() => { if (createSignal > 0) { setNewKind("expense"); setEditor({ mode: "new" }); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
+  const loadBnaQuote = async () => {
+    setBnaLoading(true);
+    setBnaError("");
+    try { setBnaQuote(await api.bnaExchangeRate()); }
+    catch (error) { setBnaError(error.message || "No se pudo consultar la cotización del BNA."); }
+    finally { setBnaLoading(false); }
+  };
+  useEffect(() => { loadBnaQuote(); }, []);
 
   const projectRows = projectFilter === "all" ? movements : movements.filter((movement) => movement.projectId === projectFilter);
   const monthRows = (key) => projectRows.filter((movement) => String(movement.date || "").slice(0, 7) === key);
@@ -935,9 +947,32 @@ function FinanceModule({ movements, projects, budgets, clients, createSignal, on
   </div>;
   const EmptyChart = ({ children = "Sin datos para este período." }) => <div className="grid h-full place-items-center text-center text-xs leading-5 text-slate-400">{projectFilter === "all" && children === "No hay presupuestos aprobados vinculados." ? "Seleccioná un proyecto para analizar su ejecución." : children}</div>;
   const chartTooltip = (value) => money(value);
+  const ars = (value) => `ARS ${(Number(value) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const bnaUpdatedAt = bnaQuote?.updatedAt ? new Date(bnaQuote.updatedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
+  const arsEquivalent = (Number(usdToConvert) || 0) * (Number(bnaQuote?.arsPerUsd) || 0);
 
   return <div className="space-y-4">
     <div className="flex flex-col gap-3 lg:flex-row lg:items-end"><div><h2 className="text-lg font-semibold text-slate-900">Finanzas</h2><p className="text-xs text-slate-500">Desempeño, eficiencia y control financiero · valores comparables en USD</p></div><div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:ml-auto lg:w-auto"><L label="Proyecto"><select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="u-input w-full lg:min-w-52"><option value="all">Toda la operación</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Período de análisis"><input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="u-input w-full" /></L></div></div>
+
+    <section className="overflow-hidden rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-white shadow-sm shadow-sky-100/60" aria-labelledby="bna-quote-title">
+      <div className="grid gap-3 p-4 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(19rem,1.2fr)_auto] lg:items-center">
+        <div>
+          <div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-sky-100 text-sky-700"><DollarSign className="h-4 w-4" /></span><div><h3 id="bna-quote-title" className="text-sm font-semibold text-slate-900">Cotización dólar BNA</h3><p className="text-[10px] text-slate-500">Dólar billete · tipo vendedor</p></div></div>
+          {bnaQuote && <div className="mt-2 flex flex-wrap items-baseline gap-x-2"><span className="text-xs font-medium text-slate-500">USD 1,00 =</span><b className="text-xl text-sky-700">{ars(bnaQuote.arsPerUsd)}</b>{bnaQuote.stale && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-semibold text-amber-700">Última disponible</span>}</div>}
+          {bnaLoading && <div className="mt-3 flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Consultando Banco Nación…</div>}
+          {!bnaLoading && bnaError && <p className="mt-2 text-xs text-rose-600">{bnaError}</p>}
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.25fr)] items-end gap-2 rounded-xl border border-slate-200 bg-white/90 p-3">
+          <L label="Monto en USD"><input type="number" min="0" step="0.01" inputMode="decimal" value={usdToConvert} onChange={(event) => setUsdToConvert(event.target.value)} className="u-input w-full" aria-label="Monto en dólares a convertir" /></L>
+          <span className="mb-2 text-sm font-semibold text-slate-400" aria-hidden="true">→</span>
+          <div><span className="block text-[10px] font-medium text-slate-500">Equivalente en ARS</span><output className="mt-1 flex min-h-10 items-center rounded-lg bg-sky-50 px-3 text-sm font-bold text-sky-800" aria-live="polite">{bnaQuote ? ars(arsEquivalent) : "—"}</output></div>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-sky-100 pt-3 lg:block lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+          <div className="text-[10px] leading-4 text-slate-500">{bnaUpdatedAt ? <>Actualizada: <b className="text-slate-600">{bnaUpdatedAt}</b></> : "Cotización informativa"}<br />Fuente: Banco de la Nación Argentina</div>
+          <button type="button" onClick={loadBnaQuote} disabled={bnaLoading} className="mt-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-white px-3 text-xs font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50 lg:mt-2" title="Actualizar cotización del BNA"><RefreshCw className={`h-3.5 w-3.5 ${bnaLoading ? "animate-spin" : ""}`} /> Actualizar</button>
+        </div>
+      </div>
+    </section>
 
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"><Kpi label="Facturado neto" value={money(billed)} comparison={delta(billed, previousBilled)} icon={FileText} tint="text-sky-600" description="Facturas emitidas en el período sin IVA. No implica que el importe ya haya sido cobrado." /><Kpi label="IVA ventas estimado" value={money(vatPayable)} icon={AlertTriangle} tint="text-amber-600" detail={`Total c/IVA ${money(grossBilled)}`} description="Débito fiscal del 21% calculado sobre las facturas del período. No descuenta el crédito fiscal de compras." /><Kpi label="Cobrado" value={money(income)} comparison={delta(income, previousIncome)} icon={TrendingUp} tint="text-emerald-600" description="Ingresos efectivamente registrados durante el período, independientemente de cuándo se emitió la factura." /><Kpi label="Por cobrar" value={money(receivable)} icon={Clock} tint={receivable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Saldo acumulado vinculado" description="Diferencia acumulada entre facturación neta y cobros vinculados a proyectos o presupuestos." /><Kpi label="Egresos" value={money(expense)} comparison={delta(expense, previousExpense) == null ? null : -delta(expense, previousExpense)} icon={TrendingDown} tint="text-rose-600" detail={fmtDelta(delta(expense, previousExpense))} description="Total de gastos registrados en el período seleccionado, normalizados a USD." /><Kpi label="Resultado operativo" value={money(result)} comparison={delta(result, previousResult)} icon={BarChart3} tint={result >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Neto facturado − egresos" description="Resultado contable simplificado del período: facturación neta menos egresos. No representa caja disponible." /><Kpi label="Flujo de caja" value={money(cashFlow)} icon={DollarSign} tint={cashFlow >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Cobrado − egresos" description="Movimiento real de efectivo del período: ingresos cobrados menos egresos pagados." /></div>
 
