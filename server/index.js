@@ -494,6 +494,7 @@ const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento
 const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Rechazado": 0 };
 const LABOR_ROLE_COST = { "Programador": 50, "Ingeniero": 25, "Asesor": 20, "Programador AUX": 45, "Tablerista": 17, "Dibujante": 17, "Administrativo": 6, "Ayudante": 5, "Programador Aprendiz": 7 };
 const LABOR_DEFAULT_ROLE = { "Mano de obra": "Ingeniero", "Ingeniería": "Ingeniero", "Programación": "Programador", "Montaje": "Tablerista", "Puesta en marcha": "Ingeniero" };
+const normalizeAdditionalCost = (cost) => ({ ...cost, id: String(cost?.id || ""), category: String(cost?.category || "Otro").slice(0, 50), description: String(cost?.description || "").trim().slice(0, 200), amount: Math.round(Math.max(0, Number(cost?.amount) || 0) * 100) / 100, date: String(cost?.date || "").slice(0, 10), notes: String(cost?.notes || "").trim().slice(0, 500) });
 const normalizeBudget = (input, previous = {}) => {
   const budget = { ...previous, ...(input || {}) };
   delete budget._updatedAt;
@@ -516,8 +517,11 @@ const normalizeBudget = (input, previous = {}) => {
     const suggestedSale = Math.round((unitCost / (1 - budget.targetMargin / 100)) * 100) / 100;
     return { ...item, description: isLabor ? laborRole : item.description, unit: isLabor ? "h" : item.unit, qty: Math.max(0, Number(item.qty) || 0), unitPrice: Math.max(0, originalCost <= 0 && isLabor ? suggestedSale : Number(item.unitPrice) || 0), unitCost };
   }) : [];
+  budget.additionalCosts = Array.isArray(budget.additionalCosts) ? budget.additionalCosts.map(normalizeAdditionalCost).filter((cost) => cost.description && cost.amount > 0) : [];
   budget.amount = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0) * 100) / 100;
   budget.estimatedCost = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitCost, 0) * 100) / 100;
+  budget.additionalCostTotal = Math.round(budget.additionalCosts.reduce((sum, cost) => sum + cost.amount, 0) * 100) / 100;
+  budget.totalEstimatedCost = Math.round((budget.estimatedCost + budget.additionalCostTotal) * 100) / 100;
   return budget;
 };
 
@@ -558,6 +562,10 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res)
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id=$1 OR data->>'number'=$1 LIMIT 1", [budget.number])).rows[0];
   if (duplicateNumber) return res.status(409).json({ error: "Ya existe un presupuesto con ese número." });
   budget.createdAt = budget.createdAt || new Date().toISOString();
+  budget.additionalCosts = budget.additionalCosts.map((cost, index) => ({ ...cost, id: `AC-${budget.id}-${Date.now()}-${index}`, createdAt: new Date().toISOString(), createdBy: req.user.id, createdByName: req.user.name }));
+  budget.additionalCostTotal = Math.round(budget.additionalCosts.reduce((sum, cost) => sum + cost.amount, 0) * 100) / 100;
+  budget.totalEstimatedCost = Math.round((budget.estimatedCost + budget.additionalCostTotal) * 100) / 100;
+  if (["Aprobado", "Facturado"].includes(budget.stage)) budget.commercialLockedAt = new Date().toISOString();
   if (budget.stage === "Facturado") { budget.approvedAt = budget.approvedAt || new Date().toISOString(); budget.invoicedAt = String(budget.invoicedAt).slice(0, 10); }
   budget.activity = [...(budget.activity || []), { type: "created", text: "Presupuesto creado", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   await pool.query("INSERT INTO budgets(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [budget.id, budget]);
@@ -569,6 +577,20 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req,
   const current = (await pool.query("SELECT data FROM budgets WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const budget = normalizeBudget(req.body, current);
+  const wasCommerciallyLocked = Boolean(current.commercialLockedAt || ["Aprobado", "Facturado"].includes(current.stage));
+  const currentAdditionalCosts = Array.isArray(current.additionalCosts) ? current.additionalCosts.map(normalizeAdditionalCost) : [];
+  const currentCostIds = new Set(currentAdditionalCosts.map((cost) => cost.id));
+  const appendedCosts = (Array.isArray(req.body?.additionalCosts) ? req.body.additionalCosts : []).map(normalizeAdditionalCost).filter((cost) => cost.description && cost.amount > 0 && !currentCostIds.has(cost.id)).map((cost, index) => ({ ...cost, id: `AC-${req.params.id}-${Date.now()}-${index}`, createdAt: new Date().toISOString(), createdBy: req.user.id, createdByName: req.user.name }));
+  budget.additionalCosts = [...currentAdditionalCosts, ...appendedCosts];
+  if (wasCommerciallyLocked) {
+    budget.targetMargin = current.targetMargin;
+    budget.items = current.items;
+    budget.amount = current.amount;
+    budget.estimatedCost = current.estimatedCost;
+  }
+  budget.additionalCostTotal = Math.round(budget.additionalCosts.reduce((sum, cost) => sum + cost.amount, 0) * 100) / 100;
+  budget.totalEstimatedCost = Math.round(((Number(budget.estimatedCost) || 0) + budget.additionalCostTotal) * 100) / 100;
+  budget.commercialLockedAt = current.commercialLockedAt || (wasCommerciallyLocked ? current.approvedAt || new Date().toISOString() : ["Aprobado", "Facturado"].includes(budget.stage) ? new Date().toISOString() : "");
   budget.id = req.params.id;
   budget.number = budget.number || budget.id;
   if (["Aprobado", "Facturado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
@@ -580,6 +602,7 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req,
   if ((budget.number || budget.id) !== (current.number || current.id)) changes.push(`Número: ${current.number || current.id} → ${budget.number}`);
   if (budget.stage !== current.stage) changes.push(`Estado: ${current.stage} → ${budget.stage}`);
   if (budget.purchaseOrderNumber !== current.purchaseOrderNumber) changes.push(`OC cliente: ${budget.purchaseOrderNumber || "sin asignar"}`);
+  if (appendedCosts.length) changes.push(`${appendedCosts.length} costo(s) adicional(es): USD ${appendedCosts.reduce((sum, cost) => sum + cost.amount, 0).toFixed(2)}`);
   if (budget.nextFollowUp !== current.nextFollowUp || budget.nextAction !== current.nextAction) changes.push("Seguimiento actualizado");
   if (!changes.length) changes.push("Presupuesto actualizado");
   budget.activity = [...(current.activity || []), { type: "update", text: changes.join(" · "), by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
