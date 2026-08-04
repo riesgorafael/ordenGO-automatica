@@ -500,7 +500,25 @@ app.patch("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req
   const { rows } = await pool.query("SELECT data FROM projects WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const merged = { ...rows[0].data, ...(req.body || {}), id: req.params.id };
-  await pool.query("UPDATE projects SET data=$2 WHERE id=$1", [req.params.id, merged]);
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+    // El proyecto es la fuente de verdad del color. También lo persistimos en las
+    // tareas para que clientes antiguos/offline no conserven el color anterior.
+    if (req.body?.color) {
+      await db.query(
+        "UPDATE tasks SET data=jsonb_set(data, '{color}', to_jsonb($2::text), true), updated_at=now() WHERE data->>'project'=$1",
+        [req.params.id, merged.color],
+      );
+    }
+    await db.query("COMMIT");
+  } catch (error) {
+    await db.query("ROLLBACK");
+    throw error;
+  } finally {
+    db.release();
+  }
   res.json(merged);
 });
 app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -963,6 +981,8 @@ app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
   if (!(await tecCanProject(req.user, t.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   if (!(await assigneeIsAllowed(t.assignee))) return res.status(400).json({ error: "Monitor Oficina no puede ser responsable de tareas" });
+  const taskProject = (await pool.query("SELECT data FROM projects WHERE id=$1", [t.project])).rows[0]?.data;
+  if (taskProject?.color) t.color = taskProject.color;
   const existing = (await pool.query("SELECT data FROM tasks WHERE id=$1", [t.id])).rows[0]?.data;
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [t.id, t]);
   // Notifica al responsable si es una asignación nueva (a otra persona)
