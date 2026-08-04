@@ -517,6 +517,15 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req,
   if (budget.stage === "Enviado" && !budget.sentAt) budget.sentAt = new Date().toISOString();
   if (budget.stage === "Aprobado" && !budget.approvedAt) budget.approvedAt = new Date().toISOString();
   await pool.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, budget]);
+  if (budget.stage === "Aprobado" && budget.projectId) {
+    const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [budget.projectId])).rows[0]?.data;
+    if (project) {
+      const linkedProject = { ...project, budgetId: budget.id, clientId: budget.clientId || project.clientId || "", client: budget.client || project.client || "", site: budget.site || project.site || "" };
+      await pool.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [budget.projectId, linkedProject]);
+      const financeLink = JSON.stringify({ budgetId: budget.id, budgetTitle: budget.title || "", clientId: linkedProject.clientId, clientName: linkedProject.client, linkageSource: "approved-project-budget", linkedAt: new Date().toISOString() });
+      await pool.query("UPDATE financial_movements SET data=data || $2::jsonb, updated_at=now() WHERE data->>'kind'='expense' AND data->>'projectId'=$1", [budget.projectId, financeLink]);
+    }
+  }
   res.json(budget);
 });
 
@@ -536,7 +545,7 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
   const rawKey = String(req.body?.key || budget.title || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
   const key = rawKey || "PRJ";
   const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
-  const project = { id: projectId, key, name: budget.title, color: req.body?.color || "#F18700", allowedUsers: monitors, budgetId: budget.id, client: budget.client, plannedStart: budget.plannedStart || "", plannedEnd: budget.plannedEnd || "", estimatedAmount: budget.amount, currency: "USD" };
+  const project = { id: projectId, key, name: budget.title, color: req.body?.color || "#F18700", allowedUsers: monitors, budgetId: budget.id, clientId: budget.clientId || "", client: budget.client, site: budget.site || "", plannedStart: budget.plannedStart || "", plannedEnd: budget.plannedEnd || "", estimatedAmount: budget.amount, currency: "USD" };
   await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [projectId, project]);
   const updated = { ...budget, stage: "Aprobado", probability: 100, projectId, approvedAt: budget.approvedAt || new Date().toISOString(), activity: [...(budget.activity || []), { type: "converted", text: `Convertido en proyecto ${key}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budget.id, updated]);
@@ -575,8 +584,30 @@ const normalizeFinancialMovement = (input, previous = {}) => {
   return movement;
 };
 
+const applyApprovedBudgetLink = async (movement) => {
+  if (movement.kind !== "expense" || !movement.projectId) return movement;
+  const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [movement.projectId])).rows[0]?.data;
+  if (!project) return movement;
+  let budget = null;
+  if (project.budgetId) budget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [project.budgetId])).rows[0]?.data || null;
+  if (!budget || budget.stage !== "Aprobado") budget = (await pool.query("SELECT data FROM budgets WHERE data->>'projectId'=$1 AND data->>'stage'='Aprobado' ORDER BY updated_at DESC LIMIT 1", [movement.projectId])).rows[0]?.data || null;
+  movement.clientId = project.clientId || budget?.clientId || movement.clientId || "";
+  movement.clientName = project.client || budget?.client || movement.clientName || "";
+  if (budget?.stage === "Aprobado") {
+    movement.budgetId = budget.id;
+    movement.budgetTitle = budget.title || "";
+    movement.linkageSource = "approved-project-budget";
+    movement.linkedAt = movement.linkedAt || new Date().toISOString();
+  } else {
+    movement.budgetId = "";
+    movement.budgetTitle = "";
+    movement.linkageSource = "project-without-approved-budget";
+  }
+  return movement;
+};
+
 app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const movement = normalizeFinancialMovement(req.body);
+  const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
   if (!movement.id) {
@@ -601,7 +632,7 @@ app.get("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, 
 app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const current = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
-  const movement = normalizeFinancialMovement(req.body, current);
+  const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
