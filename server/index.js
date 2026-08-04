@@ -53,6 +53,7 @@ async function initDb() {
       color text DEFAULT '#0ea5e9', active boolean DEFAULT true, created_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS clients ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS projects( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS budgets ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS orders  ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS tasks   ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS notifications ( id text PRIMARY KEY, user_id text, text text, link text, read boolean DEFAULT false, created_at timestamptz DEFAULT now());
@@ -358,11 +359,12 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, or, ta, no, pa] = await Promise.all([
+  const [me, u, cl, pr, bu, or, ta, no, pa] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
     pool.query("SELECT data FROM projects"),
+    pool.query("SELECT data, updated_at FROM budgets ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC"),
     pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
@@ -380,6 +382,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     users: u.rows.map(pubUser),
     clients: cl.rows.map((r) => r.data),
     projects: visibleProjects,
+    budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
@@ -457,6 +460,81 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
   await pool.query("DELETE FROM tasks WHERE data->>'project' = $1", [req.params.id]);
   await pool.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
   res.status(204).end();
+});
+
+/* ------------------------------------------------ Presupuestos ------------------------------------------------ */
+const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Rechazado"];
+const normalizeBudget = (input, previous = {}) => {
+  const budget = { ...previous, ...(input || {}) };
+  delete budget._updatedAt;
+  budget.currency = "USD";
+  budget.stage = BUDGET_STAGES.includes(budget.stage) ? budget.stage : "Borrador";
+  budget.probability = Math.min(100, Math.max(0, Math.round(Number(budget.probability) || 0)));
+  budget.durationDays = Math.max(0, Math.round(Number(budget.durationDays) || 0));
+  budget.teamSize = Math.max(1, Math.round(Number(budget.teamSize) || 1));
+  budget.items = Array.isArray(budget.items) ? budget.items.map((item) => ({
+    ...item,
+    qty: Math.max(0, Number(item.qty) || 0),
+    unitPrice: Math.max(0, Number(item.unitPrice) || 0),
+    unitCost: Math.max(0, Number(item.unitCost) || 0),
+  })) : [];
+  budget.amount = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0) * 100) / 100;
+  budget.estimatedCost = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitCost, 0) * 100) / 100;
+  return budget;
+};
+
+app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const budget = normalizeBudget(req.body);
+  if (!String(budget.client || "").trim() || !String(budget.title || "").trim()) return res.status(400).json({ error: "Cliente y nombre del presupuesto son obligatorios." });
+  if (!budget.id) {
+    const year = new Date().getFullYear();
+    const rows = (await pool.query("SELECT id FROM budgets WHERE id LIKE $1", [`PRES-${year}-%`])).rows;
+    const next = Math.max(0, ...rows.map((row) => Number(String(row.id).split("-").pop()) || 0)) + 1;
+    budget.id = `PRES-${year}-${String(next).padStart(3, "0")}`;
+  }
+  budget.createdAt = budget.createdAt || new Date().toISOString();
+  budget.activity = [...(budget.activity || []), { type: "created", text: "Presupuesto creado", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  await pool.query("INSERT INTO budgets(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [budget.id, budget]);
+  res.json(budget);
+});
+
+app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const current = (await pool.query("SELECT data FROM budgets WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!current) return res.status(404).json({ error: "No existe" });
+  const budget = normalizeBudget(req.body, current);
+  budget.id = req.params.id;
+  const changes = [];
+  if (budget.stage !== current.stage) changes.push(`Estado: ${current.stage} → ${budget.stage}`);
+  if (budget.nextFollowUp !== current.nextFollowUp || budget.nextAction !== current.nextAction) changes.push("Seguimiento actualizado");
+  if (!changes.length) changes.push("Presupuesto actualizado");
+  budget.activity = [...(current.activity || []), { type: "update", text: changes.join(" · "), by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  if (budget.stage === "Enviado" && !budget.sentAt) budget.sentAt = new Date().toISOString();
+  if (budget.stage === "Aprobado" && !budget.approvedAt) budget.approvedAt = new Date().toISOString();
+  await pool.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, budget]);
+  res.json(budget);
+});
+
+app.delete("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  await pool.query("DELETE FROM budgets WHERE id=$1", [req.params.id]);
+  res.status(204).end();
+});
+
+app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const budget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!budget) return res.status(404).json({ error: "No existe" });
+  if (budget.projectId) {
+    const existing = (await pool.query("SELECT data FROM projects WHERE id=$1", [budget.projectId])).rows[0]?.data;
+    return res.json({ budget, project: existing });
+  }
+  const projectId = "p" + Date.now();
+  const rawKey = String(req.body?.key || budget.title || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  const key = rawKey || "PRJ";
+  const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
+  const project = { id: projectId, key, name: budget.title, color: req.body?.color || "#F18700", allowedUsers: monitors, budgetId: budget.id, client: budget.client, plannedStart: budget.plannedStart || "", plannedEnd: budget.plannedEnd || "", estimatedAmount: budget.amount, currency: "USD" };
+  await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [projectId, project]);
+  const updated = { ...budget, stage: "Aprobado", probability: 100, projectId, approvedAt: budget.approvedAt || new Date().toISOString(), activity: [...(budget.activity || []), { type: "converted", text: `Convertido en proyecto ${key}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
+  await pool.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budget.id, updated]);
+  res.json({ budget: updated, project });
 });
 // Duplica un proyecto con todas sus tareas; permite renombrar, cambiar clave, accesos y reasignar
 app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), async (req, res) => {

@@ -47,6 +47,11 @@ export const api = {
   deleteProject: (id) => req("/projects/" + id, { method: "DELETE" }),
   duplicateProject: (id, opts) => req("/projects/" + id + "/duplicate", { method: "POST", body: JSON.stringify(opts || {}) }),
 
+  createBudget: (budget) => req("/budgets", { method: "POST", body: JSON.stringify(budget) }),
+  updateBudget: (id, patch) => req("/budgets/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteBudget: (id) => req("/budgets/" + id, { method: "DELETE" }),
+  convertBudget: (id, options) => req("/budgets/" + id + "/convert", { method: "POST", body: JSON.stringify(options || {}) }),
+
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),
   updateTask: (id, patch) => req("/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (id) => req("/tasks/" + id, { method: "DELETE" }),

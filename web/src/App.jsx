@@ -29,6 +29,13 @@ const O_STYLE = {
   "Facturada": "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
 };
 const SERVICE_TYPES = ["Instalación", "Automatización", "Mantenimiento preventivo", "Mantenimiento correctivo", "Garantía", "Emergencia"];
+const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Rechazado"];
+const BUDGET_STYLE = {
+  "Borrador": "bg-slate-100 text-slate-600 ring-slate-200", "En preparación": "bg-sky-50 text-sky-700 ring-sky-200",
+  "Enviado": "bg-brand-50 text-brand-700 ring-brand-200", "En seguimiento": "bg-violet-50 text-violet-700 ring-violet-200",
+  "Aprobado": "bg-emerald-50 text-emerald-700 ring-emerald-200", "Rechazado": "bg-rose-50 text-rose-700 ring-rose-200",
+  "Vencido": "bg-amber-50 text-amber-700 ring-amber-200",
+};
 const SIGNER_ROLES = ["Responsable de planta", "Mantenimiento", "Jefe o supervisor de mantenimiento", "Producción / Operaciones", "Ingeniería / Automatización", "Seguridad e Higiene", "Calidad", "Administración / Compras", "Contratista / Integrador"];
 const SERVICE_PROFILES = {
   "Instalación": { assess: "Preparación", work: "Ejecución", symptom: "Alcance de la instalación y condición inicial", diagnosis: "Condiciones previas y requisitos técnicos", automation: true, installation: true },
@@ -197,6 +204,7 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [orders, setOrders] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [budgets, setBudgets] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [parts, setParts] = useState([]);
   const [module, setModule] = useState("orders");
@@ -221,6 +229,7 @@ export default function App() {
   const [prefill, setPrefill] = useState(null);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
   const [dupProj, setDupProj] = useState(null); // proyecto a duplicar
+  const [budgetCreateSignal, setBudgetCreateSignal] = useState(0);
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [offlineCount, setOfflineCount] = useState(() => offlineQueueSize());
@@ -239,7 +248,7 @@ export default function App() {
 
   const boot = async () => {
     const d = await api.bootstrap();
-    setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setOrders(d.orders); setTasks(d.tasks);
+    setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setOrders(d.orders); setTasks(d.tasks);
     setNotifs(d.notifications || []); setParts(d.parts || []);
   };
   useEffect(() => { (async () => {
@@ -337,6 +346,19 @@ export default function App() {
     try { const { project, tasks: newTasks } = await api.duplicateProject(id, opts); setProjects((x) => [...x, project]); setTasks((x) => [...newTasks, ...x]); setDupProj(null); setPProj(project.id); toast(`Proyecto duplicado (${newTasks.length} tareas)`, "success"); } catch (e) { err(e); }
   };
 
+  /* Presupuestos */
+  const saveBudget = async (budget) => {
+    try {
+      const saved = budget.id ? await api.updateBudget(budget.id, budget) : await api.createBudget(budget);
+      setBudgets((items) => items.some((item) => item.id === saved.id) ? items.map((item) => item.id === saved.id ? saved : item) : [saved, ...items]);
+      toast(`Presupuesto ${saved.id} guardado`, "success"); return saved;
+    } catch (e) { err(e); return null; }
+  };
+  const deleteBudget = (budget) => setConfirmDialog({ title: `Eliminar ${budget.id}`, message: "Se eliminará el presupuesto y su historial comercial. Esta acción no afecta proyectos ya creados.", confirmLabel: "Eliminar presupuesto", danger: true, action: async () => { try { await api.deleteBudget(budget.id); setBudgets((items) => items.filter((item) => item.id !== budget.id)); toast("Presupuesto eliminado", "success"); } catch (e) { err(e); } } });
+  const convertBudget = async (budget) => {
+    try { const result = await api.convertBudget(budget.id); setBudgets((items) => items.map((item) => item.id === budget.id ? result.budget : item)); if (result.project && !projects.some((project) => project.id === result.project.id)) setProjects((items) => [...items, result.project]); toast(`Proyecto ${result.project?.key || "creado"} generado`, "success"); return result; } catch (e) { err(e); return null; }
+  };
+
   /* Equipo */
   const addUser = async (nf) => { const u = await api.createUser(nf); setUsers((p) => [...p, u]); };
   const patchUser = async (id, patch) => { const u = await api.updateUser(id, patch); setUsers((p) => p.map((x) => (x.id === id ? u : x))); };
@@ -386,6 +408,7 @@ export default function App() {
   ] : [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
+    ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2 }] : []),
@@ -410,6 +433,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             {activeModule === "orders" && <button onClick={() => setOView("new")} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
+            {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><Search className="h-4 w-4" /></button>
@@ -448,7 +472,8 @@ export default function App() {
       {(!online || offlineCount > 0) && <div className={`sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online ? "bg-brand-600" : "bg-amber-600"}`}>{online ? <Loader2 className="h-4 w-4 animate-spin" /> : <WifiOff className="h-4 w-4" />}{online ? `Sincronizando ${offlineCount} cambio(s)…` : `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.`}</div>}
       <main className="mx-auto max-w-6xl px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { setModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
-        {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { setModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "inventory") setModule("inventory"); else if (destination === "projects") { setModule("projects"); setPTab("board"); setPStale(true); } }} />}
+        {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { setModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") setModule("budgets"); else if (destination === "inventory") setModule("inventory"); else if (destination === "projects") { setModule("projects"); setPTab("board"); setPStale(true); } }} />}
+        {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} clients={clients} parts={parts} projects={projects} users={users} me={me} createSignal={budgetCreateSignal} onSave={saveBudget} onDelete={deleteBudget} onConvert={convertBudget} />}
         {activeModule === "inventory" && isMgr && <Inventory parts={parts} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
         {activeModule === "orders" && (
           <>
@@ -512,7 +537,7 @@ export default function App() {
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
-      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} isMgr={isMgr} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { setModule("orders"); setODetail(result.item); } else if (result.kind === "task") { setModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "client") setModule("clients"); else if (result.kind === "part") setModule("inventory"); }} />}
+      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} isMgr={isMgr} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { setModule("orders"); setODetail(result.item); } else if (result.kind === "task") { setModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") setModule("budgets"); else if (result.kind === "client") setModule("clients"); else if (result.kind === "part") setModule("inventory"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
       {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
@@ -554,8 +579,8 @@ export default function App() {
       </nav>
 
       {/* Botón de acción flotante (móvil) */}
-      {!isMonitor && (activeModule === "orders" || activeModule === "projects") && (
-        <button onClick={() => (activeModule === "orders" ? setOView("new") : setEditing(null))} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : "Nueva tarea"}>
+      {!isMonitor && (activeModule === "orders" || activeModule === "projects" || activeModule === "budgets") && (
+        <button onClick={() => activeModule === "orders" ? setOView("new") : activeModule === "budgets" ? setBudgetCreateSignal((value) => value + 1) : setEditing(null)} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
       )}
@@ -680,7 +705,7 @@ function ProjectEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
-function GlobalSearch({ orders, tasks, clients, parts, projects, isMgr, onClose, onSelect }) {
+function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], isMgr, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const projectById = (id) => projects.find((p) => p.id === id);
@@ -689,15 +714,16 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, isMgr, onClose,
     const found = [
       ...orders.filter((o) => `${o.id} ${o.client} ${o.site} ${o.equipo || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "order", item, title: `${item.id} · ${item.client}`, meta: `${item.site || "Sin sitio"} · ${item.status}`, icon: ClipboardList })),
       ...tasks.filter((t) => `${t.id} ${t.title} ${t.desc || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "task", item, title: `${item.id} · ${item.title}`, meta: `${projectById(item.project)?.name || "Proyecto"} · ${item.status}`, icon: ListTodo })),
+      ...(isMgr ? budgets.filter((budget) => `${budget.id} ${budget.title} ${budget.client} ${budget.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "budget", item, title: `${item.id} · ${item.title}`, meta: `Presupuesto · ${item.client} · ${budgetDisplayStage(item)}`, icon: FileText })) : []),
       ...(isMgr ? clients.filter((c) => `${c.name} ${c.site || ""} ${c.code || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "client", item, title: item.name, meta: `Cliente · ${item.site || "Sin ubicación"}`, icon: Building2 })) : []),
       ...(isMgr ? parts.filter((p) => `${p.name} ${p.unit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "part", item, title: item.name, meta: `Inventario · Stock ${item.stock ?? "—"}`, icon: Wrench })) : []),
     ];
     return found.slice(0, 12);
-  }, [q, orders, tasks, clients, parts, projects, isMgr]);
+  }, [q, orders, tasks, clients, parts, projects, budgets, isMgr]);
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-3 pt-[8vh] sm:p-6 sm:pt-[12vh]" onClick={onClose}>
       <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3"><Search className="h-5 w-5 shrink-0 text-slate-400" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && onClose()} placeholder="Buscar órdenes, tareas, clientes o repuestos…" className="min-w-0 flex-1 border-0 bg-transparent text-base text-slate-900 outline-none" /><button onClick={onClose} aria-label="Cerrar búsqueda" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3"><Search className="h-5 w-5 shrink-0 text-slate-400" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && onClose()} placeholder="Buscar órdenes, presupuestos, tareas o clientes…" className="min-w-0 flex-1 border-0 bg-transparent text-base text-slate-900 outline-none" /><button onClick={onClose} aria-label="Cerrar búsqueda" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="max-h-[65vh] overflow-y-auto p-2">
           {!q && <div className="px-3 py-8 text-center text-sm text-slate-400">Escribí para buscar en toda la aplicación.</div>}
           {q && !results.length && <div className="px-3 py-8 text-center text-sm text-slate-400">No encontramos resultados para “{query}”.</div>}
@@ -709,18 +735,82 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, isMgr, onClose,
   );
 }
 
-function ActionCenter({ orders, tasks, parts, onGo }) {
+/* ===================================== PRESUPUESTOS ===================================== */
+const budgetDisplayStage = (budget) => {
+  if (!["Aprobado", "Rechazado", "Borrador"].includes(budget.stage) && budget.validUntil && budget.validUntil < todayStr()) return "Vencido";
+  return budget.stage || "Borrador";
+};
+const budgetDate = (value) => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("es-AR") : "—";
+const emptyBudget = (me, clients) => ({ clientId: clients[0]?.id || "", client: clients[0]?.name || "", site: clients[0]?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: 20, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: "", qty: 1, unit: "h", unitPrice: 0, unitCost: 0 }] });
+
+function BudgetEditor({ budget, clients, parts, me, onClose, onSave }) {
+  const [form, setForm] = useState(() => ({ ...emptyBudget(me, clients), ...(budget || {}), items: (budget?.items || emptyBudget(me, clients).items).map((item) => ({ ...item })) }));
+  const [saving, setSaving] = useState(false);
+  const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const setItem = (index, patch) => setForm((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) }));
+  const amount = form.items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitPrice) || 0), 0);
+  const cost = form.items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitCost) || 0), 0);
+  const margin = amount - cost;
+  const submit = async () => { setSaving(true); const saved = await onSave(form); setSaving(false); if (saved) onClose(); };
+  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onClick={onClose}>
+    <div className="mobile-dialog mobile-sheet-content max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5"><div><h2 className="text-lg font-semibold text-slate-900">{form.id ? `Editar ${form.id}` : "Nuevo presupuesto"}</h2><p className="text-xs text-slate-500">Estimación técnica, comercial y planificación preliminar</p></div><button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+      <div className="space-y-4 p-4 sm:p-5">
+        <Section title="Oportunidad y cliente"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Cliente *"><select value={form.clientId} onChange={(event) => { const client = clients.find((item) => item.id === event.target.value); setForm((current) => ({ ...current, clientId: event.target.value, client: client?.name || "", site: client?.site || "" })); }} className="u-input"><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L><L label="Sitio / planta"><input value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input" /></L><L label="Nombre del presupuesto *"><input value={form.title} onChange={(event) => set("title", event.target.value)} placeholder="Ej. Automatización celda de secado 2" className="u-input" /></L><L label="Tipo de servicio"><select value={form.service} onChange={(event) => set("service", event.target.value)} className="u-input">{SERVICE_TYPES.map((service) => <option key={service}>{service}</option>)}</select></L><L label="Contacto"><input value={form.contact || ""} onChange={(event) => set("contact", event.target.value)} placeholder="Nombre, correo o teléfono" className="u-input" /></L><L label="Responsable comercial"><input value={form.owner || ""} onChange={(event) => set("owner", event.target.value)} className="u-input" /></L></div></Section>
+
+        <Section title="Estado y seguimiento"><div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><L label="Etapa"><select value={form.stage} onChange={(event) => set("stage", event.target.value)} className="u-input">{BUDGET_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></L><L label="Probabilidad (%)"><input type="number" min="0" max="100" step="5" value={form.probability} onChange={(event) => set("probability", event.target.value)} className="u-input" /></L><L label="Válido hasta"><input type="date" value={form.validUntil || ""} onChange={(event) => set("validUntil", event.target.value)} className="u-input" /></L><L label="Decisión estimada"><input type="date" value={form.expectedDecisionDate || ""} onChange={(event) => set("expectedDecisionDate", event.target.value)} className="u-input" /></L></div><div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Próxima acción"><input value={form.nextAction || ""} onChange={(event) => set("nextAction", event.target.value)} placeholder="Llamar, enviar revisión, visita técnica…" className="u-input" /></L><L label="Próximo seguimiento"><input type="date" value={form.nextFollowUp || ""} onChange={(event) => set("nextFollowUp", event.target.value)} className="u-input" /></L></div></Section>
+
+        <Section title="Alcance técnico"><textarea value={form.scope || ""} onChange={(event) => set("scope", event.target.value)} rows={4} placeholder="Equipos, señales, software, tableros, documentación, puesta en marcha y entregables" className="u-input resize-none" /><div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3"><textarea value={form.assumptions || ""} onChange={(event) => set("assumptions", event.target.value)} rows={3} placeholder="Supuestos y condiciones" className="u-input resize-none" /><textarea value={form.exclusions || ""} onChange={(event) => set("exclusions", event.target.value)} rows={3} placeholder="Exclusiones" className="u-input resize-none" /><textarea value={form.risks || ""} onChange={(event) => set("risks", event.target.value)} rows={3} placeholder="Riesgos técnicos y dependencias" className="u-input resize-none" /></div></Section>
+
+        <Section title="Planificación estimada"><div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><L label="Inicio previsto"><input type="date" value={form.plannedStart || ""} onChange={(event) => set("plannedStart", event.target.value)} className="u-input" /></L><L label="Fin previsto"><input type="date" value={form.plannedEnd || ""} onChange={(event) => set("plannedEnd", event.target.value)} className="u-input" /></L><L label="Duración (días)"><input type="number" min="0" step="1" value={form.durationDays || ""} onChange={(event) => set("durationDays", event.target.value)} className="u-input" /></L><L label="Equipo estimado"><input type="number" min="1" step="1" value={form.teamSize || 1} onChange={(event) => set("teamSize", event.target.value)} className="u-input" /></L></div></Section>
+
+        <Section title="Estimación económica · USD"><p className="mb-3 text-[11px] text-slate-500">Desglosa ingeniería, programación, materiales, montaje, puesta en marcha y viáticos. Los repuestos del inventario autocompletan precio y costo.</p><datalist id="budget-parts">{parts.map((part) => <option key={part.id} value={part.name} />)}</datalist><div className="space-y-2">{form.items.map((item, index) => <div key={index} className="rounded-lg border border-slate-200 p-2.5"><div className="grid grid-cols-2 gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_4rem_4rem_7rem_7rem_auto]"><select value={item.type || "Otro"} onChange={(event) => setItem(index, { type: event.target.value })} className="u-input"><option>Ingeniería</option><option>Programación</option><option>Materiales</option><option>Montaje</option><option>Puesta en marcha</option><option>Viáticos</option><option>Otro</option></select><input list="budget-parts" value={item.description || ""} onChange={(event) => { const value = event.target.value; const part = parts.find((candidate) => candidate.name === value); setItem(index, part ? { description: value, partId: part.id, unit: part.unit || "u", unitPrice: part.price || 0, unitCost: part.cost || 0 } : { description: value, partId: null }); }} placeholder="Descripción" className="u-input col-span-2 sm:col-span-1" /><input type="number" min="0" step="0.1" value={item.qty} onChange={(event) => setItem(index, { qty: event.target.value })} aria-label="Cantidad" className="u-input" /><input value={item.unit || "u"} onChange={(event) => setItem(index, { unit: event.target.value })} aria-label="Unidad" className="u-input" /><input type="number" min="0" step="1" value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: event.target.value })} placeholder="Venta" aria-label="Precio de venta unitario USD" className="u-input" /><input type="number" min="0" step="1" value={item.unitCost} onChange={(event) => setItem(index, { unitCost: event.target.value })} placeholder="Costo" aria-label="Costo unitario USD" className="u-input" /><button onClick={() => set("items", form.items.filter((_, itemIndex) => itemIndex !== index))} className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div><div className="mt-1 text-right text-xs font-medium text-slate-500">Subtotal: {money((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}</div></div>)}</div><button onClick={() => set("items", [...form.items, { type: "Ingeniería", description: "", qty: 1, unit: "h", unitPrice: 0, unitCost: 0 }])} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"><Plus className="h-4 w-4" /> Agregar concepto</button><div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-sm"><div><span className="block text-[10px] uppercase text-slate-400">Venta</span><b>{money(amount)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Costo estimado</span><b>{money(cost)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Margen</span><b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{amount > 0 ? ` · ${Math.round((margin / amount) * 100)}%` : ""}</b></div></div></Section>
+
+        {form.activity?.length > 0 && <Section title="Historial comercial"><div className="space-y-2">{[...form.activity].reverse().slice(0, 8).map((entry, index) => <div key={index} className="flex gap-2 text-xs"><Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" /><div><b className="text-slate-700">{entry.text}</b><div className="text-slate-400">{entry.byName || "Sistema"} · {entry.at ? new Date(entry.at).toLocaleString("es-AR") : ""}</div></div></div>)}</div></Section>}
+      </div>
+      <div className="sticky bottom-0 grid grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || !form.client || !form.title.trim()} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar presupuesto</button></div>
+    </div>
+  </div>;
+}
+
+function BudgetsModule({ budgets, clients, parts, projects, me, createSignal, onSave, onDelete, onConvert }) {
+  const [editingBudget, setEditingBudget] = useState(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [stage, setStage] = useState("Todos");
+  useEffect(() => { if (createSignal > 0) { setEditingBudget(null); setEditorOpen(true); } }, [createSignal]);
+  const open = budgets.filter((budget) => !["Aprobado", "Rechazado"].includes(budget.stage));
+  const pipeline = open.reduce((sum, budget) => sum + (Number(budget.amount) || 0), 0);
+  const weighted = open.reduce((sum, budget) => sum + (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100, 0);
+  const due = open.filter((budget) => budget.nextFollowUp && budget.nextFollowUp <= todayStr()).length;
+  const decided = budgets.filter((budget) => ["Aprobado", "Rechazado"].includes(budget.stage));
+  const winRate = decided.length ? Math.round(decided.filter((budget) => budget.stage === "Aprobado").length / decided.length * 100) : 0;
+  const visible = budgets.filter((budget) => (stage === "Todos" || budgetDisplayStage(budget) === stage) && (!query || `${budget.id} ${budget.title} ${budget.client} ${budget.site || ""}`.toLowerCase().includes(query.toLowerCase())));
+  const stageSummary = [...BUDGET_STAGES, "Vencido"].map((name) => ({ name, count: budgets.filter((budget) => budgetDisplayStage(budget) === name).length }));
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-end gap-3"><div><h2 className="text-lg font-semibold text-slate-900">Gestión de presupuestos</h2><p className="text-xs text-slate-500">Pipeline comercial y planificación preliminar de automatización industrial</p></div><button onClick={() => { setEditingBudget(null); setEditorOpen(true); }} className="ml-auto hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white sm:inline-flex"><Plus className="h-4 w-4" /> Nuevo presupuesto</button></div>
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Pipeline abierto" value={money(pipeline)} icon={Briefcase} tint="text-brand-600" /><Metric label="Pipeline ponderado" value={money(weighted)} icon={TrendingUp} tint="text-violet-600" /><Metric label="Seguimientos vencidos" value={due} icon={AlertTriangle} tint={due ? "text-rose-600" : "text-emerald-600"} /><Metric label="Conversión histórica" value={`${winRate}%`} icon={CheckCircle2} tint="text-emerald-600" /></div>
+    <Box className="p-3"><div className="grid grid-cols-4 gap-2 sm:grid-cols-7">{stageSummary.map((item) => <button key={item.name} onClick={() => setStage(stage === item.name ? "Todos" : item.name)} className={`rounded-lg border px-2 py-2 text-left ${stage === item.name ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white"}`}><span className="block truncate text-[10px] text-slate-500">{item.name}</span><b className="text-sm text-slate-800">{item.count}</b></button>)}</div></Box>
+    <div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar presupuesto, cliente o planta…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={stage} onChange={(event) => setStage(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option>Todos</option>{[...BUDGET_STAGES, "Vencido"].map((item) => <option key={item}>{item}</option>)}</select></div>
+    {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><FileText className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin presupuestos para mostrar</h3><p className="mt-1 text-xs text-slate-400">Crea una oportunidad y registra su estimación técnica.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((budget) => { const displayStage = budgetDisplayStage(budget); const margin = (Number(budget.amount) || 0) - (Number(budget.estimatedCost) || 0); const followDue = budget.nextFollowUp && budget.nextFollowUp <= todayStr() && !["Aprobado", "Rechazado"].includes(budget.stage); return <Box key={budget.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-500">{budget.id}</span><Chip className={`${BUDGET_STYLE[displayStage]} ring-1`}>{displayStage}</Chip>{followDue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><AlertTriangle className="h-3 w-3" /> Seguimiento vencido</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{budget.title}</h3><p className="mt-0.5 text-xs text-slate-500">{budget.client}{budget.site ? ` · ${budget.site}` : ""}</p></div><button onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button></div><div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs"><div><span className="block text-[10px] text-slate-400">Valor</span><b>{money(budget.amount)}</b></div><div><span className="block text-[10px] text-slate-400">Probabilidad</span><b>{budget.probability || 0}%</b></div><div><span className="block text-[10px] text-slate-400">Margen est.</span><b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}</b></div></div><div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-slate-600"><div><span className="block text-[10px] text-slate-400">Próxima acción</span><b>{budget.nextAction || "Sin definir"}</b></div><div><span className="block text-[10px] text-slate-400">Seguimiento</span><b className={followDue ? "text-rose-600" : ""}>{budgetDate(budget.nextFollowUp)}</b></div><div><span className="block text-[10px] text-slate-400">Plan previsto</span><b>{budgetDate(budget.plannedStart)}{budget.plannedEnd ? ` → ${budgetDate(budget.plannedEnd)}` : ""}</b></div><div><span className="block text-[10px] text-slate-400">Recursos</span><b>{budget.teamSize || 1} persona(s) · {budget.durationDays || 0} días</b></div></div><div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">{budget.projectId ? <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"><Folder className="h-4 w-4" /> Proyecto {projects.find((project) => project.id === budget.projectId)?.key || "creado"}</span> : budget.stage === "Aprobado" && <button onClick={() => onConvert(budget)} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"><Folder className="h-4 w-4" /> Convertir en proyecto</button>}<button onClick={() => onDelete(budget)} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-600"><Trash2 className="h-4 w-4" /> Eliminar</button></div></Box>; })}</div>}
+    {editorOpen && <BudgetEditor budget={editingBudget} clients={clients} parts={parts} me={me} onClose={() => setEditorOpen(false)} onSave={onSave} />}
+  </div>;
+}
+
+function ActionCenter({ orders, tasks, parts, budgets = [], onGo }) {
   const pendingBilling = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada").length;
   const overdue = tasks.filter(isOverdue).length;
   const stale = tasks.filter(isStale).length;
   const low = parts.filter((p) => Number(p.stock) <= Number(p.minStock)).length;
+  const budgetFollowUps = budgets.filter((budget) => !["Aprobado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr()).length;
   const actions = [
     { id: "billing", label: "Listas para facturar", value: pendingBilling, icon: FileText, tone: "text-amber-700 bg-amber-50 border-amber-200" },
     { id: "projects", label: "Tareas vencidas", value: overdue, icon: AlertTriangle, tone: "text-rose-700 bg-rose-50 border-rose-200" },
     { id: "projects", label: "Tareas estancadas", value: stale, icon: Clock, tone: "text-violet-700 bg-violet-50 border-violet-200" },
     { id: "inventory", label: "Stock crítico", value: low, icon: Wrench, tone: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+    { id: "budgets", label: "Presupuestos a seguir", value: budgetFollowUps, icon: Briefcase, tone: "text-sky-700 bg-sky-50 border-sky-200" },
   ];
-  return <section className="rounded-xl border border-slate-200 bg-white p-4"><div className="mb-3"><h3 className="text-sm font-semibold text-slate-900">Prioridades de hoy</h3><p className="text-xs text-slate-500">Acciones que requieren atención.</p></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{actions.map(({ id, label, value, icon: Icon, tone }, index) => <button key={`${id}-${index}`} onClick={() => onGo(id)} className={`flex min-w-0 items-center gap-2 rounded-lg border p-2.5 text-left ${tone}`}><Icon className="h-4 w-4 shrink-0" /><span className="min-w-0 flex-1"><span className="block text-lg font-semibold leading-none">{value}</span><span className="mt-1 block text-[11px] leading-tight">{label}</span></span><ChevronRight className="h-4 w-4 shrink-0 opacity-50" /></button>)}</div></section>;
+  return <section className="rounded-xl border border-slate-200 bg-white p-4"><div className="mb-3"><h3 className="text-sm font-semibold text-slate-900">Prioridades de hoy</h3><p className="text-xs text-slate-500">Acciones que requieren atención.</p></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-5">{actions.map(({ id, label, value, icon: Icon, tone }, index) => <button key={`${id}-${index}`} onClick={() => onGo(id)} className={`flex min-w-0 items-center gap-2 rounded-lg border p-2.5 text-left ${tone}`}><Icon className="h-4 w-4 shrink-0" /><span className="min-w-0 flex-1"><span className="block text-lg font-semibold leading-none">{value}</span><span className="mt-1 block text-[11px] leading-tight">{label}</span></span><ChevronRight className="h-4 w-4 shrink-0 opacity-50" /></button>)}</div></section>;
 }
 
 /* ===================================== PANEL DE DIRECCIÓN ===================================== */
@@ -728,7 +818,7 @@ const PIE_COLORS = ["#F18700", "#0ea5e9", "#10b981", "#8b5cf6", "#ef4444", "#f59
 const monthKey = (d) => (d || "").slice(0, 7);
 const monthLabelShort = (ym) => { const [y, m] = ym.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("es-MX", { month: "short" }).replace(".", ""); };
 
-function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
+function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) {
   const [period, setPeriod] = useState("mes"); // mes | trim | anio
   const now = new Date();
   const startOf = { mes: new Date(now.getFullYear(), now.getMonth(), 1), trim: new Date(now.getFullYear(), now.getMonth() - 2, 1), anio: new Date(now.getFullYear(), 0, 1) }[period];
@@ -813,7 +903,7 @@ function Dashboard({ orders, users, tasks, parts, onOpen, onGo }) {
         </div>
       </div>
 
-      <ActionCenter orders={orders} tasks={tasks} parts={parts} onGo={onGo} />
+      <ActionCenter orders={orders} tasks={tasks} parts={parts} budgets={budgets} onGo={onGo} />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
