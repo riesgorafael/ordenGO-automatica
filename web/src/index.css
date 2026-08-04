@@ -208,6 +208,40 @@ button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active
   to { transform: translateX(100%); }
 }
 
+@keyframes tv-cycle-fill {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.tv-cycle-progress { animation: tv-cycle-fill 30s linear both; }
+
+/* Cartelera para televisores panorámicos. El ajuste depende de la relación
+   16:9 y la resolución disponible, no del tamaño físico del panel. */
+@media (min-width: 1280px) and (min-aspect-ratio: 16/10) {
+  .tv-display { min-height: 100dvh; }
+  .tv-display .tv-project-banner { min-height: 4.5rem; }
+  .tv-display .tv-board {
+    min-height: calc(100dvh - 10.5rem);
+    align-items: stretch;
+  }
+  .tv-display .tv-task-column {
+    min-width: 0;
+    height: calc(100dvh - 10.5rem);
+    overflow: hidden;
+    background: rgb(248 250 252 / 0.92);
+  }
+  .tv-display .tv-task-column > div:first-child { min-height: 3rem; padding: 0.75rem 1rem; }
+  .tv-display .tv-task-column > div:first-child h3 { font-size: 1rem; }
+  .tv-display .tv-column-list {
+    max-height: calc(100dvh - 14rem);
+    padding-inline: 0.75rem;
+    scrollbar-width: none;
+  }
+  .tv-display .tv-column-list::-webkit-scrollbar { display: none; }
+  .tv-display .tv-task-card { padding: 1rem; }
+  .tv-display .tv-task-card h4 { font-size: 1rem; line-height: 1.35; }
+}
+
 @media (max-width: 639px) {
   input, select, textarea { font-size: 16px !important; }
 
@@ -247,4 +281,5 @@ button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+  .tv-cycle-progress { width: 100%; }
 }

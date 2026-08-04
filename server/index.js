@@ -46,6 +46,9 @@ const DEFAULT_BRANDING = {
   primaryColor: "#F18700",
   headerColor: "#2E2E2D",
   logoDataUrl: "",
+  tvModeEnabled: false,
+  tvCycleEnabled: false,
+  tvCycleSeconds: 30,
 };
 const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const normalizeBranding = (value = {}) => ({
@@ -57,6 +60,9 @@ const normalizeBranding = (value = {}) => ({
   primaryColor: validHexColor(value.primaryColor) ? value.primaryColor.toUpperCase() : DEFAULT_BRANDING.primaryColor,
   headerColor: validHexColor(value.headerColor) ? value.headerColor.toUpperCase() : DEFAULT_BRANDING.headerColor,
   logoDataUrl: String(value.logoDataUrl || ""),
+  tvModeEnabled: value.tvModeEnabled === true,
+  tvCycleEnabled: value.tvModeEnabled === true && value.tvCycleEnabled === true,
+  tvCycleSeconds: Math.min(300, Math.max(10, Math.round(Number(value.tvCycleSeconds) || 30))),
 });
 async function loadBranding() {
   const row = (await pool.query("SELECT value FROM app_settings WHERE key='branding_v1'")).rows[0];

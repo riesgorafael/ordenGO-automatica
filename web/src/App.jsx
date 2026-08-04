@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
-  WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp,
+  WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -18,7 +18,7 @@ const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
 const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", ...(["admin", "gerente"].includes(role) ? ["clients", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
-const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
+const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "", tvModeEnabled: false, tvCycleEnabled: false, tvCycleSeconds: 30 };
 const BRAND_THEMES = [
   { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
   { id: "industrial", name: "Industrial", primaryColor: "#2563EB", headerColor: "#172033" },
@@ -367,6 +367,17 @@ export default function App() {
   }, [me?.id, online, module]);
 
   useEffect(() => {
+    if (me?.role !== "monitor_oficina" || !online) return;
+    let cancelled = false;
+    const refreshMonitor = async () => { try { if (!cancelled) await boot(); } catch {} };
+    const timer = window.setInterval(refreshMonitor, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshMonitor(); };
+    window.addEventListener("focus", refreshMonitor);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refreshMonitor); document.removeEventListener("visibilitychange", onVisible); };
+  }, [me?.id, me?.role, online]);
+
+  useEffect(() => {
     if (!online || !me || !offlineCount) return;
     (async () => {
       setSyncingOffline(true); setOfflineSyncFailed(false);
@@ -389,6 +400,22 @@ export default function App() {
     })();
   }, [online, me?.id, offlineCount, offlineRetry]);
 
+  useEffect(() => {
+    if (me?.role !== "monitor_oficina" || !branding.tvModeEnabled) return;
+    const projectIds = projects.map((project) => project.id);
+    setModule("projects"); setPTab("board"); setPQ(""); setPMine(false); setPStale(false);
+    setPProj((current) => projectIds.includes(current) ? current : (projectIds[0] || "all"));
+    if (!branding.tvCycleEnabled || projectIds.length < 2) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      setPProj((current) => {
+        const currentIndex = projectIds.indexOf(current);
+        return projectIds[(currentIndex + 1 + projectIds.length) % projectIds.length];
+      });
+    }, Math.max(10, Number(branding.tvCycleSeconds) || 30) * 1000);
+    return () => window.clearInterval(interval);
+  }, [me?.role, branding.tvModeEnabled, branding.tvCycleEnabled, branding.tvCycleSeconds, projects.map((project) => project.id).join("|")]);
+
   const logout = () => { setToken(null); setMe(null); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
@@ -398,6 +425,7 @@ export default function App() {
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
   const isMonitor = me.role === "monitor_oficina";
+  const tvMode = isMonitor && branding.tvModeEnabled;
   const isOffice = me.role === "tecnico_oficina" || isMonitor;
   const activeProjectView = isMgr || isMonitor ? pTab : techTaskView;
   const userById = (id) => users.find((u) => u.id === id);
@@ -587,9 +615,9 @@ export default function App() {
   const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
+    <div className={`min-h-screen bg-slate-100 text-slate-800 ${tvMode ? "tv-display" : ""}`} style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className={`mx-auto flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3 ${tvMode ? "max-w-none lg:px-7" : "max-w-6xl"}`}>
           <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
             <img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-7 max-w-28 shrink object-contain sm:max-w-36" />
             <div className="min-w-0 max-w-24 leading-tight border-l border-ink-800 pl-2 sm:max-w-none sm:pl-2.5"><div className="truncate text-sm font-semibold">{branding.appName || "OrdenGO"}</div><div className="hidden truncate text-[11px] text-slate-400 min-[400px]:block">{branding.subtitle || "Campo + Proyectos"}</div></div>
@@ -624,7 +652,7 @@ export default function App() {
             <button onClick={logout} title="Cerrar sesión" aria-label="Cerrar sesión" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
-        <div className="mx-auto hidden max-w-6xl overflow-x-auto px-2 sm:block">
+        <div className={`mx-auto max-w-6xl overflow-x-auto px-2 ${tvMode ? "hidden" : "hidden sm:block"}`}>
           <nav className="flex gap-1 pb-1">
             {modTabs.map(({ id, label, icon: Icon, badge }) => (
               <button key={id} onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
@@ -634,7 +662,7 @@ export default function App() {
       </header>
 
       {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online && offlineSyncFailed ? "bg-rose-600" : online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{!online ? <WifiOff className="h-4 w-4" /> : syncingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}{!online ? `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.` : offlineSyncFailed ? <><span>{offlineCount} cambio(s) pendientes por un error.</span><button type="button" onClick={() => setOfflineRetry((value) => value + 1)} className="inline-flex items-center gap-1 rounded border border-white/40 px-2 py-1 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button></> : `Sincronizando ${offlineCount} cambio(s)…`}</div>}
-      <main className="mx-auto max-w-6xl px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5">
+      <main className={`mx-auto px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5 ${tvMode ? "max-w-none lg:px-7 lg:py-4" : "max-w-6xl"}`}>
         <div key={activeModule} className="motion-page">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
@@ -657,7 +685,13 @@ export default function App() {
         )}
         {activeModule === "projects" && (
           <>
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            {tvMode && <div className="tv-project-banner relative mb-4 flex items-center gap-4 overflow-hidden rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
+              <span className="h-10 w-2 shrink-0 rounded-full" style={{ background: projects.find((project) => project.id === pProj)?.color || branding.primaryColor }} />
+              <div className="min-w-0 flex-1"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Proyecto en pantalla</p><h1 className="truncate text-2xl font-bold text-slate-900">{projects.find((project) => project.id === pProj)?.key || "—"} · {projects.find((project) => project.id === pProj)?.name || "Sin proyectos disponibles"}</h1></div>
+              <div className="hidden items-center gap-3 text-right lg:flex"><div><p className="text-xs font-semibold text-slate-600">{branding.tvCycleEnabled && projects.length > 1 ? `Rotación cada ${branding.tvCycleSeconds} s` : "Vista fija"}</p><p className="text-[11px] text-slate-400">{Math.max(0, projects.findIndex((project) => project.id === pProj) + 1)} de {projects.length}</p></div><button type="button" onClick={() => document.documentElement.requestFullscreen?.()} title="Abrir pantalla completa" aria-label="Abrir pantalla completa" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Maximize2 className="h-5 w-5" /></button></div>
+              {branding.tvCycleEnabled && projects.length > 1 && <span key={pProj} className="tv-cycle-progress absolute bottom-0 left-0 h-1 bg-brand-500" style={{ animationDuration: `${branding.tvCycleSeconds}s` }} />}
+            </div>}
+            {!tvMode && <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
                 {(isMgr || isMonitor ? [["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar], ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar]]).map(([id, lb, Ic]) => {
                   const active = isMgr || isMonitor ? pTab === id : techTaskView === id;
@@ -678,12 +712,12 @@ export default function App() {
                 {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
                 {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => deleteProject(pProj)} title="Eliminar proyecto" className="rounded-lg border border-rose-200 bg-white p-2 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
               </>)}
-            </div>
+            </div>}
             {(() => {
               const vis = tasks.filter((t) => (pProj === "all" || t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name)} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
-              if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly />;
+              if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
               if (isMgr) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} />;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
               return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} />;
@@ -694,7 +728,7 @@ export default function App() {
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
-        <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>
+        {!tvMode && <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
         </div>
       </main>
 
@@ -2028,17 +2062,17 @@ function FieldTaskList({ tasks, projects, onOpen, onMove }) {
   return <div className="space-y-4">{groups.map(({ id, title, items, tone, icon: Icon }) => items.length > 0 && <section key={id}><div className="mb-2 flex items-center gap-2"><Icon className="h-4 w-4 text-slate-500" /><h3 className="text-sm font-semibold text-slate-800">{title}</h3><span className="rounded-full bg-slate-200 px-2 text-xs text-slate-600">{items.length}</span></div><div className="space-y-2">{items.map((task) => { const index = T_STATUS.indexOf(task.status); const project = projectById(task.project); const color = project?.color || task.color || "#94a3b8"; return <article key={task.id} className={`rounded-xl border border-l-4 p-3 ${tone}`} style={{ borderLeftColor: color }}><button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" /><Chip className={`${prioMeta[task.priority]} ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip>{task._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente</Chip>}</div><h4 className="mt-2 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><p className="mt-1 text-xs text-slate-500">{project?.name || task.id}{task.due ? ` · ${dueLabel(task.due)}` : ""}</p></button><div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3"><span className="text-xs font-medium text-slate-600">{task.status}</span><button onClick={() => onOpen(task)} className="ml-auto min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Ver detalle</button>{index < T_STATUS.length - 1 && <button onClick={() => onMove(task.id, 1)} className="min-h-10 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white">Avanzar</button>}</div></article>; })}</div></section>)}</div>;
 }
 
-function TaskColumn({ status, tasks, projects = [], userById, onOpen, onMove, roomy = false, readOnly = false }) {
+function TaskColumn({ status, tasks, projects = [], userById, onOpen, onMove, roomy = false, readOnly = false, tvMode = false }) {
   const col = tasks.filter((task) => task.status === status);
   const meta = T_STYLE[status];
   const limit = WIP_LIMITS[status];
   const over = limit && col.length > limit;
-  return <section className={`rounded-xl border-t-4 ${meta.col} bg-slate-50/60 ${roomy ? "min-h-[18rem]" : ""}`}>
+  return <section className={`tv-task-column rounded-xl border-t-4 ${meta.col} bg-slate-50/60 ${roomy ? "min-h-[18rem]" : ""}`}>
     <div className="flex items-center justify-between px-3 py-2"><h3 className="text-sm font-semibold text-slate-700">{status}</h3><span className={`rounded-full px-2 text-xs font-medium ring-1 ${over ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-white text-slate-500 ring-slate-200"}`}>{col.length}{limit ? `/${limit}` : ""}</span></div>
     {over && <div className="mx-2 mb-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] font-medium text-rose-700">Límite de trabajo en curso superado</div>}
-    <div className="space-y-2 px-2 pb-3">
+    <div className={`tv-column-list space-y-2 px-2 pb-3 ${tvMode ? "overflow-y-auto" : ""}`}>
       {col.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-xs text-slate-400">Sin tareas en esta etapa</div>}
-      {col.map((task) => { const index = T_STATUS.indexOf(task.status); const age = daysSince(task._updatedAt); const project = projects.find((item) => item.id === task.project); const color = project?.color || task.color || "#94a3b8"; return <article key={task.id} className="rounded-lg border border-l-4 border-slate-200 bg-white p-3 shadow-sm" style={{ borderLeftColor: color }}>
+      {col.map((task) => { const index = T_STATUS.indexOf(task.status); const age = daysSince(task._updatedAt); const project = projects.find((item) => item.id === task.project); const color = project?.color || task.color || "#94a3b8"; return <article key={task.id} className="tv-task-card rounded-lg border border-l-4 border-slate-200 bg-white p-3 shadow-sm" style={{ borderLeftColor: color }}>
         <button onClick={() => onOpen(task)} className="block w-full text-left"><div className="flex flex-wrap items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} aria-label={`Color del proyecto ${project?.name || "sin identificar"}`} /><Chip className={`${typeMeta[task.type]} ring-1 ring-inset ring-black/5`}>{task.type}</Chip>{isOverdue(task) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Vencida</Chip>}{isStale(task) && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="h-3 w-3" />Estancada</Chip>}</div><h4 className="mt-1.5 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{task.id}</span>{task.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{dueLabel(task.due)}</span>}{task.status !== "Hecho" && task._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "Actualizada hoy" : `Hace ${age}d`}</span>}</div></button>
         <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3"><div className="flex min-w-0 items-center gap-1.5"><Avatar user={userById(task.assignee)} size={24} /><Chip className={`${prioMeta[task.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip></div>{!readOnly && <div className="flex gap-1"><button onClick={() => onMove(task.id, -1)} disabled={index === 0} aria-label={`Mover ${task.title} hacia atrás`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button><button onClick={() => onMove(task.id, 1)} disabled={index === T_STATUS.length - 1} aria-label={`Avanzar ${task.title}`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button></div>}</div>
       </article>; })}
@@ -2046,8 +2080,8 @@ function TaskColumn({ status, tasks, projects = [], userById, onOpen, onMove, ro
   </section>;
 }
 
-function Board({ tasks, projects = [], userById, onOpen, onMove, readOnly = false }) {
-  return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{T_STATUS.map((status) => <TaskColumn key={status} status={status} tasks={tasks} projects={projects} userById={userById} onOpen={onOpen} onMove={onMove} readOnly={readOnly} />)}</div>;
+function Board({ tasks, projects = [], userById, onOpen, onMove, readOnly = false, tvMode = false }) {
+  return <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 ${tvMode ? "tv-board" : ""}`}>{T_STATUS.map((status) => <TaskColumn key={status} status={status} tasks={tasks} projects={projects} userById={userById} onOpen={onOpen} onMove={onMove} readOnly={readOnly} tvMode={tvMode} />)}</div>;
 }
 
 function TechnicianBoard({ tasks, projects = [], userById, onOpen, onMove }) {
@@ -2383,10 +2417,17 @@ function SettingsModule({ branding, onSaveBranding }) {
           <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Identidad</h4><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Nombre de la aplicación"><input value={form.appName} maxLength={40} onChange={(event) => set("appName", event.target.value)} className="u-input" /></L><L label="Empresa"><input value={form.companyName} maxLength={80} onChange={(event) => set("companyName", event.target.value)} className="u-input" /></L><div className="sm:col-span-2"><L label="Subtítulo"><input value={form.subtitle} maxLength={80} onChange={(event) => set("subtitle", event.target.value)} className="u-input" /></L></div></div></section>
           <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tema</h4><div className="grid grid-cols-2 gap-2 sm:grid-cols-5">{BRAND_THEMES.map((theme) => { const active = form.theme === theme.id && form.primaryColor.toUpperCase() === theme.primaryColor; return <button key={theme.id} onClick={() => chooseTheme(theme)} aria-pressed={active} className={`rounded-xl border p-2.5 text-left ${active ? "border-brand-500 bg-brand-50 ring-2 ring-brand-500/15" : "border-slate-200 bg-white"}`}><span className="mb-2 flex gap-1"><i className="h-5 flex-1 rounded" style={{ background: theme.primaryColor }} /><i className="h-5 flex-1 rounded" style={{ background: theme.headerColor }} /></span><span className="block truncate text-[11px] font-semibold text-slate-700">{theme.name}</span></button>; })}</div><div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Color principal"><div className="flex gap-2"><input type="color" value={form.primaryColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", primaryColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.primaryColor} readOnly className="u-input font-mono uppercase" /></div></L><L label="Color de cabecera"><div className="flex gap-2"><input type="color" value={form.headerColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", headerColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.headerColor} readOnly className="u-input font-mono uppercase" /></div></L></div></section>
         </div>
-        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50 p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm(DEFAULT_BRANDING)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restaurar valores originales</button><button disabled={saving || !form.appName.trim() || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar apariencia</button></div>
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50 p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm(DEFAULT_BRANDING)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restaurar valores originales</button><button disabled={saving || !form.appName.trim() || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar configuración</button></div>
       </Box>
       <div className="space-y-5">
         <Panel title="Vista previa"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold text-white" style={{ background: form.primaryColor }}>Crear registro</button></div></div></div></Panel>
+        <Panel title="Pantalla de oficina · TV"><div className="space-y-4">
+          <div className="aspect-video overflow-hidden rounded-xl border border-slate-200 bg-slate-900 p-2 shadow-inner" aria-label="Vista previa de pantalla 16:9"><div className="flex h-full flex-col rounded-md bg-slate-100"><div className="h-3 rounded-t-md" style={{ background: form.headerColor }} /><div className="flex flex-1 gap-1 p-1.5">{T_STATUS.map((status) => <div key={status} className="flex-1 rounded-sm border-t-2 bg-white" style={{ borderTopColor: T_STYLE[status].hex || form.primaryColor }}><span className="m-1 block h-1 w-2/3 rounded bg-slate-200" /><span className="m-1 block h-4 rounded bg-slate-100" /></div>)}</div></div></div>
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-3"><input type="checkbox" checked={form.tvModeEnabled} onChange={(event) => setForm((current) => ({ ...current, tvModeEnabled: event.target.checked, tvCycleEnabled: event.target.checked ? current.tvCycleEnabled : false }))} className="mt-0.5 h-4 w-4" /><span><b className="block text-sm text-slate-800">Activar modo TV</b><span className="block text-[11px] text-slate-500">Optimiza el perfil Monitor Oficina para pantallas Full HD 16:9.</span></span></label>
+          <label className={`flex items-start gap-3 rounded-xl border p-3 ${form.tvModeEnabled ? "cursor-pointer border-slate-200" : "border-slate-100 bg-slate-50 opacity-60"}`}><input type="checkbox" disabled={!form.tvModeEnabled} checked={form.tvCycleEnabled} onChange={(event) => set("tvCycleEnabled", event.target.checked)} className="mt-0.5 h-4 w-4" /><span><b className="block text-sm text-slate-800">Ciclar proyectos automáticamente</b><span className="block text-[11px] text-slate-500">Muestra cada tablero de proyecto como una vista rotativa de seguimiento.</span></span></label>
+          <L label="Tiempo por proyecto"><select disabled={!form.tvModeEnabled || !form.tvCycleEnabled} value={form.tvCycleSeconds} onChange={(event) => set("tvCycleSeconds", Number(event.target.value))} className="u-input disabled:bg-slate-100 disabled:text-slate-400">{[15, 30, 45, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds < 60 ? `${seconds} segundos` : `${seconds / 60} minuto${seconds > 60 ? "s" : ""}`}</option>)}</select></L>
+          <p className="rounded-lg bg-sky-50 px-3 py-2 text-[11px] text-sky-700">Esta opción sólo puede modificarse desde una cuenta Administrador. Se aplica exclusivamente al usuario Monitor Oficina.</p>
+        </div></Panel>
       </div>
     </div>
   </div>;
