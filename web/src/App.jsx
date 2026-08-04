@@ -577,28 +577,32 @@ export default function App() {
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
   const activeModule = allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio");
-  const mobilePrimaryTabs = modTabs.length > 5 ? modTabs.slice(0, 4) : modTabs;
-  const mobileExtraTabs = modTabs.length > 5 ? modTabs.slice(4) : [];
+  // En teléfono priorizamos las áreas operativas de uso diario. Presupuestos,
+  // Finanzas y administración quedan agrupados en “Más”; además de evitar
+  // etiquetas superpuestas, reduce cambios de contexto accidentales.
+  const mobilePrimaryIds = isMgr ? ["inicio", "panel", "orders", "projects"] : modTabs.map((tab) => tab.id).slice(0, 4);
+  const mobilePrimaryTabs = mobilePrimaryIds.map((id) => modTabs.find((tab) => tab.id === id)).filter(Boolean);
+  const mobileExtraTabs = modTabs.filter((tab) => !mobilePrimaryIds.includes(tab.id));
   const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
   const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-7 max-w-36 object-contain" />
-            <div className="leading-tight border-l border-ink-800 pl-2.5"><div className="text-sm font-semibold">{branding.appName || "OrdenGO"}</div><div className="text-[11px] text-slate-400">{branding.subtitle || "Campo + Proyectos"}</div></div>
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
+            <img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-7 max-w-28 shrink object-contain sm:max-w-36" />
+            <div className="min-w-0 max-w-24 leading-tight border-l border-ink-800 pl-2 sm:max-w-none sm:pl-2.5"><div className="truncate text-sm font-semibold">{branding.appName || "OrdenGO"}</div><div className="hidden truncate text-[11px] text-slate-400 min-[400px]:block">{branding.subtitle || "Campo + Proyectos"}</div></div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-0 sm:gap-2">
             {activeModule === "orders" && <button onClick={() => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
             {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "finances" && <button onClick={() => setFinanceCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Movimiento</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
-            <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><Search className="h-4 w-4" /></button>
+            <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
-              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" aria-label="Novedades" aria-expanded={notifOpen} aria-controls="notifications-panel" className="relative rounded-lg p-2 text-slate-300 hover:bg-ink-800">
+              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" aria-label="Novedades" aria-expanded={notifOpen} aria-controls="notifications-panel" className="relative rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2">
                 <Bell className="h-4 w-4" />
                 {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{unread}</span>}
               </button>
@@ -616,8 +620,8 @@ export default function App() {
                 </div>
               )}
             </div>
-            <button onClick={() => setPwOpen(true)} title="Cambiar contraseña" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><KeyRound className="h-4 w-4" /></button>
-            <button onClick={logout} title="Cerrar sesión" className="rounded-lg p-2 text-slate-300 hover:bg-ink-800"><LogOut className="h-4 w-4" /></button>
+            <button onClick={() => setPwOpen(true)} title="Cambiar contraseña" aria-label="Cambiar contraseña" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><KeyRound className="h-4 w-4" /></button>
+            <button onClick={logout} title="Cerrar sesión" aria-label="Cerrar sesión" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
         <div className="mx-auto hidden max-w-6xl overflow-x-auto px-2 sm:block">
@@ -708,7 +712,7 @@ export default function App() {
       {/* Menú secundario móvil */}
       {mobileMoreOpen && mobileExtraTabs.length > 0 && (
         <div className="motion-backdrop fixed inset-0 z-40 flex items-end bg-slate-900/40 sm:hidden" onClick={() => setMobileMoreOpen(false)}>
-          <div className="mobile-sheet-content w-full rounded-t-2xl bg-white p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="mobile-sheet-content max-h-[85dvh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <div><h2 className="text-base font-semibold text-slate-900">Más opciones</h2><p className="text-xs text-slate-500">Gestión y administración</p></div>
               <button onClick={() => setMobileMoreOpen(false)} aria-label="Cerrar más opciones" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>

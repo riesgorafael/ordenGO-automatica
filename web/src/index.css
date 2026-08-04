@@ -77,6 +77,16 @@ button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+.mobile-nav-item { min-width: 0; }
+.mobile-nav-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mobile-sheet-content {
   padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
   animation: motion-sheet-in var(--motion-base) var(--ease-emphasized) both;
