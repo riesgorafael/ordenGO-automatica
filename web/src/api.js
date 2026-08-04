@@ -52,6 +52,10 @@ export const api = {
   deleteBudget: (id) => req("/budgets/" + id, { method: "DELETE" }),
   convertBudget: (id, options) => req("/budgets/" + id + "/convert", { method: "POST", body: JSON.stringify(options || {}) }),
 
+  createFinance: (movement) => req("/finances", { method: "POST", body: JSON.stringify(movement) }),
+  updateFinance: (id, patch) => req("/finances/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteFinance: (id) => req("/finances/" + id, { method: "DELETE" }),
+
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),
   updateTask: (id, patch) => req("/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (id) => req("/tasks/" + id, { method: "DELETE" }),

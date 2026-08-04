@@ -54,6 +54,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS clients ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS projects( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS budgets ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS financial_movements ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS orders  ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS tasks   ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS notifications ( id text PRIMARY KEY, user_id text, text text, link text, read boolean DEFAULT false, created_at timestamptz DEFAULT now());
@@ -359,12 +360,13 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, or, ta, no, pa] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
     pool.query("SELECT data FROM projects"),
     pool.query("SELECT data, updated_at FROM budgets ORDER BY updated_at DESC"),
+    pool.query("SELECT data, updated_at FROM financial_movements ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC"),
     pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
@@ -383,6 +385,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     clients: cl.rows.map((r) => r.data),
     projects: visibleProjects,
     budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
@@ -535,6 +538,55 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
   const updated = { ...budget, stage: "Aprobado", probability: 100, projectId, approvedAt: budget.approvedAt || new Date().toISOString(), activity: [...(budget.activity || []), { type: "converted", text: `Convertido en proyecto ${key}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budget.id, updated]);
   res.json({ budget: updated, project });
+});
+
+/* ------------------------------------------------ Finanzas ------------------------------------------------ */
+const FINANCE_KINDS = ["expense", "income"];
+const FINANCE_CURRENCIES = ["ARS", "USD", "EUR"];
+const normalizeFinancialMovement = (input, previous = {}) => {
+  const movement = { ...previous, ...(input || {}) };
+  delete movement._updatedAt;
+  movement.kind = FINANCE_KINDS.includes(movement.kind) ? movement.kind : "expense";
+  movement.currency = FINANCE_CURRENCIES.includes(movement.currency) ? movement.currency : "USD";
+  movement.amount = Math.max(0, Number(movement.amount) || 0);
+  movement.exchangeRate = movement.currency === "USD" ? 1 : Math.max(0, Number(movement.exchangeRate) || 0);
+  movement.amountUsd = movement.currency === "USD" ? movement.amount : movement.exchangeRate > 0 ? movement.amount / movement.exchangeRate : 0;
+  movement.amountUsd = Math.round(movement.amountUsd * 100) / 100;
+  return movement;
+};
+
+app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const movement = normalizeFinancialMovement(req.body);
+  if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
+  if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
+  if (!movement.id) {
+    const year = new Date().getFullYear();
+    const rows = (await pool.query("SELECT id FROM financial_movements WHERE id LIKE $1", [`MOV-${year}-%`])).rows;
+    const next = Math.max(0, ...rows.map((row) => Number(String(row.id).split("-").pop()) || 0)) + 1;
+    movement.id = `MOV-${year}-${String(next).padStart(4, "0")}`;
+  }
+  movement.createdAt = movement.createdAt || new Date().toISOString();
+  movement.createdBy = movement.createdBy || req.user.id;
+  movement.createdByName = movement.createdByName || req.user.name;
+  await pool.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [movement.id, movement]);
+  res.json(movement);
+});
+
+app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const current = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!current) return res.status(404).json({ error: "No existe" });
+  const movement = normalizeFinancialMovement(req.body, current);
+  movement.id = req.params.id;
+  if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
+  if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
+  movement.updatedBy = req.user.id; movement.updatedByName = req.user.name; movement.updatedAt = new Date().toISOString();
+  await pool.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, movement]);
+  res.json(movement);
+});
+
+app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  await pool.query("DELETE FROM financial_movements WHERE id=$1", [req.params.id]);
+  res.status(204).end();
 });
 // Duplica un proyecto con todas sus tareas; permite renombrar, cambiar clave, accesos y reasignar
 app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), async (req, res) => {
