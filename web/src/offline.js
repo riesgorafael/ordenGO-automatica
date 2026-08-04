@@ -1,4 +1,5 @@
 const QUEUE_KEY = "ordengo_offline_queue_v1";
+const ORDER_ID_MAP_KEY = "ordengo_offline_order_ids_v1";
 
 const readQueue = () => {
   try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); } catch { return []; }
@@ -21,6 +22,19 @@ export function updateQueuedOrder(localId, patch) {
   queue[index] = { ...queue[index], payload: { ...queue[index].payload, ...patch } };
   writeQueue(queue);
   return true;
+}
+
+export function rememberSyncedOrderId(localId, serverId) {
+  if (!localId || !serverId) return;
+  let current = {}; try { current = JSON.parse(localStorage.getItem(ORDER_ID_MAP_KEY) || "{}"); } catch {}
+  localStorage.setItem(ORDER_ID_MAP_KEY, JSON.stringify({ ...current, [localId]: serverId }));
+}
+
+export function resolveSyncedOrderId(localId, consume = false) {
+  let current = {}; try { current = JSON.parse(localStorage.getItem(ORDER_ID_MAP_KEY) || "{}"); } catch { return ""; }
+  const serverId = current[localId] || "";
+  if (serverId && consume) { delete current[localId]; localStorage.setItem(ORDER_ID_MAP_KEY, JSON.stringify(current)); }
+  return serverId;
 }
 
 export async function flushOfflineQueue(handler) {

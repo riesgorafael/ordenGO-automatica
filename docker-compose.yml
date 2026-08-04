@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ordengo
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-ordengo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD en el archivo .env}
       POSTGRES_DB: ordengo
     volumes:
       - db_data:/var/lib/postgresql/data
@@ -21,10 +21,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://ordengo:${DB_PASSWORD:-ordengo}@db:5432/ordengo
-      JWT_SECRET: ${JWT_SECRET:-cambia-este-secreto}
+      DATABASE_URL: postgres://ordengo:${DB_PASSWORD:?Define DB_PASSWORD en el archivo .env}@db:5432/ordengo
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET de al menos 32 caracteres en el archivo .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@empresa.com}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en el archivo .env}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-ordengo123}
       MONITOR_EMAIL: ${MONITOR_EMAIL:-monitor.oficina@empresa.com}
       MONITOR_PASSWORD: ${MONITOR_PASSWORD:-ordengo123}

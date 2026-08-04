@@ -11,7 +11,7 @@ import {
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
 import { clientOrderReportPDF, internalOrderReportPDF, monthlyReportPDF, valuedClientReportPDF } from "./pdf";
-import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, saveOrderDraft, updateQueuedOrder } from "./offline";
+import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, updateQueuedOrder } from "./offline";
 
 /* ===================================== CONFIG ===================================== */
 const CUR = "USD ";
@@ -143,7 +143,9 @@ function downloadFile(name, text) {
   } catch { alert("La descarga no está disponible en este navegador."); }
 }
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const localDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const localMonthKey = (date = new Date()) => localDateKey(date).slice(0, 7);
+const todayStr = () => localDateKey();
 const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const addCalendarDays = (date, days) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
 const startOfCalendarWeek = (date) => addCalendarDays(date, -((date.getDay() + 6) % 7));
@@ -294,6 +296,9 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [offlineCount, setOfflineCount] = useState(() => offlineQueueSize());
+  const [syncingOffline, setSyncingOffline] = useState(false);
+  const [offlineSyncFailed, setOfflineSyncFailed] = useState(false);
+  const [offlineRetry, setOfflineRetry] = useState(0);
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type, leaving: false }]); setTimeout(() => setToasts((t) => t.map((x) => x.id === id ? { ...x, leaving: true } : x)), 3200); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3450); };
   const navigateModule = (nextModule) => {
     if (nextModule !== module) {
@@ -364,12 +369,14 @@ export default function App() {
   useEffect(() => {
     if (!online || !me || !offlineCount) return;
     (async () => {
+      setSyncingOffline(true); setOfflineSyncFailed(false);
       const result = await flushOfflineQueue(async ({ type, payload }) => {
         if (type === "order:create") {
           const order = { ...payload };
+          const localId = order._localId;
           delete order._localId;
           if (order._newClient) { const client = await api.addClient(order._newClient); order.client = client.name; order.site = order.site || client.site; delete order._newClient; }
-          delete order.id; await api.createOrder(order); return;
+          delete order.id; const saved = await api.createOrder(order); rememberSyncedOrderId(localId, saved.id); return saved;
         }
         if (type === "order:update") return api.updateOrder(payload.id, payload.patch);
         if (type === "task:save") return api.saveTask(payload);
@@ -377,8 +384,10 @@ export default function App() {
       });
       setOfflineCount(result.remaining);
       if (result.sent) { await boot(); toast(`${result.sent} cambio(s) sincronizado(s)`, "success"); }
+      if (result.remaining) { setOfflineSyncFailed(true); toast(`${result.remaining} cambio(s) no pudieron sincronizarse. Revisá los datos e intentá nuevamente.`, "error"); }
+      setSyncingOffline(false);
     })();
-  }, [online, me, offlineCount]);
+  }, [online, me?.id, offlineCount, offlineRetry]);
 
   const logout = () => { setToken(null); setMe(null); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
@@ -409,7 +418,11 @@ export default function App() {
     } catch (e) { err(e); return false; }
   };
   const updateOrder = async (id, patch) => {
-    if (id.startsWith("PEND-")) { updateQueuedOrder(id, patch); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return updated; }
+    if (id.startsWith("PEND-")) {
+      const syncedId = online ? resolveSyncedOrderId(id) : "";
+      if (syncedId) return updateOrder(syncedId, patch);
+      updateQueuedOrder(id, patch); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return updated;
+    }
     if (!online) { queueOfflineOperation("order:update", { id, patch }); setOfflineCount(offlineQueueSize()); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio guardado para sincronizar", "success"); return updated; }
     try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); return u; } catch (e) { err(e); return false; }
   };
@@ -422,8 +435,9 @@ export default function App() {
 
   /* Proyectos */
   const onSaveTask = async (t) => {
-    if (!online) { queueOfflineOperation("task:save", t); setOfflineCount(offlineQueueSize()); setTasks((p) => (p.some((x) => x.id === t.id) ? p.map((x) => x.id === t.id ? { ...t, _offline: true } : x) : [{ ...t, _offline: true }, ...p])); setEditing(undefined); toast("Tarea guardada para sincronizar", "success"); return; }
-    try { const s = await api.saveTask(t); setTasks((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [s, ...p])); setEditing(undefined); } catch (e) { err(e); }
+    const exists = tasks.some((task) => task.id === t.id);
+    if (!online) { queueOfflineOperation(exists ? "task:update" : "task:save", exists ? { id: t.id, patch: t } : t); setOfflineCount(offlineQueueSize()); setTasks((p) => (exists ? p.map((x) => x.id === t.id ? { ...x, ...t, _offline: true } : x) : [{ ...t, _offline: true }, ...p])); setEditing(undefined); toast("Tarea guardada para sincronizar", "success"); return; }
+    try { const s = exists ? await api.updateTask(t.id, t) : await api.saveTask(t); setTasks((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [s, ...p])); setEditing(undefined); } catch (e) { err(e); }
   };
   const onDeleteTask = async (id) => { try { await api.deleteTask(id); setTasks((p) => p.filter((x) => x.id !== id)); setEditing(undefined); } catch (e) { err(e); } };
   const moveTask = async (id, dir) => {
@@ -615,7 +629,7 @@ export default function App() {
         </div>
       </header>
 
-      {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{online ? <Loader2 className="h-4 w-4 animate-spin" /> : <WifiOff className="h-4 w-4" />}{online ? `Sincronizando ${offlineCount} cambio(s)…` : `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.`}</div>}
+      {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online && offlineSyncFailed ? "bg-rose-600" : online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{!online ? <WifiOff className="h-4 w-4" /> : syncingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}{!online ? `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.` : offlineSyncFailed ? <><span>{offlineCount} cambio(s) pendientes por un error.</span><button type="button" onClick={() => setOfflineRetry((value) => value + 1)} className="inline-flex items-center gap-1 rounded border border-white/40 px-2 py-1 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button></> : `Sincronizando ${offlineCount} cambio(s)…`}</div>}
       <main className="mx-auto max-w-6xl px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5">
         <div key={activeModule} className="motion-page">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} ger={isMgr} />}
@@ -814,7 +828,7 @@ function ChangePassword({ onClose, forced, onDone }) {
   const close = forced ? () => {} : onClose;
   const submit = async () => {
     setMsg("");
-    if (n1.length < 6) { setMsg("La nueva contraseña debe tener al menos 6 caracteres."); return; }
+    if (n1.length < 8) { setMsg("La nueva contraseña debe tener al menos 8 caracteres."); return; }
     if (n1 !== n2) { setMsg("Las contraseñas nuevas no coinciden."); return; }
     setBusy(true);
     try { await api.changePassword(cur, n1); setDone(true); }
@@ -1243,7 +1257,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   // 1) Tendencia 12 meses
   const trend = (() => {
     const arr = [];
-    for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); const ym = d.toISOString().slice(0, 7); arr.push({ ym, name: monthLabelShort(ym), value: 0 }); }
+    for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); const ym = localMonthKey(d); arr.push({ ym, name: monthLabelShort(ym), value: 0 }); }
     const idx = Object.fromEntries(arr.map((a, i) => [a.ym, i]));
     facturadas.forEach((o) => { const k = monthKey(o.date); if (k in idx) arr[idx[k]].value += tot(o); });
     return arr.map((a) => ({ ...a, value: Math.round(a.value) }));
@@ -1445,7 +1459,7 @@ const Empty = ({ text }) => <div className="grid h-[200px] place-items-center te
 function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
   const myTasks = tasks.filter((t) => t.assignee === me.id && t.status !== "Hecho")
     .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
-  const myOrders = orders.filter((o) => o.tech === me.name && o.status !== "Facturada");
+  const myOrders = orders.filter((o) => o.tech === me.name && ["Borrador", "En progreso", "En proceso de ejecución"].includes(o.status));
   const overdue = myTasks.filter(isOverdue).length;
   const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
   return (
@@ -1494,8 +1508,8 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
 /* ===================================== ÓRDENES: HOME ===================================== */
 function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
   const pendingBill = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada");
-  const unsigned = orders.filter((o) => o.status === "Completada" && !o.signatureUrl);
-  const monthKey = new Date().toISOString().slice(0, 7);
+  const unsigned = orders.filter((o) => o.status === "Completada" && !o.signatureUrl && !o.noSignReason);
+  const monthKey = localMonthKey();
   const monthOrders = orders.filter((o) => (o.date || "").startsWith(monthKey));
   const monthTotal = monthOrders.reduce((s, o) => s + orderTotals(o).total, 0);
   const monthPending = monthOrders.filter((o) => o.status === "Completada" || o.status === "Aprobada").reduce((s, o) => s + orderTotals(o).total, 0);
@@ -1550,8 +1564,8 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
 
 /* ===================================== ÓRDENES: REPORTE MENSUAL ===================================== */
 function MonthlyReport({ orders }) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
-  const monthOrders = orders.filter((o) => (o.date || "").startsWith(month) && o.status !== "Borrador");
+  const [month, setMonth] = useState(localMonthKey());
+  const monthOrders = orders.filter((o) => (o.date || "").startsWith(month) && ["Completada", "Aprobada", "Facturada"].includes(o.status));
   const groups = {};
   monthOrders.forEach((o) => {
     const t = orderTotals(o);
@@ -1619,9 +1633,10 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const reportReady = ["Completada", "Aprobada", "Facturada"].includes(order.status);
-  const needSign = next === "Aprobada" && !order.signatureUrl;
+  const closureReady = ["Completada", "Aprobada", "Facturada"].includes(order.status);
+  const needSign = next === "Aprobada" && !order.signatureUrl && !order.noSignReason;
   const needTechnicianSign = !!next && ["Completada", "Aprobada", "Facturada"].includes(next) && !order.technicianSignatureUrl;
-  const canAdvance = next && (next !== "Facturada" || ger);
+  const canAdvance = next && (next !== "Aprobada" || ger) && (next !== "Facturada" || ger);
   const [rate, setRate] = useState(normalizedRate(order.rate));
   const [mats, setMats] = useState((order.materials || []).map((material) => ({ ...material, price: wholeMoney(material.price), cost: wholeMoney(material.cost) })));
   const [laborBillable, setLaborBillable] = useState(order.laborBillable);
@@ -1664,14 +1679,15 @@ function OrderDetail({ ger, order, onClose, onUpdate, onAdvance, onExport, onDel
             {mats.length > 0 && <ul className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">{mats.map((m, i) => (<li key={i} className="text-sm"><div className="flex min-w-0 items-start justify-between gap-2"><span className="min-w-0 break-words text-slate-700">{m.qty}× {m.name || "—"}</span>{ger && <span className="shrink-0 text-xs text-slate-500">{money((m.qty || 0) * (m.price || 0))}</span>}</div>{ger && <div className="mt-1 grid grid-cols-2 gap-2 sm:flex sm:items-center"><label className="text-xs text-slate-500">P. unit. USD:<input type="number" min="0" step="1" value={m.price} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, price: e.target.value } : y))} onBlur={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, price: wholeMoney(e.target.value) } : y))} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1 text-xs sm:ml-1 sm:mt-0 sm:w-24" /></label><label className="text-xs text-slate-500">Costo USD:<input type="number" min="0" step="1" value={m.cost ?? ""} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, cost: e.target.value } : y))} onBlur={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, cost: wholeMoney(e.target.value) } : y))} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1 text-xs sm:ml-1 sm:mt-0 sm:w-20" /></label><label className="col-span-2 flex items-center gap-1 text-[11px] text-slate-500 sm:ml-auto"><input type="checkbox" checked={m.billable} onChange={(e) => setMats((x) => x.map((y, j) => j === i ? { ...y, billable: e.target.checked } : y))} /> Facturable</label></div>}</li>))}</ul>}
           </div></section>
           {ger && (<section className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm"><div className="flex items-center justify-between text-slate-600"><span>Mano de obra</span><span className="font-medium text-slate-800">{money(t.labor)}</span></div><div className="flex items-center justify-between text-slate-600"><span>Materiales facturables</span><span className="font-medium text-slate-800">{money(t.mats)}</span></div><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 font-semibold text-slate-900"><span>Total</span><span>{money(t.total)}</span></div>{(mg.cost > 0) && <><div className="mt-2 flex items-center justify-between border-t border-emerald-200 pt-2 text-slate-500"><span>Costo estimado</span><span>{money(mg.cost)}</span></div><div className="flex items-center justify-between font-semibold text-emerald-700"><span>Margen</span><span>{money(mg.margin)} · {Math.round(mg.pct * 100)}%</span></div></>}{dirty && <button onClick={savePrices} className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500">Guardar precios y costos</button>}</section>)}
-          {order.technicianSignatureUrl ? (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del técnico responsable</h4><img src={order.technicianSignatureUrl} alt="Firma del técnico" className="h-20 rounded-lg border border-slate-200 bg-white" /><div className="mt-1 text-xs text-slate-500">Firmó: {order.technicianSignedBy || order.tech}{order.technicianSignedAt ? ` · ${new Date(order.technicianSignedAt).toLocaleString("es-AR")}` : ""}</div></section>) : order.status !== "Borrador" && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del técnico responsable</h4><SignaturePad key={`technician-${order.id}`} onChange={setTechnicianSig} /><div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Técnico: <b>{order.tech || me?.name || "—"}</b></div><button disabled={!technicianSig} onClick={() => onUpdate(order.id, { technicianSignatureUrl: technicianSig, technicianSignedAt: new Date().toISOString(), technicianSignedBy: order.tech || me?.name || "Técnico responsable" })} className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">Guardar firma técnica</button></section>)}
+          {order.technicianSignatureUrl ? (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del técnico responsable</h4><img src={order.technicianSignatureUrl} alt="Firma del técnico" className="h-20 rounded-lg border border-slate-200 bg-white" /><div className="mt-1 text-xs text-slate-500">Firmó: {order.technicianSignedBy || order.tech}{order.technicianSignedAt ? ` · ${new Date(order.technicianSignedAt).toLocaleString("es-AR")}` : ""}</div></section>) : closureReady && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del técnico responsable</h4><SignaturePad key={`technician-${order.id}`} onChange={setTechnicianSig} /><div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Técnico: <b>{order.tech || me?.name || "—"}</b></div><button disabled={!technicianSig} onClick={() => onUpdate(order.id, { technicianSignatureUrl: technicianSig, technicianSignedAt: new Date().toISOString(), technicianSignedBy: order.tech || me?.name || "Técnico responsable" })} className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">Guardar firma técnica</button></section>)}
           {order.signatureUrl && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Conformidad del cliente</h4>{order.signatureUrl !== "signed" ? <img src={order.signatureUrl} alt="firma" className="h-20 rounded-lg border border-slate-200 bg-white" /> : <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">Firmada</div>}{order.signedBy && <div className="mt-1 text-xs text-slate-500">Firmó: {order.signedBy} · {order.technical?.signerCompany || order.client}</div>}</section>)}
-          {!order.signatureUrl && order.status !== "Borrador" && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del cliente</h4><SignaturePad key={order.id} onChange={setSig} /><input value={sigBy} onChange={(e) => setSigBy(e.target.value)} placeholder="Nombre de quien firma" className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /><select value={sigRoleChoice} onChange={(e) => { setSigRoleChoice(e.target.value); setSigRole(e.target.value === "Otro" ? "" : e.target.value); }} className="u-input mt-2"><option value="">Cargo / área</option>{SIGNER_ROLES.map((role) => <option key={role}>{role}</option>)}<option>Otro</option></select>{sigRoleChoice === "Otro" && <input value={sigRole} onChange={(e) => setSigRole(e.target.value)} placeholder="Especificar cargo / área" className="u-input mt-2" />}<div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Empresa: <b>{order.client}</b></div><button disabled={!sig} onClick={() => onUpdate(order.id, { signatureUrl: sig, signedAt: new Date().toISOString(), signedBy: sigBy, technical: { ...(order.technical || {}), signerRole: sigRole, signerCompany: order.client } })} className="mt-2 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Guardar firma</button></section>)}
+          {!order.signatureUrl && closureReady && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del cliente</h4><SignaturePad key={order.id} onChange={setSig} /><input value={sigBy} onChange={(e) => setSigBy(e.target.value)} placeholder="Nombre de quien firma" className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /><select value={sigRoleChoice} onChange={(e) => { setSigRoleChoice(e.target.value); setSigRole(e.target.value === "Otro" ? "" : e.target.value); }} className="u-input mt-2"><option value="">Cargo / área</option>{SIGNER_ROLES.map((role) => <option key={role}>{role}</option>)}<option>Otro</option></select>{sigRoleChoice === "Otro" && <input value={sigRole} onChange={(e) => setSigRole(e.target.value)} placeholder="Especificar cargo / área" className="u-input mt-2" />}<div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Empresa: <b>{order.client}</b></div><button disabled={!sig} onClick={() => onUpdate(order.id, { signatureUrl: sig, signedAt: new Date().toISOString(), signedBy: sigBy, technical: { ...(order.technical || {}), signerRole: sigRole, signerCompany: order.client } })} className="mt-2 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Guardar firma</button></section>)}
           <section className="flex flex-wrap gap-2 pt-1">
             {onEdit && <button onClick={() => onEdit(order)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Pencil className="h-4 w-4" /> Editar orden</button>}
             {canAdvance && <button disabled={needSign || needTechnicianSign} onClick={() => onAdvance(order.id, next)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Marcar {next}</button>}
             {needTechnicianSign && <span className="self-center text-xs font-medium text-amber-600">Guarda la firma técnica para completar.</span>}
             {needSign && <button onClick={() => setNoSignOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
+            {next === "Aprobada" && !ger && <span className="self-center text-xs text-slate-400">La aprobación corresponde a Gerencia.</span>}
             {next === "Facturada" && !ger && <span className="self-center text-xs text-slate-400">La facturación la realiza Gerencia.</span>}
             {reportReady && <button title="Documento técnico para entregar al cliente, sin costos internos ni cronología administrativa." onClick={() => downloadReport("client")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Reporte para cliente</button>}
             {ger && reportReady && <button title="Constancia para el cliente que incorpora los importes facturables, sin revelar costos internos ni margen." onClick={() => downloadReport("valued")} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"><DollarSign className="h-4 w-4" /> Constancia valorizada</button>}
@@ -1778,6 +1794,11 @@ function NewOrder({ ger, me, clients, parts = [], knownOrders = [], online = tru
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
   const [currentOrderId, setCurrentOrderId] = useState(initial.existingOrderId || "");
+  useEffect(() => {
+    if (!online || !currentOrderId.startsWith("PEND-")) return;
+    const serverId = resolveSyncedOrderId(currentOrderId, true);
+    if (serverId) setCurrentOrderId(serverId);
+  }, [online, currentOrderId, knownOrders]);
   useEffect(() => {
     if (!online || !currentOrderId || currentOrderId.startsWith("PEND-") || knownOrders.some((order) => order.id === currentOrderId)) return;
     clearOrderDraft(me.id);
@@ -2371,7 +2392,7 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "" });
   const [passwordUser, setPasswordUser] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const add = async () => { if (!nf.name.trim() || !nf.email.trim()) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "" }); } catch (e) { onErr(e); } };
+  const add = async () => { if (!nf.name.trim() || !nf.email.trim() || nf.password.length < 8) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "" }); } catch (e) { onErr(e); } };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -2390,7 +2411,7 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         ); })}</div>
       </Panel></div>
       <div><Panel title="Nuevo empleado">
-        <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="(opcional; usa la de por defecto)" className="u-input" /></L><L label="Rol" help="Administrador: acceso total. Gerencia: gestión operativa y financiera. Técnico de campo: órdenes y tareas asignadas. Técnico de oficina: proyectos sin órdenes. Monitor: solo visualización."><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L><button onClick={add} disabled={!nf.name.trim() || !nf.email.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">Los monitores son perfiles de solo visualización: no reciben tareas ni órdenes y no aparecen en métricas de carga.</p></div>
+        <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input type="password" autoComplete="new-password" value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="Mínimo 8 caracteres" className="u-input" /></L><L label="Rol" help="Administrador: acceso total. Gerencia: gestión operativa y financiera. Técnico de campo: órdenes y tareas asignadas. Técnico de oficina: proyectos sin órdenes. Monitor: solo visualización."><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L><button onClick={add} disabled={!nf.name.trim() || !nf.email.trim() || nf.password.length < 8} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">La contraseña inicial es temporal y deberá cambiarse al ingresar. Los monitores son perfiles de solo visualización: no reciben tareas ni órdenes y no aparecen en métricas de carga.</p></div>
       </Panel></div>
     </div>
     {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { await wrap(onPatch)(passwordUser.id, { password }); setPasswordUser(null); }} />}
@@ -2403,7 +2424,7 @@ function PasswordResetDialog({ user, onClose, onSave }) {
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
-  const valid = password.length >= 6 && password === confirm;
+  const valid = password.length >= 8 && password === confirm;
   const generate = () => { const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#"; const values = crypto.getRandomValues(new Uint32Array(12)); const next = Array.from(values, (value) => alphabet[value % alphabet.length]).join(""); setPassword(next); setConfirm(next); setShow(true); };
   const submit = async () => { if (!valid || busy) return; setBusy(true); try { await onSave(password); } finally { setBusy(false); } };
   return <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}><div className="mobile-sheet-content w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-50 text-brand-600"><KeyRound className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Restablecer contraseña</h2><p className="text-xs text-slate-500">{user.name} deberá cambiarla al ingresar.</p></div></div><div className="space-y-3"><button onClick={generate} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700"><KeyRound className="h-3.5 w-3.5" /> Generar contraseña temporal segura</button><L label="Contraseña temporal"><input autoFocus type={show ? "text" : "password"} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="u-input" /></L><L label="Repetir contraseña"><input type={show ? "text" : "password"} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="u-input" /></L><label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={show} onChange={(event) => setShow(event.target.checked)} /> Mostrar contraseña temporal</label>{confirm && password !== confirm && <p className="text-xs text-rose-600">Las contraseñas no coinciden.</p>}<p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">Comunícala por un canal seguro. No se podrá volver a consultar después de guardar.</p></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} disabled={busy} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!valid || busy} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Restablecer</button></div></div></div>;
