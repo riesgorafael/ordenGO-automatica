@@ -53,6 +53,7 @@ export const api = {
   convertBudget: (id, options) => req("/budgets/" + id + "/convert", { method: "POST", body: JSON.stringify(options || {}) }),
 
   createFinance: (movement) => req("/finances", { method: "POST", body: JSON.stringify(movement) }),
+  getFinance: (id) => req("/finances/" + id),
   updateFinance: (id, patch) => req("/finances/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteFinance: (id) => req("/finances/" + id, { method: "DELETE" }),
   bnaExchangeRate: () => req("/exchange-rates/bna"),

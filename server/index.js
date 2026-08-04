@@ -385,7 +385,10 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     clients: cl.rows.map((r) => r.data),
     projects: visibleProjects,
     budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => {
+      const { attachmentUrl, ...summary } = r.data;
+      return { ...summary, hasAttachment: Boolean(attachmentUrl), _updatedAt: r.updated_at };
+    }),
     orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
@@ -586,6 +589,12 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   movement.createdBy = movement.createdBy || req.user.id;
   movement.createdByName = movement.createdByName || req.user.name;
   await pool.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [movement.id, movement]);
+  res.json(movement);
+});
+
+app.get("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const movement = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!movement) return res.status(404).json({ error: "No existe" });
   res.json(movement);
 });
 
