@@ -1855,7 +1855,8 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [stepAttempted, setStepAttempted] = useState(false);
   useEffect(() => { setStepAttempted(false); }, [step]);
   const [clientMode, setClientMode] = useState(initial.clientMode || "existing");
-  const [clientId, setClientId] = useState(initial.clientId || clients[0]?.id || "");
+  const defaultClientId = clients.find((c) => c.name === "Corteva Agriscience VTU")?.id || clients[0]?.id || "";
+  const [clientId, setClientId] = useState(initial.clientId || defaultClientId);
   const [newClient, setNewClient] = useState(initial.newClient || { name: "", site: "" });
   const [contact, setContact] = useState(initial.contact || ""); const [tech, setTech] = useState(initial.tech || me.name);
   const [assignedTechs, setAssignedTechs] = useState(initial.assignedTechs || (me.role === "tecnico" ? [me.name] : []));
@@ -1872,7 +1873,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [photos, setPhotos] = useState(initial.photos || []); const [analyzing, setAnalyzing] = useState(false);
   const [rate, setRate] = useState(normalizedRate(initial.rate)); const [laborHours, setLaborHours] = useState(initial.laborHours || ""); const [technicians, setTechnicians] = useState(initial.technicians || 1); const [laborBillable, setLaborBillable] = useState(initial.laborBillable ?? true);
   const [materials, setMaterials] = useState(initial.materials || []); const [location, setLocation] = useState(initial.location || null); const [geoMsg, setGeoMsg] = useState("");
-  const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || clients.find((c) => c.id === (initial.clientId || clients[0]?.id))?.site || "");
+  const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || clients.find((c) => c.id === (initial.clientId || defaultClientId))?.site || "");
   const [signatureUrl, setSignatureUrl] = useState(initial.signatureUrl || null); const [signedBy, setSignedBy] = useState(initial.signedBy || "");
   const [technicianSignatureUrl, setTechnicianSignatureUrl] = useState(initial.technicianSignatureUrl || null);
   const [noSignReason, setNoSignReason] = useState(initial.noSignReason || "");
