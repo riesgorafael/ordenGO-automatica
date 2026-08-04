@@ -55,6 +55,7 @@ export const api = {
   createFinance: (movement) => req("/finances", { method: "POST", body: JSON.stringify(movement) }),
   updateFinance: (id, patch) => req("/finances/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteFinance: (id) => req("/finances/" + id, { method: "DELETE" }),
+  bnaExchangeRate: () => req("/exchange-rates/bna"),
 
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),
   updateTask: (id, patch) => req("/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }),

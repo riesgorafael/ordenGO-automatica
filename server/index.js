@@ -543,6 +543,23 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
 /* ------------------------------------------------ Finanzas ------------------------------------------------ */
 const FINANCE_KINDS = ["expense", "income"];
 const FINANCE_CURRENCIES = ["ARS", "USD", "EUR"];
+let bnaRateCache = null;
+app.get("/api/exchange-rates/bna", auth, requireRole("admin", "gerente"), async (_req, res) => {
+  if (bnaRateCache && Date.now() - bnaRateCache.cachedAt < 15 * 60 * 1000) return res.json(bnaRateCache.data);
+  try {
+    const response = await fetch("https://monedapi.ar/api/v2/usd/bna", { headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const quote = await response.json();
+    const sell = Number(quote.sell);
+    if (!(sell > 0)) throw new Error("Cotización inválida");
+    const data = { currency: "USD", arsPerUsd: sell, buy: Number(quote.buy) || null, sell, updatedAt: quote.updatedAt || new Date().toISOString(), source: "Banco de la Nación Argentina", sourceUrl: "https://www.bna.com.ar/Personas" };
+    bnaRateCache = { cachedAt: Date.now(), data };
+    res.json(data);
+  } catch (error) {
+    if (bnaRateCache?.data) return res.json({ ...bnaRateCache.data, stale: true });
+    res.status(503).json({ error: "No fue posible obtener la cotización vendedor del dólar BNA. Intenta nuevamente." });
+  }
+});
 const normalizeFinancialMovement = (input, previous = {}) => {
   const movement = { ...previous, ...(input || {}) };
   delete movement._updatedAt;
@@ -551,7 +568,7 @@ const normalizeFinancialMovement = (input, previous = {}) => {
   movement.amount = Math.max(0, Number(movement.amount) || 0);
   movement.exchangeRate = movement.currency === "USD" ? 1 : Math.max(0, Number(movement.exchangeRate) || 0);
   movement.amountUsd = movement.currency === "USD" ? movement.amount : movement.exchangeRate > 0 ? movement.amount / movement.exchangeRate : 0;
-  movement.amountUsd = Math.round(movement.amountUsd * 100) / 100;
+  movement.amountUsd = Math.round(movement.amountUsd * 1000000) / 1000000;
   return movement;
 };
 
