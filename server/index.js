@@ -896,11 +896,14 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "quoteNumber", "customerPO"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials"];
 const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO"];
 
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
+  if (isTec(req.user.role)) {
+    delete o.budgetId; delete o.budgetNumber; delete o.projectId; delete o.quoteNumber; delete o.customerPO;
+  }
   if (o.budgetId) {
     const linkedBudget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [o.budgetId])).rows[0]?.data;
     if (!linkedBudget) return res.status(400).json({ error: "El presupuesto vinculado ya no existe." });
@@ -953,9 +956,22 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
     const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
     patch = clean;
   }
+  if (req.user.role === "admin" && "budgetId" in patch) {
+    if (!patch.budgetId) {
+      patch.budgetId = ""; patch.budgetNumber = ""; patch.projectId = ""; patch.quoteNumber = ""; patch.customerPO = "";
+    } else {
+      const budget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [patch.budgetId])).rows[0]?.data;
+      if (!budget) return res.status(400).json({ error: "El presupuesto seleccionado ya no existe." });
+      if (!["Aprobado", "Facturado"].includes(budget.stage)) return res.status(400).json({ error: "La orden solo puede vincularse con un presupuesto aprobado o facturado." });
+      patch.budgetNumber = budget.number || budget.id; patch.quoteNumber = budget.number || budget.id;
+      patch.customerPO = budget.purchaseOrderNumber || ""; patch.projectId = budget.projectId || "";
+      patch.client = budget.client || patch.client || ""; patch.site = budget.site || patch.site || "";
+      patch.contact = budget.contact || patch.contact || ""; patch.service = budget.service || patch.service || "Automatización";
+    }
+  }
   if ("rate" in patch) patch.rate = normalizedRateValue(patch.rate);
   if ("laborCost" in patch) patch.laborCost = wholeMoneyValue(patch.laborCost);
-  if (Array.isArray(patch.materials)) patch.materials = patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
+  if (Array.isArray(patch.materials)) patch.materials = isTec(req.user.role) ? await materialsFromInventory(patch.materials) : patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   merged.currency = "USD";
@@ -963,7 +979,9 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   if (("technical" in patch || "status" in patch) && merged.status !== "Borrador" && chronologyErrors.length) return res.status(400).json({ error: chronologyErrors.join(" ") });
   if (patch.status && ["Completada", "Aprobada", "Facturada"].includes(merged.status) && !merged.technicianSignatureUrl) return res.status(400).json({ error: "La firma del técnico responsable es obligatoria para completar la orden." });
   merged.billableHours = billableHoursValue(merged);
-  if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
+  if (req.user.role === "admin" && "budgetId" in patch && patch.budgetId !== (prev.budgetId || "")) {
+    merged.activity = [...(prev.activity || []), { type: "commercial_link", text: patch.budgetId ? `Vinculó el presupuesto ${patch.budgetNumber}${patch.customerPO ? ` · OC ${patch.customerPO}` : ""}` : "Desvinculó el presupuesto y la OC", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  } else if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
     merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (patch.status && patch.status !== prev.status) {
     merged.activity = [...(prev.activity || []), { type: "status", text: `Cambió el estado a ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
