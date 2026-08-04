@@ -345,6 +345,23 @@ export default function App() {
   }, [me, module, oTab, pTab]);
 
   useEffect(() => {
+    if (!me || !online || module !== "orders" || oView !== "list") return;
+    let cancelled = false;
+    const refreshOrders = async () => {
+      try {
+        const fresh = await api.orders();
+        if (!cancelled) setOrders((fresh || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order));
+      } catch {}
+    };
+    const onVisibility = () => { if (document.visibilityState === "visible") void refreshOrders(); };
+    const timer = window.setInterval(refreshOrders, 8000);
+    window.addEventListener("focus", refreshOrders);
+    document.addEventListener("visibilitychange", onVisibility);
+    void refreshOrders();
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refreshOrders); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [me?.id, online, module, oView]);
+
+  useEffect(() => {
     if (!online || !me || !offlineCount) return;
     (async () => {
       const result = await flushOfflineQueue(async ({ type, payload }) => {
@@ -377,24 +394,24 @@ export default function App() {
   const userById = (id) => users.find((u) => u.id === id);
 
   /* Órdenes */
-  const onSaveOrder = async (o) => {
+  const onSaveOrder = async (o, { stayOpen = false } = {}) => {
     if (!online) {
       const localId = `PEND-${Date.now().toString(36).slice(-5).toUpperCase()}`;
       queueOfflineOperation("order:create", { ...o, _localId: localId });
       const local = { ...o, id: localId, _offline: true };
-      setOrders((p) => [local, ...p]); setOfflineCount(offlineQueueSize()); setOView("list"); toast("Orden guardada en el teléfono. Se enviará al recuperar conexión.", "success"); return true;
+      setOrders((p) => [local, ...p]); setOfflineCount(offlineQueueSize()); if (!stayOpen) setOView("list"); toast("Orden guardada en el teléfono. Se enviará al recuperar conexión.", "success"); return local;
     }
     try {
       if (o._newClient) { const c = await api.addClient(o._newClient); setClients((p) => (p.some((x) => x.id === c.id) ? p : [...p, c])); o.client = c.name; o.site = o.site || c.site; }
       delete o._newClient; delete o.id; // el servidor asigna el folio con el código del cliente
       const saved = await api.createOrder(o);
-      setOrders((p) => [saved, ...p]); setOView("list"); toast(`Orden ${saved.id} creada`, "success"); return true;
+      setOrders((p) => [saved, ...p]); if (!stayOpen) setOView("list"); toast(`Orden ${saved.id} ${stayOpen ? "iniciada" : "creada"}`, "success"); return saved;
     } catch (e) { err(e); return false; }
   };
   const updateOrder = async (id, patch) => {
-    if (id.startsWith("PEND-")) { updateQueuedOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...patch, _offline: true } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return true; }
-    if (!online) { queueOfflineOperation("order:update", { id, patch }); setOfflineCount(offlineQueueSize()); setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...patch, _offline: true } : o))); toast("Cambio guardado para sincronizar", "success"); return true; }
-    try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); return true; } catch (e) { err(e); return false; }
+    if (id.startsWith("PEND-")) { updateQueuedOrder(id, patch); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return updated; }
+    if (!online) { queueOfflineOperation("order:update", { id, patch }); setOfflineCount(offlineQueueSize()); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio guardado para sincronizar", "success"); return updated; }
+    try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); return u; } catch (e) { err(e); return false; }
   };
   const deleteOrder = (id) => setConfirmDialog({ title: `Eliminar ${id}`, message: "La orden y su historial se eliminarán de forma permanente.", confirmLabel: "Eliminar orden", danger: true, action: async () => { try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } } });
   const exportCSV = (rows, name) => {
@@ -527,7 +544,7 @@ export default function App() {
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
   if (!isOffice && module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} prefill={orderPrefill} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order) => { const saved = orderPrefill?.existingOrderId ? await updateOrder(orderPrefill.existingOrderId, order) : await onSaveOrder(order); if (saved) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
+    return <NewOrder ger={isMgr} me={me} clients={clients} parts={parts} prefill={orderPrefill} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
@@ -1759,6 +1776,7 @@ function ReasonDialog({ onClose, onConfirm }) {
 function NewOrder({ ger, me, clients, parts = [], prefill = null, onSave, onCancel }) {
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
+  const [currentOrderId, setCurrentOrderId] = useState(initial.existingOrderId || "");
   const [step, setStep] = useState(initial.step || 0);
   const [clientMode, setClientMode] = useState(initial.clientMode || "existing");
   const [clientId, setClientId] = useState(initial.clientId || clients[0]?.id || "");
@@ -1792,20 +1810,19 @@ function NewOrder({ ger, me, clients, parts = [], prefill = null, onSave, onCanc
   const profile = SERVICE_PROFILES[service] || SERVICE_PROFILES["Mantenimiento correctivo"];
   const timelineAction = (action) => {
     const now = new Date().toISOString();
-    setTechnical((current) => {
-      let next = { ...current, workSessions: [...(current.workSessions || [])] };
-      if (action === "arrival") next.arrivalAt = next.arrivalAt || now;
-      if (action === "start" || action === "resume" || action === "reopen") {
-        next.arrivalAt = next.arrivalAt || now; next.startedAt = next.startedAt || now; next.completedAt = "";
-        if (!next.workSessions.some((session) => !session.end)) next.workSessions.push({ start: now, end: null });
-      }
-      if (action === "pause" || action === "finish") next.workSessions = next.workSessions.map((session) => !session.end ? { ...session, end: now } : session);
-      if (action === "finish") next.completedAt = now;
-      return next;
-    });
+    const next = { ...technical, workSessions: [...(technical.workSessions || [])] };
+    if (action === "arrival") next.arrivalAt = next.arrivalAt || now;
+    if (action === "start" || action === "resume" || action === "reopen") {
+      next.arrivalAt = next.arrivalAt || now; next.startedAt = next.startedAt || now; next.completedAt = "";
+      if (!next.workSessions.some((session) => !session.end)) next.workSessions.push({ start: now, end: null });
+    }
+    if (action === "pause" || action === "finish") next.workSessions = next.workSessions.map((session) => !session.end ? { ...session, end: now } : session);
+    if (action === "finish") next.completedAt = now;
+    setTechnical(next);
     if (action === "reopen") setStep(2);
     if (action === "finish") setStep(3);
     setTimelineNow(Date.now());
+    if (["start", "resume", "reopen", "pause", "finish"].includes(action)) void save("En proceso de ejecución", { stayOpen: true, technicalOverride: next });
   };
   const addPhoto = async (file, cat) => { if (!file) return; setAnalyzing(true); try { const { analysis, report, thumb } = await fileToImages(file); setPhotos((p) => [...p, { url: report, preview: thumb, cat, ts: new Date().toISOString() }]); try { const r = await analyzeImage(analysis); if (!equipo && r.equipo) setEquipo(r.equipo); if (!category && r.category) setCategory(r.category); if (!solucion && r.description) setSolucion(r.description); } catch {} } finally { setAnalyzing(false); } };
   const addMaterial = () => setMaterials((m) => [...m, { name: "", qty: 1, price: 0, cost: 0, billable: true, partNumber: "", brand: "", model: "", serial: "", supplier: "" }]);
@@ -1832,26 +1849,31 @@ function NewOrder({ ger, me, clients, parts = [], prefill = null, onSave, onCanc
   const steps = ["Activo", profile.assess, profile.work, "Cierre"];
   const stepReady = step === 0 ? !!client?.name && !!siteLabel.trim() && !!(equipo || technical.assetTag) : step === 1 ? !!(sintoma || technical.diagnosis || photos.length) : step === 2 ? !!solucion && !!technical.completedAt : canComplete;
   useEffect(() => {
-    const timer = setTimeout(() => { saveOrderDraft(me.id, { step, clientMode, clientId, newClient, siteLabel, contact, tech, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location, budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId }); setDraftSaved(true); }, 500);
+    const timer = setTimeout(() => { saveOrderDraft(me.id, { existingOrderId: currentOrderId, step, clientMode, clientId, newClient, siteLabel, contact, tech, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location, budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId }); setDraftSaved(true); }, 500);
     setDraftSaved(false); return () => clearTimeout(timer);
-  }, [me.id, step, clientMode, clientId, newClient, siteLabel, contact, tech, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location]);
-  const save = async (status) => {
+  }, [me.id, currentOrderId, step, clientMode, clientId, newClient, siteLabel, contact, tech, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location]);
+  const save = async (status, { stayOpen = false, technicalOverride = technical } = {}) => {
     setSaving(true);
     const resolvedSite = siteLabel.trim() || client.site || "";
     const savedLocation = location ? { ...location, label: resolvedSite } : null;
     const completionStamp = new Date().toISOString();
-    const o = { client: client.name, site: resolvedSite, contact, tech, quoteNumber: quoteNumber.trim(), customerPO: customerPO.trim(), budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId, service, date: todayStr(), createdAt: completionStamp, equipo, sintoma, solucion, category, technical: { ...technical, signerCompany: client.name, downtimeMinutes: Number(technical.downtimeMinutes) || 0, billableWaitMinutes: Number(technical.billableWaitMinutes) || 0 }, location: savedLocation, photos, signatureUrl, signedAt: signatureUrl ? completionStamp : null, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), technicianSignatureUrl, technicianSignedAt: technicianSignatureUrl ? completionStamp : null, technicianSignedBy: tech || me.name, laborHours: automaticLaborHours, billableHours: projectedBillableHours, technicians: Math.max(1, Math.round(Number(technicians) || 1)), rate: normalizedRate(rate), currency: "USD", laborBillable, materials: materials.map((m) => ({ ...m, qty: m.unit === "u" ? Math.max(1, Math.round(Number(m.qty) || 1)) : (Number(m.qty) || 0), price: wholeMoney(m.price), cost: wholeMoney(m.cost) })), status };
+    const timelineHours = technicalOverride.startedAt ? round2(timelineWorkMs(technicalOverride, Date.now()) / 3600000) : automaticLaborHours;
+    const o = { client: client.name, site: resolvedSite, contact, tech, quoteNumber: quoteNumber.trim(), customerPO: customerPO.trim(), budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId, service, date: todayStr(), createdAt: completionStamp, equipo, sintoma, solucion, category, technical: { ...technicalOverride, signerCompany: client.name, downtimeMinutes: Number(technicalOverride.downtimeMinutes) || 0, billableWaitMinutes: Number(technicalOverride.billableWaitMinutes) || 0 }, location: savedLocation, photos, signatureUrl, signedAt: signatureUrl ? completionStamp : null, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), technicianSignatureUrl, technicianSignedAt: technicianSignatureUrl ? completionStamp : null, technicianSignedBy: tech || me.name, laborHours: timelineHours, billableHours: projectedBillableHours, technicians: Math.max(1, Math.round(Number(technicians) || 1)), rate: normalizedRate(rate), currency: "USD", laborBillable, materials: materials.map((m) => ({ ...m, qty: m.unit === "u" ? Math.max(1, Math.round(Number(m.qty) || 1)) : (Number(m.qty) || 0), price: wholeMoney(m.price), cost: wholeMoney(m.cost) })), status };
     if (clientMode === "new" && newClient.name) o._newClient = { id: "c" + Date.now(), name: newClient.name, site: resolvedSite };
-    const saved = await onSave(o); if (saved) clearOrderDraft(me.id); setSaving(false);
+    const saved = await onSave(o, currentOrderId, { stayOpen });
+    if (saved?.id && !currentOrderId) setCurrentOrderId(saved.id);
+    if (saved && !stayOpen) clearOrderDraft(me.id);
+    setSaving(false);
+    return saved;
   };
   return (
     <div className="min-h-screen bg-slate-100" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
-      <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100"><div className="mx-auto max-w-lg px-3 py-3 sm:px-4"><div className="flex items-center gap-3"><button onClick={onCancel} aria-label="Volver" className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800"><ChevronLeft className="h-5 w-5" /></button><div className="min-w-0 flex-1 leading-tight"><div className="text-sm font-semibold">{initial.existingOrderId ? `Continuar ${initial.existingOrderId}` : "Nueva orden"} · {steps[step]}</div><div className="font-mono text-[11px] text-brand-400">{initial.existingOrderId || folioPreview}</div></div><span className={`text-[11px] ${draftSaved ? "text-emerald-400" : "text-slate-400"}`}>{draftSaved ? "Guardado" : "Guardando…"}</span></div><div className="mt-3 grid grid-cols-4 gap-1">{steps.map((label, index) => <button key={label} onClick={() => index <= step && setStep(index)} className="text-left" aria-label={`Paso ${index + 1}: ${label}`}><span className={`block h-1.5 rounded-full ${index <= step ? "bg-brand-500" : "bg-slate-700"}`} /><span className={`mt-1 block truncate text-[9px] ${index === step ? "text-white" : "text-slate-500"}`}>{label}</span></button>)}</div></div></header>
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100"><div className="mx-auto max-w-lg px-3 py-3 sm:px-4"><div className="flex items-center gap-3"><button onClick={onCancel} aria-label="Volver" className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800"><ChevronLeft className="h-5 w-5" /></button><div className="min-w-0 flex-1 leading-tight"><div className="text-sm font-semibold">{currentOrderId ? `Continuar ${currentOrderId}` : "Nueva orden"} · {steps[step]}</div><div className="font-mono text-[11px] text-brand-400">{currentOrderId || folioPreview}</div></div><span className={`text-[11px] ${draftSaved ? "text-emerald-400" : "text-slate-400"}`}>{draftSaved ? "Guardado" : "Guardando…"}</span></div><div className="mt-3 grid grid-cols-4 gap-1">{steps.map((label, index) => <button key={label} onClick={() => index <= step && setStep(index)} className="text-left" aria-label={`Paso ${index + 1}: ${label}`}><span className={`block h-1.5 rounded-full ${index <= step ? "bg-brand-500" : "bg-slate-700"}`} /><span className={`mt-1 block truncate text-[9px] ${index === step ? "text-white" : "text-slate-500"}`}>{label}</span></button>)}</div></div></header>
       <main className="mx-auto max-w-lg space-y-4 px-3 py-4 pb-40 sm:px-4 sm:py-5 sm:pb-32">
-        {prefill?.existingOrderId && <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-700"><ClipboardList className="mt-0.5 h-4 w-4 shrink-0" /><span>Continuando la orden <b>{prefill.existingOrderId}</b>. Los cambios actualizarán el mismo registro.</span></div>}
+        {currentOrderId && <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-700"><ClipboardList className="mt-0.5 h-4 w-4 shrink-0" /><span>Continuando la orden <b>{currentOrderId}</b>. Los cambios actualizarán el mismo registro.</span></div>}
         {prefill && !prefill.existingOrderId && <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700"><FileText className="mt-0.5 h-4 w-4 shrink-0" /><span>Orden vinculada al presupuesto <b>{linkedBudgetNumber}</b>. Cliente, sitio, servicio y OC fueron precargados.</span></div>}
         {!prefill && draft && <div className="flex items-start gap-2 rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-700"><RefreshCw className="mt-0.5 h-4 w-4 shrink-0" />Recuperamos el borrador guardado en {deviceLabel()}.</div>}
-        <ServiceTimeline technical={technical} active={activeWork} elapsedMs={elapsedWorkMs} billableHours={projectedBillableHours} minimumApplied={minimumBillingApplied} showBilling={ger} technicians={technicians} errors={chronologyErrors} onAction={timelineAction} onDowntime={(value) => setTechnicalField("downtimeMinutes", value)} onBillableWait={(value) => setTechnicalField("billableWaitMinutes", value)} onBillableWaitReason={(value) => setTechnicalField("billableWaitReason", value)} />
+        <ServiceTimeline technical={technical} active={activeWork} elapsedMs={elapsedWorkMs} billableHours={projectedBillableHours} minimumApplied={minimumBillingApplied} showBilling={ger} technicians={technicians} errors={chronologyErrors} disabled={saving} onAction={timelineAction} onDowntime={(value) => setTechnicalField("downtimeMinutes", value)} onBillableWait={(value) => setTechnicalField("billableWaitMinutes", value)} onBillableWaitReason={(value) => setTechnicalField("billableWaitReason", value)} />
         <div key={step} className="motion-step space-y-4">
         {step === 0 && (<>
         <Section title="Cliente y sitio">
@@ -1925,7 +1947,7 @@ function NewOrder({ ger, me, clients, parts = [], prefill = null, onSave, onCanc
   );
 }
 const Section = ({ title, children }) => <div className="motion-card rounded-xl border border-slate-200 bg-white p-4"><h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>{children}</div>;
-function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumApplied, showBilling = false, technicians, errors = [], onAction, onDowntime, onBillableWait, onBillableWaitReason }) {
+function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumApplied, showBilling = false, technicians, errors = [], disabled = false, onAction, onDowntime, onBillableWait, onBillableWaitReason }) {
   const stamp = (value) => value ? new Date(value).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "Pendiente";
   const responseMs = technical.arrivalAt && technical.reportedAt ? new Date(technical.arrivalAt) - new Date(technical.reportedAt) : 0;
   const onSiteMs = technical.completedAt && technical.arrivalAt ? new Date(technical.completedAt) - new Date(technical.arrivalAt) : 0;
@@ -1933,12 +1955,12 @@ function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumA
     <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Cronología del servicio</h3><p className="mt-0.5 text-[11px] text-slate-500">Registra cada hito; los tiempos y horas se calculan automáticamente.</p></div>{active && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> En curso</span>}</div>
     <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">{[["Aviso", technical.reportedAt], ["Llegada", technical.arrivalAt], ["Inicio", technical.startedAt], ["Fin", technical.completedAt]].map(([label, value]) => <div key={label} className={`rounded-lg border px-2.5 py-2 ${value ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50"}`}><div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div><div className={`mt-0.5 font-semibold ${value ? "text-slate-700" : "text-slate-400"}`}>{stamp(value)}</div></div>)}</div>
     <div className="mt-3 flex flex-wrap gap-2">
-      {!technical.arrivalAt && <button onClick={() => onAction("arrival")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white"><MapPin className="h-4 w-4" /> Registrar llegada</button>}
-      {technical.arrivalAt && !technical.startedAt && <button onClick={() => onAction("start")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"><Play className="h-4 w-4" /> Iniciar intervención</button>}
-      {active && <button onClick={() => onAction("pause")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700"><Square className="h-3.5 w-3.5" /> Pausar</button>}
-      {technical.startedAt && !active && !technical.completedAt && <button onClick={() => onAction("resume")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"><Play className="h-4 w-4" /> Reanudar</button>}
-      {technical.startedAt && !technical.completedAt && <button onClick={() => onAction("finish")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white"><CheckCircle2 className="h-4 w-4" /> Finalizar intervención</button>}
-      {technical.completedAt && <button onClick={() => onAction("reopen")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700"><RefreshCw className="h-4 w-4" /> Reabrir intervención</button>}
+      {!technical.arrivalAt && <button disabled={disabled} onClick={() => onAction("arrival")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><MapPin className="h-4 w-4" /> Registrar llegada</button>}
+      {technical.arrivalAt && !technical.startedAt && <button disabled={disabled} onClick={() => onAction("start")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><Play className="h-4 w-4" /> Iniciar intervención</button>}
+      {active && <button disabled={disabled} onClick={() => onAction("pause")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50"><Square className="h-3.5 w-3.5" /> Pausar</button>}
+      {technical.startedAt && !active && !technical.completedAt && <button disabled={disabled} onClick={() => onAction("resume")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><Play className="h-4 w-4" /> Reanudar</button>}
+      {technical.startedAt && !technical.completedAt && <button disabled={disabled} onClick={() => onAction("finish")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Finalizar intervención</button>}
+      {technical.completedAt && <button disabled={disabled} onClick={() => onAction("reopen")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700 disabled:opacity-50"><RefreshCw className="h-4 w-4" /> Reabrir intervención</button>}
     </div>
     {technical.completedAt && <p className="mt-2 text-[11px] text-slate-500">Si la orden todavía está en ejecución, reabrí la intervención para continuar registrando tiempo y volver a finalizarla.</p>}
     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-lg bg-slate-50 px-2.5 py-2 text-xs"><span className="flex items-center gap-1 text-[10px] text-slate-400">Tiempo efectivo <HelpHint text="Tiempo real trabajado entre inicio y finalización, descontando pausas." /></span><b className="text-slate-700">{compactDuration(elapsedMs)}</b></div>{showBilling && <div className={`rounded-lg px-2.5 py-2 text-xs ${minimumApplied ? "bg-amber-50" : "bg-brand-50"}`}><span className="flex items-center gap-1 text-[10px] text-slate-400">Horas facturables <HelpHint text="Horas comerciales cobradas por técnico; puede aplicar un mínimo de dos horas cuando la visita es menor a una hora." /></span><b className={minimumApplied ? "text-amber-700" : "text-brand-700"}>{billableHours} h{minimumApplied ? " · mínimo" : ""}</b></div>}{responseMs > 0 && <div className="rounded-lg bg-slate-50 px-2.5 py-2 text-xs"><span className="flex items-center gap-1 text-[10px] text-slate-400">Respuesta <HelpHint text="Tiempo transcurrido desde el aviso recibido hasta la llegada al sitio." /></span><b className="text-slate-700">{compactDuration(responseMs)}</b></div>}{onSiteMs > 0 && <div className="rounded-lg bg-slate-50 px-2.5 py-2 text-xs"><span className="flex items-center gap-1 text-[10px] text-slate-400">Total en planta <HelpHint text="Permanencia total desde la llegada al sitio hasta la finalización, incluyendo esperas y pausas." /></span><b className="text-slate-700">{compactDuration(onSiteMs)}</b></div>}</div>

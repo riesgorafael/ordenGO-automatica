@@ -899,6 +899,12 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials"];
 const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO"];
 
+app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC");
+  const tec = isTec(req.user.role);
+  res.json(rows.map((row) => ({ ...(tec ? stripMoney(row.data) : row.data), _updatedAt: row.updated_at })));
+});
+
 app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   let o = { ...(req.body || {}) };
   if (o.status === "En progreso") o.status = "En proceso de ejecución";
