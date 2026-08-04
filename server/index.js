@@ -567,7 +567,7 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
 });
 
 /* ------------------------------------------------ Finanzas ------------------------------------------------ */
-const FINANCE_KINDS = ["expense", "income"];
+const FINANCE_KINDS = ["expense", "income", "invoice"];
 const FINANCE_CURRENCIES = ["ARS", "USD", "EUR"];
 let bnaRateCache = null;
 app.get("/api/exchange-rates/bna", auth, requireRole("admin", "gerente"), async (_req, res) => {
@@ -599,7 +599,7 @@ const normalizeFinancialMovement = (input, previous = {}) => {
 };
 
 const applyApprovedBudgetLink = async (movement) => {
-  if (movement.kind !== "expense" || !movement.projectId) return movement;
+  if (!movement.projectId) return movement;
   const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [movement.projectId])).rows[0]?.data;
   if (!project) return movement;
   let budget = null;
@@ -626,6 +626,14 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
+  if (movement.kind === "invoice" && !String(movement.invoiceNumber || movement.receiptNumber || "").trim()) return res.status(400).json({ error: "Indica el número de factura." });
+  if (movement.kind === "invoice") {
+    movement.invoiceNumber = String(movement.invoiceNumber || movement.receiptNumber).trim();
+    movement.receiptNumber = movement.invoiceNumber;
+    movement.paymentStatus = movement.paymentStatus || "pending";
+    const duplicateInvoice = (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 LIMIT 1", [movement.invoiceNumber])).rows[0];
+    if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." });
+  }
   if (!movement.id) {
     const year = new Date().getFullYear();
     const rows = (await pool.query("SELECT id FROM financial_movements WHERE id LIKE $1", [`MOV-${year}-%`])).rows;
@@ -652,6 +660,13 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
+  if (movement.kind === "invoice") {
+    movement.invoiceNumber = String(movement.invoiceNumber || movement.receiptNumber || "").trim();
+    if (!movement.invoiceNumber) return res.status(400).json({ error: "Indica el número de factura." });
+    movement.receiptNumber = movement.invoiceNumber;
+    const duplicateInvoice = (await pool.query("SELECT id FROM financial_movements WHERE id<>$2 AND data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 LIMIT 1", [movement.invoiceNumber, req.params.id])).rows[0];
+    if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." });
+  }
   movement.updatedBy = req.user.id; movement.updatedByName = req.user.name; movement.updatedAt = new Date().toISOString();
   await pool.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, movement]);
   res.json(movement);
