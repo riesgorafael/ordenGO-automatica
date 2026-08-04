@@ -54,7 +54,6 @@ function drawServiceSummaryPage(doc, order, valued = false) {
   doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
   doc.text(`Orden de trabajo: ${order.id || "—"}`, W - M, 23, { align: "right" });
   doc.text(`Fecha: ${formatDate(order.date)}`, W - M, 28, { align: "right" });
-  doc.text(`Responsable: ${order.tech || "—"}`, W - M, 33, { align: "right" });
   doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
 
   const heading = (text, y) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, y); };
@@ -176,7 +175,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   para("Trabajo realizado:", order.solucion);
   y += 2;
 
-  if (technical.reportedAt || technical.arrivalAt || technical.startedAt || technical.completedAt || technical.downtimeMinutes) {
+  if (internal && (technical.reportedAt || technical.arrivalAt || technical.startedAt || technical.completedAt || technical.downtimeMinutes)) {
     section("Cronología del servicio");
     const duration = (milliseconds) => { const minutes = Math.max(0, Math.round(milliseconds / 60000)); return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`; };
     const sessions = Array.isArray(technical.workSessions) ? technical.workSessions : [];
@@ -186,7 +185,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
     if (technical.reportedAt && technical.arrivalAt && new Date(technical.arrivalAt) - new Date(technical.reportedAt) >= 60000) para("Tiempo de respuesta:", duration(new Date(technical.arrivalAt) - new Date(technical.reportedAt)));
     if (effectiveMs) para("Tiempo efectivo de intervención:", duration(effectiveMs));
     if (technical.arrivalAt && technical.completedAt) para("Tiempo total en planta:", duration(new Date(technical.completedAt) - new Date(technical.arrivalAt)));
-    if (internal && technical.billableWaitMinutes) para("Espera por condiciones del sitio:", `${technical.billableWaitMinutes} minutos${technical.billableWaitReason ? ` - ${technical.billableWaitReason}` : ""}`);
+    if (technical.billableWaitMinutes) para("Espera por condiciones del sitio:", `${technical.billableWaitMinutes} minutos${technical.billableWaitReason ? ` - ${technical.billableWaitReason}` : ""}`);
     if (technical.downtimeMinutes) para("Parada productiva informada:", `${technical.downtimeMinutes} minutos`);
   }
 

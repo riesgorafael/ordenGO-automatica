@@ -267,7 +267,7 @@ async function notify(userId, text, link) {
   try { await pool.query("INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4)", [id, userId, text, link || null]); } catch {}
 }
 function stripMoney(o) {
-  const x = { ...o }; delete x.rate; delete x.laborBillable; delete x.laborCost;
+  const x = { ...o }; delete x.rate; delete x.laborBillable; delete x.laborCost; delete x.billableHours;
   // El técnico no ve montos ni si la OT fue facturada
   if (x.status === "Facturada") x.status = "Aprobada";
   if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; delete y.cost; return y; });
