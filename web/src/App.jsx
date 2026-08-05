@@ -671,30 +671,40 @@ export default function App() {
   if (!isOffice && module === "orders" && oView === "new")
     return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
+  // Los módulos se agrupan por área de trabajo: Inicio/Órdenes/Proyectos quedan
+  // como núcleo operativo sin agrupar (uso diario, incluye técnicos de campo);
+  // el resto se organiza en Comercial, Compras y Administración para reflejar
+  // el flujo de negocio (oportunidad → compra/ejecución → cierre financiero).
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
   ] : [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
-    ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText }] : []),
-    ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
-    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2 }] : []),
-    ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart }] : []),
-    ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock }] : []),
-    ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users }] : []),
-    ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2 }] : []),
+    ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Comercial" }] : []),
+    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Comercial" }] : []),
+    ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Compras" }] : []),
+    ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
+    ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Administración" }] : []),
+    ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Administración" }] : []),
+    ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2, group: "Administración" }] : []),
   ];
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
   const activeModule = allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio");
-  // En teléfono priorizamos las áreas operativas de uso diario. Presupuestos,
-  // Finanzas y administración quedan agrupados en “Más”; además de evitar
-  // etiquetas superpuestas, reduce cambios de contexto accidentales.
+  // En teléfono priorizamos las áreas operativas de uso diario. El resto
+  // queda agrupado en “Más” por área (Comercial, Compras, Administración);
+  // además de evitar etiquetas superpuestas, reduce cambios de contexto accidentales.
   const mobilePrimaryIds = isMgr ? ["inicio", "panel", "orders", "projects"] : modTabs.map((tab) => tab.id).slice(0, 4);
   const mobilePrimaryTabs = mobilePrimaryIds.map((id) => modTabs.find((tab) => tab.id === id)).filter(Boolean);
   const mobileExtraTabs = modTabs.filter((tab) => !mobilePrimaryIds.includes(tab.id));
+  const mobileExtraGroups = mobileExtraTabs.reduce((groups, tab) => {
+    const name = tab.group || "General";
+    const existing = groups.find((g) => g.name === name);
+    if (existing) existing.tabs.push(tab); else groups.push({ name, tabs: [tab] });
+    return groups;
+  }, []);
   const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
   const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
 
@@ -739,8 +749,11 @@ export default function App() {
         </div>
         <div className={`nav-tabs-scroll mx-auto max-w-6xl overflow-x-auto px-2 ${tvMode ? "hidden" : "hidden sm:block"}`}>
           <nav className="flex gap-0.5 pb-1">
-            {modTabs.map(({ id, label, icon: Icon, badge }) => (
-              <button key={id} onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
+            {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => (
+              <React.Fragment key={id}>
+                {group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />}
+                <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
+              </React.Fragment>
             ))}
           </nav>
         </div>
@@ -837,13 +850,20 @@ export default function App() {
               <div><h2 className="text-base font-semibold text-slate-900">Más opciones</h2><p className="text-xs text-slate-500">Gestión y administración</p></div>
               <button onClick={() => setMobileMoreOpen(false)} aria-label="Cerrar más opciones" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
-            <nav className="grid grid-cols-1 gap-2" aria-label="Más opciones de navegación">
-              {mobileExtraTabs.map(({ id, label, icon: Icon, badge }) => (
-                <button key={id} onClick={() => { navigateModule(id); setMobileMoreOpen(false); }} className={`flex min-h-14 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left ${activeModule === id ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
-                  <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${activeModule === id ? "bg-brand-100" : "bg-slate-100"}`}><Icon className="h-5 w-5" /></span>
-                  <span className="min-w-0 flex-1 text-sm font-medium">{label}</span>
-                  {badge > 0 && <span className="grid h-6 min-w-6 place-items-center rounded-full bg-rose-500 px-1.5 text-xs font-bold text-white">{badge}</span>}
-                </button>
+            <nav className="space-y-4" aria-label="Más opciones de navegación">
+              {mobileExtraGroups.map((groupData) => (
+                <div key={groupData.name}>
+                  {groupData.name !== "General" && <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{groupData.name}</p>}
+                  <div className="grid grid-cols-1 gap-2">
+                    {groupData.tabs.map(({ id, label, icon: Icon, badge }) => (
+                      <button key={id} onClick={() => { navigateModule(id); setMobileMoreOpen(false); }} className={`flex min-h-14 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left ${activeModule === id ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${activeModule === id ? "bg-brand-100" : "bg-slate-100"}`}><Icon className="h-5 w-5" /></span>
+                        <span className="min-w-0 flex-1 text-sm font-medium">{label}</span>
+                        {badge > 0 && <span className="grid h-6 min-w-6 place-items-center rounded-full bg-rose-500 px-1.5 text-xs font-bold text-white">{badge}</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </nav>
           </div>
@@ -1369,7 +1389,7 @@ function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOr
 }
 
 function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }) {
-  const [form, setForm] = useState(() => ({ supplierId: "", projectId: "", stage: "Borrador", dueDate: "", supplierInvoiceNumber: "", notes: "", ...(po || {}), items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map((item) => ({ ...item })) }));
+  const [form, setForm] = useState(() => ({ supplierId: "", projectId: "", stage: "Borrador", dueDate: "", supplierQuoteNumber: "", supplierInvoiceNumber: "", notes: "", ...(po || {}), items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map((item) => ({ ...item })) }));
   const [saving, setSaving] = useState(false);
   const [rateLoading, setRateLoading] = useState(false);
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
@@ -1392,7 +1412,7 @@ function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }
       <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5"><div><h2 id="po-dialog-title" className="text-lg font-semibold text-slate-900">{po?.id ? `Editar ${po.number || po.id}` : "Nueva orden de compra"}</h2><p className="text-xs text-slate-500">Compra a proveedor con moneda e IVA por ítem</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         {suppliers.length === 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Todavía no hay proveedores cargados. Creá uno en la pestaña “Proveedores” antes de emitir la orden.</div>}
-        <Section title="Proveedor y seguimiento"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="N.º de orden"><input value={form.number || ""} onChange={(event) => set("number", event.target.value)} placeholder="Automático al guardar" className="u-input" /></L><L label="Proveedor *"><select value={form.supplierId} onChange={(event) => set("supplierId", event.target.value)} className="u-input"><option value="">Seleccionar proveedor</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></L><L label="Proyecto"><select value={form.projectId || ""} onChange={(event) => set("projectId", event.target.value)} className="u-input"><option value="">General / sin proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Estado"><select value={form.stage} onChange={(event) => set("stage", event.target.value)} className="u-input">{PO_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></L><L label="Fecha de entrega estimada"><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} className="u-input" /></L><L label={form.stage === "Recibida" ? "N.º de factura del proveedor *" : "N.º de factura del proveedor"}><input value={form.supplierInvoiceNumber || ""} onChange={(event) => set("supplierInvoiceNumber", event.target.value)} placeholder="Ej. 0001-00001234" className="u-input" /></L></div><L label="Notas"><textarea rows={2} value={form.notes || ""} onChange={(event) => set("notes", event.target.value)} placeholder="Condiciones de entrega, referencia interna, etc." className="u-input resize-none" /></L></Section>
+        <Section title="Proveedor y seguimiento"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="N.º de orden"><input value={form.number || ""} onChange={(event) => set("number", event.target.value)} placeholder="Automático al guardar" className="u-input" /></L><L label="Proveedor *"><select value={form.supplierId} onChange={(event) => set("supplierId", event.target.value)} className="u-input"><option value="">Seleccionar proveedor</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></L><L label="Proyecto"><select value={form.projectId || ""} onChange={(event) => set("projectId", event.target.value)} className="u-input"><option value="">General / sin proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Estado"><select value={form.stage} onChange={(event) => set("stage", event.target.value)} className="u-input">{PO_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></L><L label="Fecha de entrega estimada"><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} className="u-input" /></L><L label="N.º de presupuesto del proveedor" help="El número de presupuesto/cotización que el proveedor te compartió al solicitarle los materiales o servicios."><input value={form.supplierQuoteNumber || ""} onChange={(event) => set("supplierQuoteNumber", event.target.value)} placeholder="Ej. 100600040730" className="u-input" /></L><L label={form.stage === "Recibida" ? "N.º de factura del proveedor *" : "N.º de factura del proveedor"} help="Se completa cuando el proveedor envía la factura correspondiente a esta orden."><input value={form.supplierInvoiceNumber || ""} onChange={(event) => set("supplierInvoiceNumber", event.target.value)} placeholder="Ej. 0001-00001234" className="u-input" /></L></div><L label="Notas"><textarea rows={2} value={form.notes || ""} onChange={(event) => set("notes", event.target.value)} placeholder="Condiciones de entrega, referencia interna, etc." className="u-input resize-none" /></L></Section>
 
         <Section title="Ítems">
           <div className="mb-1 hidden grid-cols-[minmax(0,1fr)_4rem_5rem_6rem_5rem_6rem_auto] gap-2 px-2 text-[9px] font-semibold uppercase tracking-wide text-slate-400 sm:grid"><span>Descripción</span><span>Cant.</span><span>Unidad</span><span>Precio unit.</span><span>Moneda</span><span>IVA %</span><span /></div>
@@ -1431,7 +1451,7 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
     {poTab === "suppliers" ? <Suppliers suppliers={suppliers} purchaseOrders={purchaseOrders} onAdd={onAddSupplier} onPatch={onPatchSupplier} onRemove={onRemoveSupplier} onErr={onErr} /> : <>
       <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Pendiente de recibir" value={money(pendingTotal)} icon={Truck} tint="text-brand-600" description="Suma del total con IVA de las órdenes de compra en Borrador, Enviada o Confirmada." /><Metric label="Recibido (histórico)" value={money(receivedTotal)} icon={CheckCircle2} tint="text-emerald-600" description="Suma del total con IVA de las órdenes marcadas como Recibidas." /><Metric label="Cuentas por pagar de OC" value={payableCount} icon={AlertTriangle} tint={payableCount ? "text-amber-600" : "text-emerald-600"} description="Movimientos de Finanzas generados por órdenes de compra recibidas que siguen pendientes de pago." /><Metric label="Proveedores activos" value={suppliers.filter((s) => s.active !== false).length} icon={Building2} tint="text-slate-600" description="Cantidad de proveedores marcados como activos." /></div>
       <div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar orden, proveedor o factura…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={stage} onChange={(event) => setStage(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="Todos">Todos los estados</option>{PO_STAGES.map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setEditingPo(null); setEditorOpen(true); }} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Orden de compra</button></div>
-      {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><ShoppingCart className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin órdenes de compra para mostrar</h3><p className="mt-1 text-xs text-slate-400">Registrá una compra a proveedor para empezar.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((po) => <Box key={po.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{po.number || po.id}</span><Chip className={`${PO_STAGE_STYLE[po.stage]} ring-1`}>{po.stage}</Chip>{po.supplierInvoiceNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">Fact. {po.supplierInvoiceNumber}</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{po.supplierName}</h3><p className="mt-0.5 text-xs text-slate-500">{(po.items || []).length} ítem(s){po.dueDate ? ` · Entrega ${budgetDate(po.dueDate)}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => purchaseOrderReportPDF(po, suppliers.find((s) => s.id === po.supplierId), projects.find((p) => p.id === po.projectId))} title="Descargar PDF" aria-label="Descargar PDF de la orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingPo(po); setEditorOpen(true); }} title="Editar orden de compra" aria-label="Editar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => setPendingDelete(po)} title="Eliminar orden de compra" aria-label="Eliminar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs"><div><span className="block text-[10px] text-slate-400">Neto</span><b>{money(po.netAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">IVA</span><b>{money(po.vatAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">Total</span><b>{money(po.grossAmountUsd)}</b></div></div>{po.stage === "Recibida" && <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 border-t border-slate-100 pt-3"><Link2 className="h-3.5 w-3.5" /> Cuenta por pagar generada en Finanzas</div>}</Box>)}</div>}
+      {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><ShoppingCart className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin órdenes de compra para mostrar</h3><p className="mt-1 text-xs text-slate-400">Registrá una compra a proveedor para empezar.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((po) => <Box key={po.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{po.number || po.id}</span><Chip className={`${PO_STAGE_STYLE[po.stage]} ring-1`}>{po.stage}</Chip>{po.supplierQuoteNumber && <Chip className="bg-violet-50 text-violet-700 ring-violet-200">Presup. {po.supplierQuoteNumber}</Chip>}{po.supplierInvoiceNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">Fact. {po.supplierInvoiceNumber}</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{po.supplierName}</h3><p className="mt-0.5 text-xs text-slate-500">{(po.items || []).length} ítem(s){po.dueDate ? ` · Entrega ${budgetDate(po.dueDate)}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => purchaseOrderReportPDF(po, suppliers.find((s) => s.id === po.supplierId), projects.find((p) => p.id === po.projectId))} title="Descargar PDF" aria-label="Descargar PDF de la orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingPo(po); setEditorOpen(true); }} title="Editar orden de compra" aria-label="Editar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => setPendingDelete(po)} title="Eliminar orden de compra" aria-label="Eliminar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs"><div><span className="block text-[10px] text-slate-400">Neto</span><b>{money(po.netAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">IVA</span><b>{money(po.vatAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">Total</span><b>{money(po.grossAmountUsd)}</b></div></div>{po.stage === "Recibida" && <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 border-t border-slate-100 pt-3"><Link2 className="h-3.5 w-3.5" /> Cuenta por pagar generada en Finanzas</div>}</Box>)}</div>}
     </>}
     {editorOpen && <PurchaseOrderEditor po={editingPo} suppliers={suppliers} projects={projects} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingPo?.id))} onErr={onErr} />}
     {pendingDelete && <ConfirmDialog title="Eliminar orden de compra" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”. ${pendingDelete.stage === "Recibida" ? "La cuenta por pagar asociada en Finanzas también se eliminará." : "No tiene movimientos financieros asociados."}`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
@@ -2608,14 +2628,16 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
 }
 
 /* ===================================== CLIENTES ===================================== */
+const IVA_CONDITIONS = ["IVA Responsable Inscripto", "Responsable Monotributo", "IVA Sujeto Exento", "Consumidor Final", "IVA No Responsable", "Sujeto No Categorizado"];
+const SALE_CONDITIONS = ["Contado", "Transferencia Bancaria", "Cheque", "eCheq", "Cuenta Corriente", "Tarjeta de Crédito", "Otro"];
 function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", site: "", code: "" });
+  const [nf, setNf] = useState({ name: "", cuit: "", site: "", code: "" });
   const [editingClient, setEditingClient] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const suggest = (name) => (name || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
   const add = async () => {
     if (!nf.name.trim()) return;
-    try { await onAdd({ name: nf.name.trim(), site: nf.site.trim(), code: nf.code.trim().toUpperCase() || undefined }); setNf({ name: "", site: "", code: "" }); }
+    try { await onAdd({ name: nf.name.trim(), cuit: nf.cuit.trim(), site: nf.site.trim(), code: nf.code.trim().toUpperCase() || undefined }); setNf({ name: "", cuit: "", site: "", code: "" }); }
     catch (e) { onErr(e); }
   };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
@@ -2627,7 +2649,7 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
           {clients.map((c) => { const ords = orders.filter((o) => (o.client || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()).length; return (
             <div key={c.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
               <span className="grid h-9 min-w-[3rem] place-items-center rounded-md bg-slate-800 px-2 font-mono text-xs font-bold text-white" title="Código del cliente">{c.code || "—"}</span>
-              <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{c.name}</div><div className="break-words text-xs text-slate-500">{c.site || "—"} · {ords} orden(es)</div></div>
+              <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{c.name}</div><div className="break-words text-xs text-slate-500">{c.cuit ? `CUIT ${c.cuit} · ` : ""}{c.site || "Sin sitio"} · {ords} orden(es){c.ivaCondition ? ` · ${c.ivaCondition}` : ""}</div></div>
               <div className="flex w-full items-center justify-end gap-1 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
                 <button onClick={() => setEditingClient(c)} title="Editar cliente" className="inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
                 <button onClick={() => setPendingDelete(c)} title="Eliminar" aria-label="Eliminar cliente" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
@@ -2638,11 +2660,12 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
       </Panel></div>
       <div><Panel title="Nuevo cliente">
         <div className="space-y-2">
-          <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value, code: nf.code || suggest(e.target.value) })} placeholder="Razón social" className="u-input" /></L>
+          <L label="Apellido y Nombre / Razón Social"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value, code: nf.code || suggest(e.target.value) })} placeholder="Razón social" className="u-input" /></L>
+          <L label="CUIT"><input value={nf.cuit} onChange={(e) => setNf({ ...nf, cuit: e.target.value })} placeholder="20-12345678-9" className="u-input" /></L>
           <L label="Sitio / ubicación"><input value={nf.site} onChange={(e) => setNf({ ...nf, site: e.target.value })} placeholder="Planta, línea, sala…" className="u-input" /></L>
           <L label="Código (para el N° de OT)"><input value={nf.code} onChange={(e) => setNf({ ...nf, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} placeholder="Ej. LDV" className="u-input font-mono" /></L>
           <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar cliente</button>
-          <p className="text-[11px] text-slate-400">El código identifica al cliente en el número de orden (ej. <span className="font-mono">OT-LDV-2026-001</span>). Si lo dejas vacío, se genera automáticamente. Los nombres duplicados se unifican.</p>
+          <p className="text-[11px] text-slate-400">El código identifica al cliente en el número de orden (ej. <span className="font-mono">OT-LDV-2026-001</span>). Si lo dejas vacío, se genera automáticamente. Los nombres duplicados se unifican. Condición frente al IVA, domicilio comercial y condición de venta se completan al editar el cliente.</p>
         </div>
       </Panel></div>
     </div>
@@ -2652,18 +2675,19 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
 }
 
 function ClientEditor({ value, onClose, onSave }) {
-  const [form, setForm] = useState({ name: value.name || "", site: value.site || "", code: value.code || "" });
+  const [form, setForm] = useState({ name: value.name || "", cuit: value.cuit || "", site: value.site || "", code: value.code || "", ivaCondition: value.ivaCondition || "", address: value.address || "", locality: value.locality || "", phone: value.phone || "", email: value.email || "", contactName: value.contactName || "", saleCondition: value.saleCondition || "" });
   const mouseDownOnBackdrop = useRef(false);
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="u-input" /></L><L label="Sitio / ubicación"><input value={form.site} onChange={(e) => setForm({ ...form, site: e.target.value })} className="u-input" /></L><L label="Código"><input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" /></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.code.trim()} onClick={() => onSave({ name: form.name.trim(), site: form.site.trim(), code: form.code.trim() })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
+  const set = (field, val) => setForm((current) => ({ ...current, [field]: val }));
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="max-h-[65vh] space-y-3 overflow-y-auto pr-0.5"><L label="Apellido y Nombre / Razón Social"><input autoFocus value={form.name} onChange={(e) => set("name", e.target.value)} className="u-input" /></L><L label="CUIT"><input value={form.cuit} onChange={(e) => set("cuit", e.target.value)} placeholder="20-12345678-9" className="u-input" /></L><L label="Condición frente al IVA"><select value={form.ivaCondition} onChange={(e) => set("ivaCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{IVA_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L><L label="Domicilio comercial"><input value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="Calle y número" className="u-input" /></L><L label="Localidad"><input value={form.locality} onChange={(e) => set("locality", e.target.value)} placeholder="Ciudad, provincia" className="u-input" /></L><L label="Condición de venta"><select value={form.saleCondition} onChange={(e) => set("saleCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{SALE_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L><L label="Atención (contacto)"><input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="Nombre de la persona de contacto" className="u-input" /></L><div className="grid grid-cols-2 gap-2"><L label="Teléfono"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="u-input" /></L><L label="Email"><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="u-input" /></L></div><L label="Sitio / ubicación" help="Planta o sede donde se realizan las intervenciones técnicas (puede diferir del domicilio comercial)."><input value={form.site} onChange={(e) => set("site", e.target.value)} className="u-input" /></L><L label="Código"><input value={form.code} onChange={(e) => set("code", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} className="u-input font-mono" /></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.code.trim()} onClick={() => onSave({ name: form.name.trim(), cuit: form.cuit.trim(), site: form.site.trim(), code: form.code.trim(), ivaCondition: form.ivaCondition, address: form.address.trim(), locality: form.locality.trim(), phone: form.phone.trim(), email: form.email.trim(), contactName: form.contactName.trim(), saleCondition: form.saleCondition })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
 }
 
 function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", cuit: "", contact: "", paymentTermsDays: 30 });
+  const [nf, setNf] = useState({ name: "", cuit: "", contactName: "", paymentTermsDays: 30 });
   const [editingSupplier, setEditingSupplier] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const add = async () => {
     if (!nf.name.trim()) return;
-    try { await onAdd({ name: nf.name.trim(), cuit: nf.cuit.trim(), contact: nf.contact.trim(), paymentTermsDays: Number(nf.paymentTermsDays) || 0 }); setNf({ name: "", cuit: "", contact: "", paymentTermsDays: 30 }); }
+    try { await onAdd({ name: nf.name.trim(), cuit: nf.cuit.trim(), contactName: nf.contactName.trim(), paymentTermsDays: Number(nf.paymentTermsDays) || 0 }); setNf({ name: "", cuit: "", contactName: "", paymentTermsDays: 30 }); }
     catch (e) { onErr(e); }
   };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
@@ -2675,7 +2699,7 @@ function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr 
           {suppliers.map((s) => { const ocs = purchaseOrders.filter((po) => po.supplierId === s.id).length; return (
             <div key={s.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${s.active === false ? "border-slate-100 bg-slate-50 opacity-70" : "border-slate-200"}`}>
               <span className="grid h-9 min-w-[3rem] place-items-center rounded-md bg-slate-800 px-2 font-mono text-xs font-bold text-white" title="Código del proveedor">{s.code || "—"}</span>
-              <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{s.name}{s.active === false && <span className="ml-1.5 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">Inactivo</span>}</div><div className="break-words text-xs text-slate-500">{s.cuit || "Sin CUIT"} · {s.contact || "Sin contacto"} · {s.paymentTermsDays || 0} días de pago · {ocs} OC</div></div>
+              <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{s.name}{s.active === false && <span className="ml-1.5 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">Inactivo</span>}</div><div className="break-words text-xs text-slate-500">{s.cuit || "Sin CUIT"} · {s.contactName || s.contact || "Sin contacto"} · {s.paymentTermsDays || 0} días de pago · {ocs} OC{s.ivaCondition ? ` · ${s.ivaCondition}` : ""}{s.locality ? ` · ${s.locality}` : ""}</div></div>
               <div className="flex w-full items-center justify-end gap-1 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
                 <button onClick={() => setEditingSupplier(s)} title="Editar proveedor" className="inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
                 <button onClick={() => setPendingDelete(s)} title="Eliminar" aria-label="Eliminar proveedor" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
@@ -2688,7 +2712,7 @@ function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr 
         <div className="space-y-2">
           <L label="Razón social"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre del proveedor" className="u-input" /></L>
           <L label="CUIT"><input value={nf.cuit} onChange={(e) => setNf({ ...nf, cuit: e.target.value })} placeholder="30-12345678-9" className="u-input" /></L>
-          <L label="Contacto"><input value={nf.contact} onChange={(e) => setNf({ ...nf, contact: e.target.value })} placeholder="Nombre, teléfono o correo" className="u-input" /></L>
+          <L label="Atención (contacto)"><input value={nf.contactName} onChange={(e) => setNf({ ...nf, contactName: e.target.value })} placeholder="Nombre de la persona de contacto" className="u-input" /></L>
           <L label="Condición de pago (días)"><input type="number" min={0} value={nf.paymentTermsDays} onChange={(e) => setNf({ ...nf, paymentTermsDays: e.target.value })} className="u-input" /></L>
           <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar proveedor</button>
           <p className="text-[11px] text-slate-400">El código se genera automáticamente a partir del nombre y se usa en el número de orden de compra. Los nombres duplicados se unifican.</p>
@@ -2701,22 +2725,26 @@ function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr 
 }
 
 function SupplierEditor({ value, onClose, onSave }) {
-  const [form, setForm] = useState({ name: value.name || "", code: value.code || "", cuit: value.cuit || "", address: value.address || "", contact: value.contact || "", paymentTermsDays: value.paymentTermsDays ?? 30, active: value.active !== false });
+  const [form, setForm] = useState({ name: value.name || "", code: value.code || "", cuit: value.cuit || "", address: value.address || "", locality: value.locality || "", phone: value.phone || "", email: value.email || "", contactName: value.contactName || value.contact || "", ivaCondition: value.ivaCondition || "", saleCondition: value.saleCondition || "", paymentTermsDays: value.paymentTermsDays ?? 30, active: value.active !== false });
   const mouseDownOnBackdrop = useRef(false);
   const set = (field, val) => setForm((current) => ({ ...current, [field]: val }));
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
     <div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
       <div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar proveedor</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras órdenes de compra.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-      <div className="space-y-3">
-        <L label="Razón social"><input autoFocus value={form.name} onChange={(e) => set("name", e.target.value)} className="u-input" /></L>
+      <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-0.5">
+        <L label="Apellido y Nombre / Razón Social"><input autoFocus value={form.name} onChange={(e) => set("name", e.target.value)} className="u-input" /></L>
         <L label="Código"><input value={form.code} onChange={(e) => set("code", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} className="u-input font-mono" /></L>
         <L label="CUIT"><input value={form.cuit} onChange={(e) => set("cuit", e.target.value)} className="u-input" /></L>
-        <L label="Dirección"><input value={form.address} onChange={(e) => set("address", e.target.value)} className="u-input" /></L>
-        <L label="Contacto"><input value={form.contact} onChange={(e) => set("contact", e.target.value)} className="u-input" /></L>
+        <L label="Condición frente al IVA"><select value={form.ivaCondition} onChange={(e) => set("ivaCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{IVA_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L>
+        <L label="Dirección"><input value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="Calle y número" className="u-input" /></L>
+        <L label="Localidad"><input value={form.locality} onChange={(e) => set("locality", e.target.value)} placeholder="Ciudad, provincia" className="u-input" /></L>
+        <L label="Condición de venta"><select value={form.saleCondition} onChange={(e) => set("saleCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{SALE_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L>
+        <L label="Atención (contacto)"><input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="Nombre de la persona de contacto" className="u-input" /></L>
+        <div className="grid grid-cols-2 gap-2"><L label="Teléfono"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="u-input" /></L><L label="Email"><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="u-input" /></L></div>
         <L label="Condición de pago (días)"><input type="number" min={0} value={form.paymentTermsDays} onChange={(e) => set("paymentTermsDays", e.target.value)} className="u-input" /></L>
         <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)} /> Proveedor activo</label>
       </div>
-      <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim()} onClick={() => onSave({ name: form.name.trim(), code: form.code.trim(), cuit: form.cuit.trim(), address: form.address.trim(), contact: form.contact.trim(), paymentTermsDays: Number(form.paymentTermsDays) || 0, active: form.active })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div>
+      <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim()} onClick={() => onSave({ name: form.name.trim(), code: form.code.trim(), cuit: form.cuit.trim(), address: form.address.trim(), locality: form.locality.trim(), phone: form.phone.trim(), email: form.email.trim(), contactName: form.contactName.trim(), ivaCondition: form.ivaCondition, saleCondition: form.saleCondition, paymentTermsDays: Number(form.paymentTermsDays) || 0, active: form.active })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div>
     </div>
   </div>;
 }

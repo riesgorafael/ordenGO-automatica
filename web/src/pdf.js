@@ -423,6 +423,8 @@ export function monthlyReportPDF(month, monthLabel, rows, sum) {
 
 const nativeMoney = (amount, currency) => `${currency === "USD" ? "USD " : currency === "ARS" ? "ARS " : "EUR "}${(Number(amount) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const CURRENCY_NAME = { USD: "DÓLARES", ARS: "PESOS ARGENTINOS", EUR: "EUROS" };
+
 export function purchaseOrderReportPDF(po, supplier, project) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
@@ -441,28 +443,29 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
 
   const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
-  const field = (label, value, x, atY, width = 70) => {
+  const field = (label, value, x, atY, width = 60) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, atY);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
     const lines = doc.splitTextToSize(String(value || "—"), width);
-    doc.text(lines.slice(0, 2), x + 31, atY);
+    doc.text(lines.slice(0, 2), x + 28, atY);
   };
 
-  heading("Proveedor", 58);
-  field("Razón social", po.supplierName, M, 66, 62); field("Estado", po.stage, 110, 66, 52);
-  field("CUIT", supplier?.cuit, M, 73, 62); field("Entrega estimada", formatDate(po.dueDate), 110, 73, 52);
-  field("Contacto", supplier?.contact, M, 80, 62); field("Factura proveedor", po.supplierInvoiceNumber, 110, 80, 52);
-  field("Cond. de pago", supplier?.paymentTermsDays !== undefined ? `${supplier.paymentTermsDays} días` : "", M, 87, 62); field("Proyecto", project ? `${project.key} · ${project.name}` : "General", 110, 87, 52);
+  heading("DATOS PROVEEDOR", 58);
+  field("R. Social", po.supplierName, M, 66, 58); field("CUIT", supplier?.cuit, 110, 66, 53);
+  field("Dirección", supplier?.address, M, 73, 58); field("Atención", supplier?.contactName || supplier?.contact, 110, 73, 53);
+  field("Localidad", supplier?.locality, M, 80, 58); field("Condición", supplier?.ivaCondition, 110, 80, 53);
+  field("Teléfono", supplier?.phone, M, 87, 58); field("Presup. N.º", po.supplierQuoteNumber, 110, 87, 53);
+  field("Email", supplier?.email, M, 94, 58);
 
-  y = 100;
-  heading("Ítems", y); y += 8;
+  y = 106;
+  heading("DETALLE", y); y += 8;
   const cols = () => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
     doc.text("Descripción", M, y);
-    doc.text("Cant.", M + 92, y, { align: "right" });
-    doc.text("Precio unit.", M + 122, y, { align: "right" });
-    doc.text("IVA", M + 140, y, { align: "right" });
-    doc.text("Total (USD)", W - M, y, { align: "right" });
+    doc.text("Cantidad", M + 88, y, { align: "right" });
+    doc.text("P. Unitario", M + 118, y, { align: "right" });
+    doc.text("IVA %", M + 136, y, { align: "right" });
+    doc.text("P. Total", W - M, y, { align: "right" });
     y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
   };
   drawHead = cols; cols();
@@ -471,21 +474,25 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   const items = po.items || [];
   items.forEach((item) => {
     brk(8);
-    const desc = doc.splitTextToSize(String(item.description || "—"), 86);
+    const desc = doc.splitTextToSize(String(item.description || "—"), 82);
     doc.text(desc[0] + (desc.length > 1 ? "…" : ""), M, y);
-    doc.text(`${item.qty || 0} ${item.unit || "u"}`, M + 92, y, { align: "right" });
-    doc.text(nativeMoney(item.unitPrice, item.currency), M + 122, y, { align: "right" });
-    doc.text(`${item.vatRate || 0}%`, M + 140, y, { align: "right" });
-    doc.text(money(item.grossAmountUsd), W - M, y, { align: "right" });
+    doc.text(String(item.qty || 0), M + 88, y, { align: "right" });
+    doc.text(nativeMoney(item.unitPrice, item.currency), M + 118, y, { align: "right" });
+    doc.text(`${item.vatRate || 0}%`, M + 136, y, { align: "right" });
+    doc.text(nativeMoney(item.grossAmount, item.currency), W - M, y, { align: "right" });
     y += 5.5;
   });
 
-  brk(20); doc.setDrawColor(148, 163, 184); doc.line(M, y, W - M, y); y += 5.5;
+  brk(28); doc.setDrawColor(148, 163, 184); doc.line(M, y, W - M, y); y += 6;
+  const currencies = [...new Set(items.map((item) => item.currency || "USD"))];
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
-  doc.text("Neto", M + 140, y, { align: "right" }); doc.text(money(po.netAmountUsd), W - M, y, { align: "right" }); y += 5.5;
-  doc.text("IVA", M + 140, y, { align: "right" }); doc.text(money(po.vatAmountUsd), W - M, y, { align: "right" }); y += 6;
+  if (currencies.length === 1) doc.text(`Moneda: ${CURRENCY_NAME[currencies[0]] || currencies[0]}`, M, y);
+  doc.text("Neto:", M + 118, y, { align: "right" }); doc.text(money(po.netAmountUsd), W - M, y, { align: "right" }); y += 5.5;
+  doc.text("IVA:", M + 118, y, { align: "right" }); doc.text(money(po.vatAmountUsd), W - M, y, { align: "right" }); y += 4;
+
+  y += 3; doc.setFillColor(241, 245, 249); doc.rect(M, y - 5, W - 2 * M, 9, "F");
   doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(15, 23, 42);
-  doc.text("TOTAL", M + 140, y, { align: "right" }); doc.text(money(po.grossAmountUsd), W - M, y, { align: "right" }); y += 10;
+  doc.text("Total", M + 4, y + 1); doc.text(money(po.grossAmountUsd), W - M - 4, y + 1, { align: "right" }); y += 12;
 
   if (po.notes) {
     brk(20); heading("Notas", y); y += 7;

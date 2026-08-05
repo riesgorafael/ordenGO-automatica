@@ -365,6 +365,8 @@ async function uniqueClientCode(base, excludeId) {
   for (let i = 1; i < 1000; i++) { const cand = (base.slice(0, 2) + i); if (!taken.has(cand)) return cand; }
   return base + Date.now().toString().slice(-3);
 }
+const IVA_CONDITIONS = ["IVA Responsable Inscripto", "Responsable Monotributo", "IVA Sujeto Exento", "Consumidor Final", "IVA No Responsable", "Sujeto No Categorizado"];
+const SALE_CONDITIONS = ["Contado", "Transferencia Bancaria", "Cheque", "eCheq", "Cuenta Corriente", "Tarjeta de Crédito", "Otro"];
 function codeFromSupplierName(name) {
   return (String(name || "PRV").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3)) || "PRV";
 }
@@ -791,6 +793,7 @@ const normalizePurchaseOrder = (input, previous = {}) => {
   po.supplierName = String(po.supplierName || "").trim();
   po.projectId = String(po.projectId || "").trim();
   po.supplierInvoiceNumber = String(po.supplierInvoiceNumber || "").trim().slice(0, 80);
+  po.supplierQuoteNumber = String(po.supplierQuoteNumber || "").trim().slice(0, 80);
   po.dueDate = String(po.dueDate || "").slice(0, 10);
   po.notes = String(po.notes || "").trim().slice(0, 1000);
   po.items = Array.isArray(po.items) ? po.items.map(normalizePurchaseOrderItem).filter((item) => item.description && item.qty > 0) : [];
@@ -839,7 +842,13 @@ app.post("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, re
   if (!s.id) s.id = "sup" + Date.now();
   s.cuit = String(s.cuit || "").trim().slice(0, 20);
   s.address = String(s.address || "").trim().slice(0, 200);
+  s.locality = String(s.locality || "").trim().slice(0, 120);
+  s.phone = String(s.phone || "").trim().slice(0, 40);
+  s.email = String(s.email || "").trim().slice(0, 120);
+  s.contactName = String(s.contactName || s.contact || "").trim().slice(0, 120);
   s.contact = String(s.contact || "").trim().slice(0, 120);
+  s.ivaCondition = IVA_CONDITIONS.includes(s.ivaCondition) ? s.ivaCondition : "";
+  s.saleCondition = SALE_CONDITIONS.includes(s.saleCondition) ? s.saleCondition : "";
   s.paymentTermsDays = Math.max(0, Math.round(Number(s.paymentTermsDays) || 0));
   s.active = s.active !== false;
   if (s.code) {
@@ -864,6 +873,14 @@ app.patch("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (re
   merged.name = String(merged.name || "").trim();
   if (!merged.name) return res.status(400).json({ error: "El nombre del proveedor es obligatorio" });
   if (patch.paymentTermsDays !== undefined) merged.paymentTermsDays = Math.max(0, Math.round(Number(patch.paymentTermsDays) || 0));
+  if (patch.cuit !== undefined) merged.cuit = String(patch.cuit || "").trim().slice(0, 20);
+  if (patch.address !== undefined) merged.address = String(patch.address || "").trim().slice(0, 200);
+  if (patch.locality !== undefined) merged.locality = String(patch.locality || "").trim().slice(0, 120);
+  if (patch.phone !== undefined) merged.phone = String(patch.phone || "").trim().slice(0, 40);
+  if (patch.email !== undefined) merged.email = String(patch.email || "").trim().slice(0, 120);
+  if (patch.contactName !== undefined) merged.contactName = String(patch.contactName || "").trim().slice(0, 120);
+  if (patch.ivaCondition !== undefined) merged.ivaCondition = IVA_CONDITIONS.includes(patch.ivaCondition) ? patch.ivaCondition : "";
+  if (patch.saleCondition !== undefined) merged.saleCondition = SALE_CONDITIONS.includes(patch.saleCondition) ? patch.saleCondition : "";
   const duplicateName = (await pool.query("SELECT 1 FROM suppliers WHERE id<>$1 AND lower(trim(data->>'name'))=lower($2) LIMIT 1", [req.params.id, merged.name])).rows[0];
   if (duplicateName) return res.status(409).json({ error: "Ya existe otro proveedor con ese nombre" });
   await pool.query("UPDATE suppliers SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
