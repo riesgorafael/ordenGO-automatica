@@ -1712,7 +1712,7 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const assignedTechs = order.assignedTechs?.length ? order.assignedTechs : (order.tech ? [order.tech] : []);
   const canManageTechs = ger || assignedTechs.some((name) => name.toLowerCase() === (me?.name || "").toLowerCase());
-  const fieldTechs = users.filter((u) => u.active && u.role === "tecnico");
+  const fieldTechs = users.filter((u) => u.active && ["admin", "gerente", "tecnico"].includes(u.role));
   const [mateTechPick, setMateTechPick] = useState("");
   const addMateTech = (name) => { const value = (name || "").trim(); if (!value || assignedTechs.some((t) => t.toLowerCase() === value.toLowerCase())) return; onUpdate(order.id, { assignedTechs: [...assignedTechs, value] }); setMateTechPick(""); };
   const removeMateTech = (name) => onUpdate(order.id, { assignedTechs: assignedTechs.filter((t) => t !== name) });
@@ -1841,7 +1841,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
     };
     await onSave(patch); setSaving(false);
   };
-  const fieldTechs = users.filter((user) => user.active && user.role === "tecnico");
+  const fieldTechs = users.filter((user) => user.active && ["admin", "gerente", "tecnico"].includes(user.role));
   const timelineChanged = ["reportedAt", "arrivalAt", "startedAt", "completedAt", "billableWaitMinutes", "billableWaitReason", "downtimeMinutes"].some((field) => (form.technical[field] || "") !== (order.technical?.[field] || ""));
   const timelineReasonUpdated = !!form.technical.timelineAdjustmentReason?.trim() && form.technical.timelineAdjustmentReason.trim() !== (order.technical?.timelineAdjustmentReason || "").trim();
   const mouseDownOnBackdrop = useRef(false);
@@ -1879,7 +1879,7 @@ function ReasonDialog({ onClose, onConfirm }) {
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
 function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
-  const fieldTechs = users.filter((u) => u.active && u.role === "tecnico");
+  const fieldTechs = users.filter((u) => u.active && ["admin", "gerente", "tecnico"].includes(u.role));
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
   const [currentOrderId, setCurrentOrderId] = useState(initial.existingOrderId || "");
