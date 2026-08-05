@@ -226,7 +226,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   }
 
   /* Registro fotográfico */
-  const fotos = (order.photos || []).filter((p) => p && p.url);
+  const fotos = (order.photos || []).filter((p) => p && p.url && p.kind !== "document");
   if (fotos.length) {
     section("Registro fotográfico");
     const gap = 5, cols = 2, frameW = (W - 2 * M - gap) / cols, frameH = 50, rowH = 61;
@@ -250,6 +250,13 @@ export function buildOrderReceiptPDF(order, audience = "client") {
       y += rowH;
     }
     doc.setTextColor(15, 23, 42);
+  }
+
+  /* Documentos adjuntos (PDF, Excel, CSV) */
+  const documentos = (order.photos || []).filter((p) => p && p.kind === "document");
+  if (documentos.length) {
+    brk(14); section("Documentos adjuntos");
+    documentos.forEach((docItem) => para(`${docItem.cat ? docItem.cat[0].toUpperCase() + docItem.cat.slice(1) : "Adjunto"}:`, docItem.name || "Documento"));
   }
 
   /* Materiales */

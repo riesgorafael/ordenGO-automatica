@@ -18,7 +18,7 @@ const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
 const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", ...(["admin", "gerente"].includes(role) ? ["clients", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
-const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "", tvModeEnabled: false, tvCycleEnabled: false, tvCycleSeconds: 30 };
+const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
 const BRAND_THEMES = [
   { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
   { id: "industrial", name: "Industrial", primaryColor: "#2563EB", headerColor: "#172033" },
@@ -119,6 +119,16 @@ function fileToImages(file) {
   });
 }
 async function analyzeImage(dataUrl) { return api.analyze(dataUrl.split(",")[1]); }
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(rd.result);
+    rd.onerror = reject;
+    rd.readAsDataURL(file);
+  });
+}
+const EVIDENCE_ACCEPT = "image/*,.pdf,application/pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv";
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 
 function orderTotals(o) {
   const billedHours = billableLaborHours(o);
@@ -401,21 +411,22 @@ export default function App() {
     })();
   }, [online, me?.id, offlineCount, offlineRetry]);
 
+  const tvSettings = me?.settings || {};
   useEffect(() => {
-    if (me?.role !== "monitor_oficina" || !branding.tvModeEnabled) return;
+    if (me?.role !== "monitor_oficina" || !tvSettings.tvModeEnabled) return;
     const projectIds = projects.map((project) => project.id);
     setModule("projects"); setPTab("board"); setPQ(""); setPMine(false); setPStale(false);
     setPProj((current) => projectIds.includes(current) ? current : (projectIds[0] || "all"));
-    if (!branding.tvCycleEnabled || projectIds.length < 2) return;
+    if (!tvSettings.tvCycleEnabled || projectIds.length < 2) return;
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       setPProj((current) => {
         const currentIndex = projectIds.indexOf(current);
         return projectIds[(currentIndex + 1 + projectIds.length) % projectIds.length];
       });
-    }, Math.max(10, Number(branding.tvCycleSeconds) || 30) * 1000);
+    }, Math.max(10, Number(tvSettings.tvCycleSeconds) || 30) * 1000);
     return () => window.clearInterval(interval);
-  }, [me?.role, branding.tvModeEnabled, branding.tvCycleEnabled, branding.tvCycleSeconds, projects.map((project) => project.id).join("|")]);
+  }, [me?.role, tvSettings.tvModeEnabled, tvSettings.tvCycleEnabled, tvSettings.tvCycleSeconds, projects.map((project) => project.id).join("|")]);
 
   const logout = () => { setToken(null); setMe(null); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
@@ -426,7 +437,7 @@ export default function App() {
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
   const isMonitor = me.role === "monitor_oficina";
-  const tvMode = isMonitor && branding.tvModeEnabled;
+  const tvMode = isMonitor && tvSettings.tvModeEnabled;
   const isOffice = me.role === "tecnico_oficina" || isMonitor;
   const activeProjectView = isMgr || isMonitor ? pTab : techTaskView;
   const userById = (id) => users.find((u) => u.id === id);
@@ -693,9 +704,9 @@ export default function App() {
           <>
             {tvMode && <div className="tv-project-banner relative mb-4 flex items-center gap-4 overflow-hidden rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
               <span className="h-10 w-2 shrink-0 rounded-full" style={{ background: projects.find((project) => project.id === pProj)?.color || branding.primaryColor }} />
-              <div className="min-w-0 flex-1"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Proyecto en pantalla</p><h1 className="truncate text-2xl font-bold text-slate-900">{projects.find((project) => project.id === pProj)?.key || "—"} · {projects.find((project) => project.id === pProj)?.name || "Sin proyectos disponibles"}</h1></div>
-              <div className="hidden items-center gap-3 text-right lg:flex"><div><p className="text-xs font-semibold text-slate-600">{branding.tvCycleEnabled && projects.length > 1 ? `Rotación cada ${branding.tvCycleSeconds} s` : "Vista fija"}</p><p className="text-[11px] text-slate-400">{Math.max(0, projects.findIndex((project) => project.id === pProj) + 1)} de {projects.length}</p></div><button type="button" onClick={() => document.documentElement.requestFullscreen?.()} title="Abrir pantalla completa" aria-label="Abrir pantalla completa" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Maximize2 className="h-5 w-5" /></button></div>
-              {branding.tvCycleEnabled && projects.length > 1 && <span key={pProj} className="tv-cycle-progress absolute bottom-0 left-0 h-1 bg-brand-500" style={{ animationDuration: `${branding.tvCycleSeconds}s` }} />}
+              <div className="min-w-0 flex-1"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{tvSettings.screenName || "Proyecto en pantalla"}</p><h1 className="truncate text-2xl font-bold text-slate-900">{projects.find((project) => project.id === pProj)?.key || "—"} · {projects.find((project) => project.id === pProj)?.name || "Sin proyectos disponibles"}</h1></div>
+              <div className="hidden items-center gap-3 text-right lg:flex"><div><p className="text-xs font-semibold text-slate-600">{tvSettings.tvCycleEnabled && projects.length > 1 ? `Rotación cada ${tvSettings.tvCycleSeconds} s` : "Vista fija"}</p><p className="text-[11px] text-slate-400">{Math.max(0, projects.findIndex((project) => project.id === pProj) + 1)} de {projects.length}</p></div><button type="button" onClick={() => document.documentElement.requestFullscreen?.()} title="Abrir pantalla completa" aria-label="Abrir pantalla completa" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Maximize2 className="h-5 w-5" /></button></div>
+              {tvSettings.tvCycleEnabled && projects.length > 1 && <span key={pProj} className="tv-cycle-progress absolute bottom-0 left-0 h-1 bg-brand-500" style={{ animationDuration: `${tvSettings.tvCycleSeconds}s` }} />}
             </div>}
             {!tvMode && <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
@@ -1913,7 +1924,8 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const setTechnicalField = (field, value) => setTechnical((current) => ({ ...current, [field]: value }));
   const [signerRoleChoice, setSignerRoleChoice] = useState(() => SIGNER_ROLES.includes(initial.technical?.signerRole) ? initial.technical.signerRole : (initial.technical?.signerRole ? "Otro" : ""));
   const [photos, setPhotos] = useState(initial.photos || []); const [analyzing, setAnalyzing] = useState(false);
-  const [rate, setRate] = useState(normalizedRate(initial.rate)); const [laborHours, setLaborHours] = useState(initial.laborHours || ""); const [technicians, setTechnicians] = useState(initial.technicians || 1); const [laborBillable, setLaborBillable] = useState(initial.laborBillable ?? true);
+  const [rate, setRate] = useState(normalizedRate(initial.rate)); const [laborHours, setLaborHours] = useState(initial.laborHours || ""); const [laborBillable, setLaborBillable] = useState(initial.laborBillable ?? true);
+  const technicians = 1 + assignedTechs.length;
   const [materials, setMaterials] = useState(initial.materials || []); const [location, setLocation] = useState(initial.location || null); const [geoMsg, setGeoMsg] = useState("");
   const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || clients.find((c) => c.id === (initial.clientId || defaultClientId))?.site || "");
   const [signatureUrl, setSignatureUrl] = useState(initial.signatureUrl || null); const [signedBy, setSignedBy] = useState(initial.signedBy || "");
@@ -1958,7 +1970,19 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
     setTimelineNow(Date.now());
     if (["start", "resume", "reopen", "pause", "finish"].includes(action)) void save("En proceso de ejecución", { stayOpen: true, technicalOverride: next });
   };
-  const addPhoto = async (file, cat) => { if (!file) return; setAnalyzing(true); try { const { analysis, report, thumb } = await fileToImages(file); setPhotos((p) => [...p, { url: report, preview: thumb, cat, ts: new Date().toISOString() }]); try { const r = await analyzeImage(analysis); if (!equipo && r.equipo) setEquipo(r.equipo); if (!category && r.category) setCategory(r.category); if (!solucion && r.description) setSolucion(r.description); } catch {} } finally { setAnalyzing(false); } };
+  const addPhoto = async (file, cat) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      if (file.size > MAX_DOCUMENT_BYTES) { toast?.("El archivo supera los 5 MB permitidos.", "error"); return; }
+      setAnalyzing(true);
+      try { const url = await fileToDataUrl(file); setPhotos((p) => [...p, { url, name: file.name, mime: file.type, cat, ts: new Date().toISOString(), kind: "document" }]); }
+      catch { toast?.("No se pudo adjuntar el archivo.", "error"); }
+      finally { setAnalyzing(false); }
+      return;
+    }
+    setAnalyzing(true);
+    try { const { analysis, report, thumb } = await fileToImages(file); setPhotos((p) => [...p, { url: report, preview: thumb, cat, ts: new Date().toISOString(), kind: "image" }]); try { const r = await analyzeImage(analysis); if (!equipo && r.equipo) setEquipo(r.equipo); if (!category && r.category) setCategory(r.category); if (!solucion && r.description) setSolucion(r.description); } catch {} } finally { setAnalyzing(false); }
+  };
   const addMaterial = () => setMaterials((m) => [...m, { name: "", qty: 1, price: 0, cost: 0, billable: true, partNumber: "", brand: "", model: "", serial: "", supplier: "" }]);
   const setMat = (i, patch) => setMaterials((m) => m.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const delMat = (i) => setMaterials((m) => m.filter((_, j) => j !== i));
@@ -2056,9 +2080,10 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         <Section title="Documentación del trabajo">
           <ReqLabel>Fotos de evidencia (mínimo 1)</ReqLabel>
           <div className="mb-2 mt-1 flex items-center gap-1.5 text-xs font-medium text-slate-500"><Sparkles className="h-3.5 w-3.5 text-brand-500" /> Las fotos autocompletan equipo y descripción con IA</div>
-          <div className={`grid grid-cols-3 gap-2 rounded-lg ${errCls(photos.length === 0)}`}><PhotoBtn icon={Camera} label="Antes" cat="antes" capture onPick={addPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" capture onPick={addPhoto} /><PhotoBtn icon={Upload} label="Después" cat="después" onPick={addPhoto} /></div>
-          {analyzing && <div className="mt-2 flex items-center gap-2 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Analizando imagen…</div>}
-          {photos.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{photos.map((p, i) => (<div key={i} className="relative"><img src={p.preview || p.url} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span><button onClick={() => setPhotos((x) => x.filter((_, j) => j !== i))} className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200"><X className="h-3 w-3 text-slate-500" /></button></div>))}</div>}
+          <div className={`grid grid-cols-3 gap-2 rounded-lg ${errCls(photos.length === 0)}`}><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addPhoto} /></div>
+          <p className="mt-1 text-[11px] text-slate-400">Foto, PDF, Excel o CSV · máx. 5 MB por archivo</p>
+          {analyzing && <div className="mt-2 flex items-center gap-2 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Procesando archivo…</div>}
+          {photos.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{photos.map((p, i) => (<div key={i} className="relative">{p.kind === "document" ? <div title={p.name} className="grid h-14 w-14 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" />}<span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span><button onClick={() => setPhotos((x) => x.filter((_, j) => j !== i))} className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200"><X className="h-3 w-3 text-slate-500" /></button></div>))}</div>}
           {category && <div className="mt-2"><Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{category}</Chip></div>}
           <div className="mt-3"><ReqLabel>Síntoma o diagnóstico</ReqLabel></div>
           <input value={sintoma} onChange={(e) => setSintoma(e.target.value)} placeholder={profile.symptom} className={`u-input mt-1 ${errCls(!(sintoma || technical.diagnosis))}`} />
@@ -2081,7 +2106,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         </Section>
         <Section title="Mano de obra">
           <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">Las horas se calculan desde la cronología del servicio. No es necesario operar un cronómetro separado.</p>
-          <div className={`mt-2 grid gap-2 ${ger ? "grid-cols-2 min-[430px]:grid-cols-4" : "grid-cols-2"}`}><L label="Tiempo efectivo" help="Tiempo real de intervención, descontando las pausas registradas en la cronología."><div className="u-input flex items-center bg-slate-50 font-medium text-slate-700">{compactDuration(elapsedWorkMs)}</div></L>{ger && <L label="Horas facturables" help="Horas cobradas por técnico. Si la permanencia es menor a una hora, se aplica el mínimo comercial de dos horas."><div className="u-input flex items-center bg-brand-50 font-semibold text-brand-700">{projectedBillableHours} h</div></L>}<L label="Técnicos en planta" help="Cantidad de técnicos que participaron presencialmente. Multiplica las horas facturables para obtener horas-técnico."><input type="number" min="1" step="1" value={technicians} onChange={(e) => setTechnicians(e.target.value)} onBlur={(e) => setTechnicians(Math.max(1, Math.round(Number(e.target.value) || 1)))} className="u-input" /></L>{ger && <L label="Tarifa/h por técnico (USD)" help="Tarifa comercial aplicada a cada hora facturable de cada técnico en planta."><input type="number" min="0" step="1" value={rate} onChange={(e) => setRate(e.target.value)} onBlur={(e) => setRate(normalizedRate(e.target.value))} className="u-input" /></L>}</div>
+          <div className={`mt-2 grid gap-2 ${ger ? "grid-cols-2 min-[430px]:grid-cols-4" : "grid-cols-2"}`}><L label="Tiempo efectivo" help="Tiempo real de intervención, descontando las pausas registradas en la cronología."><div className="u-input flex items-center bg-slate-50 font-medium text-slate-700">{compactDuration(elapsedWorkMs)}</div></L>{ger && <L label="Horas facturables" help="Horas cobradas por técnico. Si la permanencia es menor a una hora, se aplica el mínimo comercial de dos horas."><div className="u-input flex items-center bg-brand-50 font-semibold text-brand-700">{projectedBillableHours} h</div></L>}<L label="Técnicos en planta" help="Se calcula automáticamente: técnico responsable + técnicos acompañantes agregados en el paso Activo."><div className="u-input flex items-center bg-slate-50 font-medium text-slate-700">{technicians}</div></L>{ger && <L label="Tarifa/h por técnico (USD)" help="Tarifa comercial aplicada a cada hora facturable de cada técnico en planta."><input type="number" min="0" step="1" value={rate} onChange={(e) => setRate(e.target.value)} onBlur={(e) => setRate(normalizedRate(e.target.value))} className="u-input" /></L>}</div>
           {ger && minimumBillingApplied && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">Mínimo aplicado: permanencia menor a 1 hora → se facturan 2 horas por técnico.</p>}
           {ger && <label className="mt-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={laborBillable} onChange={(e) => setLaborBillable(e.target.checked)} /> Facturable</label>}
         </Section>
@@ -2131,8 +2156,8 @@ function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumA
   </section>;
 }
 const Toggle = ({ active, onClick, children }) => <button onClick={onClick} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${active ? "bg-brand-500 text-white" : "bg-slate-100 text-slate-600"}`}>{children}</button>;
-function PhotoBtn({ icon: Icon, label, cat, capture, onPick }) {
-  return (<label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white py-3 text-[11px] font-medium text-slate-600 transition hover:border-brand-400 hover:text-brand-600"><Icon className="h-4 w-4" /> {label}<input type="file" accept="image/*" {...(capture ? { capture: "environment" } : {})} className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; onPick(f, cat); }} /></label>);
+function PhotoBtn({ icon: Icon, label, cat, onPick }) {
+  return (<label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white py-3 text-[11px] font-medium text-slate-600 transition hover:border-brand-400 hover:text-brand-600"><Icon className="h-4 w-4" /> {label}<input type="file" accept={EVIDENCE_ACCEPT} capture="environment" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; onPick(f, cat); }} /></label>);
 }
 function SignaturePad({ onChange }) {
   const ref = useRef(null); const drawing = useRef(false); const last = useRef(null);
@@ -2507,7 +2532,6 @@ function SettingsModule({ branding, onSaveBranding }) {
     reader.readAsDataURL(file);
   };
   const save = async () => { setSaving(true); await onSaveBranding(form); setSaving(false); };
-  const tvPreviewColors = ["#94A3B8", "#F59E0B", "#8B5CF6", "#10B981"];
   return <div className="space-y-5">
     <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad visual y tema general de la aplicación.</p></div>
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
@@ -2525,21 +2549,18 @@ function SettingsModule({ branding, onSaveBranding }) {
       </Box>
     </div>
     <Box className="overflow-hidden">
-      <div className="flex flex-col gap-2 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2"><Maximize2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Pantalla de oficina · TV</h3><p className="mt-0.5 text-[11px] text-slate-500">Configura el tablero Full HD que utiliza el perfil Monitor Oficina.</p></div></div><span className="w-fit rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">Sólo administradores</span></div>
-      <div className="grid grid-cols-1 gap-5 p-4 lg:grid-cols-[minmax(20rem,0.9fr)_minmax(0,1.1fr)] lg:items-center">
-        <div><div className="aspect-video overflow-hidden rounded-xl border border-slate-300 bg-slate-900 p-2 shadow-inner" aria-label="Vista previa de pantalla 16:9"><div className="flex h-full flex-col rounded-md bg-slate-100"><div className="flex h-5 items-center gap-1 rounded-t-md px-1.5" style={{ background: form.headerColor }}><span className="h-1.5 w-5 rounded bg-white/60" /><span className="h-1.5 w-9 rounded bg-white/20" /></div><div className="flex flex-1 gap-1.5 p-1.5">{T_STATUS.map((status, index) => <div key={status} className="flex-1 rounded-sm border-t-[3px] bg-white p-1 shadow-sm" style={{ borderTopColor: tvPreviewColors[index] }}><span className="mb-1 block h-1 w-2/3 rounded bg-slate-300" /><span className="mb-1 block h-4 rounded bg-slate-100" /><span className="block h-4 rounded bg-slate-100" /></div>)}</div></div></div><div className="mt-2 flex items-center justify-between text-[10px] text-slate-400"><span>Formato 16:9</span><span>1920 × 1080 Full HD</span></div></div>
-        <div className="space-y-3"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label className={`flex items-start gap-3 rounded-xl border p-3 transition-colors ${form.tvModeEnabled ? "border-brand-300 bg-brand-50/60" : "cursor-pointer border-slate-200"}`}><input type="checkbox" checked={form.tvModeEnabled} onChange={(event) => setForm((current) => ({ ...current, tvModeEnabled: event.target.checked, tvCycleEnabled: event.target.checked ? current.tvCycleEnabled : false }))} className="mt-0.5 h-4 w-4" /><span><b className="block text-sm text-slate-800">Activar modo TV</b><span className="mt-1 block text-[11px] leading-4 text-slate-500">Optimiza automáticamente el tablero para una pantalla 16:9.</span></span></label><label className={`flex items-start gap-3 rounded-xl border p-3 transition-colors ${form.tvModeEnabled ? "cursor-pointer border-slate-200" : "border-slate-100 bg-slate-50 opacity-60"}`}><input type="checkbox" disabled={!form.tvModeEnabled} checked={form.tvCycleEnabled} onChange={(event) => set("tvCycleEnabled", event.target.checked)} className="mt-0.5 h-4 w-4" /><span><b className="block text-sm text-slate-800">Rotación automática</b><span className="mt-1 block text-[11px] leading-4 text-slate-500">Cambia entre los proyectos sin intervención del usuario.</span></span></label></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(15rem,1fr)] sm:items-end"><L label="Tiempo visible por proyecto"><select disabled={!form.tvModeEnabled || !form.tvCycleEnabled} value={form.tvCycleSeconds} onChange={(event) => set("tvCycleSeconds", Number(event.target.value))} className="u-input disabled:bg-slate-100 disabled:text-slate-400">{[15, 30, 45, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds < 60 ? `${seconds} segundos` : `${seconds / 60} minuto${seconds > 60 ? "s" : ""}`}</option>)}</select></L><p className="rounded-lg bg-sky-50 px-3 py-2.5 text-[11px] leading-4 text-sky-700">Se aplica exclusivamente al usuario <b>Monitor Oficina</b>. Los demás perfiles conservan su vista habitual.</p></div></div>
-      </div>
+      <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2"><Maximize2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Pantallas de oficina · TV</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Cada televisor tiene su propia cuenta con rol <b>Monitor de oficina</b> y su propia configuración (nombre de pantalla, modo TV y rotación) — así podés tener varias pantallas en distintas ubicaciones, cada una mostrando lo que corresponda. Configurala desde <b>Equipo</b>, en la cuenta de cada pantalla.</p></div></div><span className="w-fit rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">Sólo administradores</span></div>
     </Box>
     <div className="flex flex-col-reverse gap-2 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm(DEFAULT_BRANDING)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restaurar valores originales</button><button disabled={saving || !form.appName.trim() || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar configuración</button></div>
   </div>;
 }
 
 function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "" });
+  const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "", screenName: "" });
   const [passwordUser, setPasswordUser] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const add = async () => { if (!nf.name.trim() || !nf.email.trim() || nf.password.length < 8) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "" }); } catch (e) { onErr(e); } };
+  const [tvScreenUser, setTvScreenUser] = useState(null);
+  const add = async () => { if (!nf.name.trim() || !nf.email.trim() || nf.password.length < 8) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "", screenName: "" }); } catch (e) { onErr(e); } };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -2547,10 +2568,11 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? " · Solo visualización · no computa carga" : ` · ${load} tarea(s) · ${ords} orden(es)`}</div></div>
+            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}</div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select title="Define los módulos, datos y acciones que puede utilizar este usuario." value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
+              {isViewer && <button onClick={() => setTvScreenUser(u)} title="Configurar pantalla TV" aria-label={`Configurar pantalla TV de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Maximize2 className="h-4 w-4" /></button>}
               <button onClick={() => setPasswordUser(u)} title="Restablecer contraseña" aria-label={`Restablecer contraseña de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><KeyRound className="h-4 w-4" /></button>
               <button onClick={() => setPendingDelete(u)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
             </div>
@@ -2558,12 +2580,35 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         ); })}</div>
       </Panel></div>
       <div><Panel title="Nuevo empleado">
-        <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input type="password" autoComplete="new-password" value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="Mínimo 8 caracteres" className="u-input" /></L><L label="Rol" help="Administrador: acceso total. Gerencia: gestión operativa y financiera. Técnico de campo: órdenes y tareas asignadas. Técnico de oficina: proyectos sin órdenes. Monitor: solo visualización."><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L><button onClick={add} disabled={!nf.name.trim() || !nf.email.trim() || nf.password.length < 8} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">La contraseña inicial es temporal y deberá cambiarse al ingresar. Los monitores son perfiles de solo visualización: no reciben tareas ni órdenes y no aparecen en métricas de carga.</p></div>
+        <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input type="password" autoComplete="new-password" value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="Mínimo 8 caracteres" className="u-input" /></L><L label="Rol" help="Administrador: acceso total. Gerencia: gestión operativa y financiera. Técnico de campo: órdenes y tareas asignadas. Técnico de oficina: proyectos sin órdenes. Monitor: solo visualización."><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L>{nf.role === "monitor_oficina" && <L label="Nombre de la pantalla" help="Identifica esta cuenta cuando tengas varios televisores (ej. 'TV Recepción', 'TV Taller Norte')."><input value={nf.screenName} onChange={(e) => setNf({ ...nf, screenName: e.target.value })} placeholder="Ej. TV Recepción" className="u-input" /></L>}<button onClick={add} disabled={!nf.name.trim() || !nf.email.trim() || nf.password.length < 8} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">La contraseña inicial es temporal y deberá cambiarse al ingresar. Los monitores son perfiles de solo visualización: no reciben tareas ni órdenes y no aparecen en métricas de carga.</p></div>
       </Panel></div>
     </div>
     {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { await wrap(onPatch)(passwordUser.id, { password }); setPasswordUser(null); }} />}
     {pendingDelete && <ConfirmDialog title="Eliminar empleado" message={`Se eliminará el acceso de “${pendingDelete.name}”. Sus órdenes y tareas históricas no se borrarán.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
+    {tvScreenUser && <TvScreenDialog user={tvScreenUser} onClose={() => setTvScreenUser(null)} onSave={async (patch) => { await wrap(onPatch)(tvScreenUser.id, patch); setTvScreenUser(null); }} />}
   </>;
+}
+
+function TvScreenDialog({ user, onClose, onSave }) {
+  const s = user.settings || {};
+  const [form, setForm] = useState({ screenName: s.screenName || "", tvModeEnabled: s.tvModeEnabled || false, tvCycleEnabled: s.tvCycleEnabled || false, tvCycleSeconds: s.tvCycleSeconds || 30 });
+  const [saving, setSaving] = useState(false);
+  const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const submit = async () => { setSaving(true); try { await onSave(form); } finally { setSaving(false); } };
+  const mouseDownOnBackdrop = useRef(false);
+  return <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+    <div className="mobile-sheet-content w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mb-4 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-50 text-brand-600"><Maximize2 className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Configurar pantalla TV</h2><p className="text-xs text-slate-500">{user.name} · {user.email}</p></div></div>
+      <div className="space-y-3">
+        <L label="Nombre de la pantalla" help="Identifica esta cuenta cuando tengas varios televisores (ej. 'TV Recepción', 'TV Taller Norte')."><input autoFocus value={form.screenName} onChange={(e) => set("screenName", e.target.value)} placeholder="Ej. TV Recepción" className="u-input" /></L>
+        <label className={`flex items-start gap-3 rounded-xl border p-3 transition-colors ${form.tvModeEnabled ? "border-brand-300 bg-brand-50/60" : "cursor-pointer border-slate-200"}`}><input type="checkbox" checked={form.tvModeEnabled} onChange={(e) => setForm((current) => ({ ...current, tvModeEnabled: e.target.checked, tvCycleEnabled: e.target.checked ? current.tvCycleEnabled : false }))} className="mt-0.5 h-4 w-4" /><span><b className="block text-sm text-slate-800">Activar modo TV</b><span className="mt-1 block text-[11px] leading-4 text-slate-500">Optimiza automáticamente el tablero para esta pantalla 16:9.</span></span></label>
+        <label className={`flex items-start gap-3 rounded-xl border p-3 transition-colors ${form.tvModeEnabled ? "cursor-pointer border-slate-200" : "border-slate-100 bg-slate-50 opacity-60"}`}><input type="checkbox" disabled={!form.tvModeEnabled} checked={form.tvCycleEnabled} onChange={(e) => set("tvCycleEnabled", e.target.checked)} className="mt-0.5 h-4 w-4" /><span><b className="block text-sm text-slate-800">Rotación automática</b><span className="mt-1 block text-[11px] leading-4 text-slate-500">Cambia entre los proyectos sin intervención del usuario.</span></span></label>
+        <L label="Tiempo visible por proyecto"><select disabled={!form.tvModeEnabled || !form.tvCycleEnabled} value={form.tvCycleSeconds} onChange={(e) => set("tvCycleSeconds", Number(e.target.value))} className="u-input disabled:bg-slate-100 disabled:text-slate-400">{[15, 30, 45, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds < 60 ? `${seconds} segundos` : `${seconds / 60} minuto${seconds > 60 ? "s" : ""}`}</option>)}</select></L>
+        <p className="rounded-lg bg-sky-50 px-3 py-2.5 text-[11px] leading-4 text-sky-700">Esta configuración solo afecta a la cuenta <b>{user.name}</b>. Cada televisor con su propia cuenta puede tener ajustes distintos.</p>
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} disabled={saving} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar</button></div>
+    </div>
+  </div>;
 }
 
 function PasswordResetDialog({ user, onClose, onSave }) {

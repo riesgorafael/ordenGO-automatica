@@ -33,7 +33,7 @@ app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'");
   next();
 });
-app.use(express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "24mb" }));
 
 const loginAttempts = new Map();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -103,6 +103,8 @@ async function initDb() {
   `);
   // Migración idempotente para instalaciones existentes
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
+  // Config individual por usuario (pantalla TV: nombre, modo TV, rotación) — permite N televisores, uno por cuenta Monitor Oficina.
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}'::jsonb;");
 
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
   const adminPass = process.env.ADMIN_PASSWORD || "admin1234";
@@ -270,7 +272,16 @@ async function initDb() {
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
-const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, mustChangePassword: u.mustchangepassword || false });
+const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, mustChangePassword: u.mustchangepassword || false, settings: u.settings || {} });
+// Config de pantalla TV por usuario (Monitor Oficina): permite N televisores, cada uno con su propia cuenta e identidad.
+const buildSettingsPatch = (body, current = {}) => {
+  const patch = {};
+  if (body.screenName !== undefined) patch.screenName = String(body.screenName || "").trim().slice(0, 60);
+  if (body.tvModeEnabled !== undefined) patch.tvModeEnabled = Boolean(body.tvModeEnabled);
+  if (body.tvCycleEnabled !== undefined) patch.tvCycleEnabled = Boolean(body.tvCycleEnabled);
+  if (body.tvCycleSeconds !== undefined) patch.tvCycleSeconds = Math.max(10, Math.round(Number(body.tvCycleSeconds) || 30));
+  return Object.keys(patch).length ? { ...current, ...patch } : null;
+};
 const directoryUser = (u, viewerRole) => viewerRole === "admin" ? pubUser(u) : ({ id: u.id, name: u.name, role: u.role, color: u.color, active: u.active });
 const VALID_ROLES = new Set(["admin", "gerente", "tecnico", "tecnico_oficina", "monitor_oficina"]);
 const wholeMoneyValue = (value) => Math.max(0, Math.round(Number(value) || 0));
@@ -1300,9 +1311,10 @@ app.post("/api/users", auth, requireRole("admin"), async (req, res) => {
   if (String(password).length < 8) return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres" });
   const id = "u" + Date.now();
   const hash = bcrypt.hashSync(password, 10);
+  const settings = buildSettingsPatch(req.body || {}) || {};
   try {
-    await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword) VALUES($1,$2,$3,$4,$5,$6,true,true)",
-      [id, cleanName, cleanEmail, hash, role || "tecnico", color || "#0ea5e9"]);
+    await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword,settings) VALUES($1,$2,$3,$4,$5,$6,true,true,$7)",
+      [id, cleanName, cleanEmail, hash, role || "tecnico", color || "#0ea5e9", settings]);
   } catch { return res.status(400).json({ error: "Ese correo ya está registrado" }); }
   if (role === "monitor_oficina") {
     const projectRows = await pool.query("SELECT id,data FROM projects");
@@ -1316,7 +1328,7 @@ app.post("/api/users", auth, requireRole("admin"), async (req, res) => {
 });
 app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   const { role, active, name, color, password } = req.body || {};
-  const target = (await pool.query("SELECT id,role,active FROM users WHERE id=$1", [req.params.id])).rows[0];
+  const target = (await pool.query("SELECT id,role,active,settings FROM users WHERE id=$1", [req.params.id])).rows[0];
   if (!target) return res.status(404).json({ error: "El usuario ya no existe" });
   if (role !== undefined && !VALID_ROLES.has(role)) return res.status(400).json({ error: "Rol inválido" });
   if (req.params.id === req.user.id && ((role !== undefined && role !== "admin") || active === false)) return res.status(400).json({ error: "No puedes quitarte tu propio acceso de administrador" });
@@ -1329,6 +1341,8 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   if (active !== undefined) { sets.push(`active=$${i++}`); vals.push(active); }
   if (name !== undefined) { sets.push(`name=$${i++}`); vals.push(name); }
   if (color !== undefined) { sets.push(`color=$${i++}`); vals.push(color); }
+  const mergedSettings = buildSettingsPatch(req.body || {}, target.settings || {});
+  if (mergedSettings) { sets.push(`settings=$${i++}`); vals.push(mergedSettings); }
   if (password) {
     if (String(password).length < 8) return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres" });
     sets.push(`password_hash=$${i++}`); vals.push(bcrypt.hashSync(password, 10));
