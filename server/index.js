@@ -402,6 +402,9 @@ const orderBusinessErrors = (order) => {
     if (!order?.technicianSignatureUrl) errors.push("La firma del técnico responsable es obligatoria.");
     if (!order?.signatureUrl && !String(order?.noSignReason || "").trim()) errors.push("Registra la conformidad del cliente o el motivo por el que no firma.");
     if (order?.signatureUrl && (!String(order?.signedBy || "").trim() || !String(order?.technical?.signerRole || "").trim())) errors.push("Completa el nombre y el cargo/área de quien firma la conformidad del cliente.");
+    if (!String(order?.sintoma || "").trim() && !String(order?.technical?.diagnosis || "").trim()) errors.push("El síntoma o diagnóstico es obligatorio.");
+    if (!Array.isArray(order?.photos) || order.photos.length === 0) errors.push("Se requiere al menos una foto de evidencia.");
+    if (!String(order?.technical?.recommendations || "").trim()) errors.push("La recomendación técnica es obligatoria.");
   }
   return errors;
 };
