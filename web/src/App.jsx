@@ -683,8 +683,9 @@ export default function App() {
 
   // Los módulos se agrupan por área de trabajo: Inicio/Órdenes/Proyectos quedan
   // como núcleo operativo sin agrupar (uso diario, incluye técnicos de campo);
-  // el resto se organiza en Comercial, Compras y Administración para reflejar
-  // el flujo de negocio (oportunidad → compra/ejecución → cierre financiero).
+  // el resto se organiza en Negocio (pipeline comercial → compras → resultado
+  // financiero, de uso frecuente para gerencia) y Administración (catálogos y
+  // configuración de uso esporádico, plegados en un menú aparte).
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
   ] : [
@@ -692,10 +693,10 @@ export default function App() {
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
-    ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Comercial" }] : []),
-    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Comercial" }] : []),
-    ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Compras" }] : []),
-    ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
+    ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Negocio" }] : []),
+    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
+    ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
+    ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Administración" }] : []),
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Administración" }] : []),
     ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2, group: "Administración" }] : []),
