@@ -2274,7 +2274,7 @@ function Reports({ tasks, users, projects, proj }) {
   );
 }
 function ChartBox({ data }) {
-  return (<div style={{ width: "100%", height: 220 }}><ResponsiveContainer debounce={1}><BarChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} /><RechartsBar dataKey="value" radius={[5, 5, 0, 0]} isAnimationActive={false}>{data.map((d, i) => <Cell key={i} fill={d.fill} />)}</RechartsBar></BarChart></ResponsiveContainer></div>);
+  return (<div style={{ width: "100%", height: 220 }}><ResponsiveContainer debounce={1} minWidth={200} minHeight={200}><BarChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} /><RechartsBar dataKey="value" radius={[5, 5, 0, 0]} isAnimationActive={false}>{data.map((d, i) => <Cell key={i} fill={d.fill} />)}</RechartsBar></BarChart></ResponsiveContainer></div>);
 }
 
 /* ===================================== EQUIPO (ADMIN) ===================================== */
