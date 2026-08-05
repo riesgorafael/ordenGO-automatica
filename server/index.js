@@ -401,6 +401,7 @@ const orderBusinessErrors = (order) => {
     if (!String(order?.solucion || "").trim()) errors.push("La intervención realizada es obligatoria.");
     if (!order?.technicianSignatureUrl) errors.push("La firma del técnico responsable es obligatoria.");
     if (!order?.signatureUrl && !String(order?.noSignReason || "").trim()) errors.push("Registra la conformidad del cliente o el motivo por el que no firma.");
+    if (order?.signatureUrl && (!String(order?.signedBy || "").trim() || !String(order?.technical?.signerRole || "").trim())) errors.push("Completa el nombre y el cargo/área de quien firma la conformidad del cliente.");
   }
   return errors;
 };
