@@ -474,7 +474,7 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   const items = po.items || [];
   items.forEach((item) => {
     brk(8);
-    const desc = doc.splitTextToSize(String(item.description || "—"), 82);
+    const desc = doc.splitTextToSize(`${item.sku ? item.sku + " - " : ""}${item.description || "—"}`, 82);
     doc.text(desc[0] + (desc.length > 1 ? "…" : ""), M, y);
     doc.text(String(item.qty || 0), M + 88, y, { align: "right" });
     doc.text(nativeMoney(item.unitPrice, item.currency), M + 118, y, { align: "right" });

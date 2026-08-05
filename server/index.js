@@ -773,7 +773,7 @@ const PO_VAT_RATES = [10.5, 21];
 const normalizePurchaseOrderItem = (item) => {
   const currency = PO_CURRENCIES.includes(item?.currency) ? item.currency : "USD";
   const vatRate = PO_VAT_RATES.includes(Number(item?.vatRate)) ? Number(item.vatRate) : 21;
-  const qty = Math.max(0, Number(item?.qty) || 0);
+  const qty = Math.max(0, Math.round(Number(item?.qty) || 0));
   const unitPrice = Math.max(0, Number(item?.unitPrice) || 0);
   const exchangeRate = currency === "USD" ? 1 : Math.max(0, Number(item?.exchangeRate) || 0);
   const netAmount = Math.round(qty * unitPrice * 100) / 100;
