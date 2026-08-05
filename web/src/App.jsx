@@ -7,7 +7,7 @@ import {
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
-  ShoppingCart, Truck,
+  ShoppingCart, Truck, ChevronDown,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -319,6 +319,8 @@ export default function App() {
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
+  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  const adminMenuRef = useRef(null);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -343,7 +345,7 @@ export default function App() {
       setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
       setProjectEditor(null); setAccessProj(null); setDupProj(null);
-      setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setMobileMoreOpen(false);
+      setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setAdminMenuOpen(false); setMobileMoreOpen(false);
     }
     setModule(nextModule);
   };
@@ -357,6 +359,14 @@ export default function App() {
     document.addEventListener("keydown", closeWithKeyboard);
     return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
   }, [notifOpen]);
+  useEffect(() => {
+    if (!adminMenuOpen) return;
+    const closeOutside = (event) => { if (adminMenuRef.current && !adminMenuRef.current.contains(event.target)) setAdminMenuOpen(false); };
+    const closeWithKeyboard = (event) => { if (event.key === "Escape") setAdminMenuOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeWithKeyboard);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
+  }, [adminMenuOpen]);
   useEffect(() => { setNotifOpen(false); }, [module]);
 
   const boot = async () => {
@@ -707,6 +717,12 @@ export default function App() {
   }, []);
   const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
   const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
+  // En escritorio, "Administración" se pliega en un único menú desplegable
+  // para que la barra no desborde el ancho disponible con muchas pestañas.
+  const adminGroupTabs = modTabs.filter((tab) => tab.group === "Administración");
+  const firstAdminIndex = modTabs.findIndex((tab) => tab.group === "Administración");
+  const adminGroupActive = adminGroupTabs.some((tab) => tab.id === activeModule);
+  const adminGroupBadge = adminGroupTabs.reduce((sum, tab) => sum + (tab.badge || 0), 0);
 
   return (
     <div className={`min-h-screen bg-slate-100 text-slate-800 ${tvMode ? "tv-display" : ""}`} style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -749,12 +765,40 @@ export default function App() {
         </div>
         <div className={`nav-tabs-scroll mx-auto max-w-6xl overflow-x-auto px-2 ${tvMode ? "hidden" : "hidden sm:block"}`}>
           <nav className="flex gap-0.5 pb-1">
-            {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => (
-              <React.Fragment key={id}>
-                {group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />}
-                <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
-              </React.Fragment>
-            ))}
+            {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
+              const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
+              if (group === "Administración") {
+                if (index !== firstAdminIndex) return null;
+                return (
+                  <React.Fragment key="admin-group">
+                    {divider}
+                    <div ref={adminMenuRef} className="relative shrink-0">
+                      <button onClick={() => setAdminMenuOpen((v) => !v)} aria-expanded={adminMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${adminGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
+                        <Settings2 className="h-4 w-4" /> Administración
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${adminMenuOpen ? "rotate-180" : ""}`} />
+                        {adminGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{adminGroupBadge}</span>}
+                      </button>
+                      {adminMenuOpen && (
+                        <div role="menu" className="motion-popover absolute left-0 top-full z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1.5 text-slate-800 shadow-lg">
+                          {adminGroupTabs.map((tab) => (
+                            <button key={tab.id} role="menuitem" onClick={() => { navigateModule(tab.id); setAdminMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${activeModule === tab.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
+                              <tab.icon className="h-4 w-4 shrink-0" /> {tab.label}
+                              {tab.badge > 0 && <span className="ml-auto grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{tab.badge}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </React.Fragment>
+                );
+              }
+              return (
+                <React.Fragment key={id}>
+                  {divider}
+                  <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
+                </React.Fragment>
+              );
+            })}
           </nav>
         </div>
       </header>
@@ -2038,7 +2082,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
         <div className="mb-4 flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-900">Editar {order.id}</h2><p className="mt-0.5 text-xs text-slate-500">Edición administrativa completa · importes expresados en USD.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="space-y-5">
           <section className="rounded-xl border border-sky-200 bg-sky-50/60 p-4"><div className="mb-3"><h3 className="text-xs font-semibold uppercase tracking-wide text-sky-700">Vinculación comercial</h3><p className="mt-1 text-[11px] text-slate-500">Selecciona el presupuesto para incorporar automáticamente su número, OC, cliente y proyecto.</p></div><L label="Presupuesto aprobado / facturado"><select value={form.budgetId || ""} onChange={(event) => selectBudget(event.target.value)} className="u-input bg-white"><option value="">Sin presupuesto asociado</option>{availableBudgets.map((budget) => <option key={budget.id} value={budget.id}>{budget.number || budget.id} · {budget.client} · {budget.title}</option>)}</select></L><div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3"><div className="rounded-lg border border-sky-100 bg-white p-3"><span className="block text-[10px] text-slate-400">N° de presupuesto</span><b className="mt-1 block text-xs text-slate-700">{form.quoteNumber || "Sin asignar"}</b></div><div className="rounded-lg border border-sky-100 bg-white p-3"><span className="block text-[10px] text-slate-400">OC del cliente</span><b className="mt-1 block text-xs text-slate-700">{form.customerPO || "Sin asignar"}</b></div><div className="rounded-lg border border-sky-100 bg-white p-3"><span className="block text-[10px] text-slate-400">Proyecto vinculado</span><b className="mt-1 block truncate text-xs text-slate-700">{projects.find((project) => project.id === form.projectId)?.key || "Sin proyecto"}</b></div></div></section>
-          <section><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Cliente y servicio</h3><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Cliente *"><input list="edit-order-clients" value={form.client || ""} onChange={(event) => { const client = clients.find((item) => item.name === event.target.value); set({ client: event.target.value, ...(client ? { site: client.site || form.site } : {}) }); }} className="u-input" /><datalist id="edit-order-clients">{clients.map((client) => <option key={client.id} value={client.name} />)}</datalist></L><L label="Sitio *"><input value={form.site || ""} onChange={(event) => set({ site: event.target.value })} className="u-input" /></L><L label="Contacto"><input value={form.contact || ""} onChange={(event) => set({ contact: event.target.value })} className="u-input" /></L><L label="Técnico de campo"><input list="edit-order-techs" value={form.tech || ""} onChange={(event) => set({ tech: event.target.value })} className="u-input" /><datalist id="edit-order-techs">{fieldTechs.map((user) => <option key={user.id} value={user.name} />)}</datalist></L><L label="Tipo de servicio"><select value={form.service || SERVICE_TYPES[0]} onChange={(event) => set({ service: event.target.value })} className="u-input">{SERVICE_TYPES.map((service) => <option key={service}>{service}</option>)}</select></L><L label="Fecha"><input type="date" value={form.date || ""} onChange={(event) => set({ date: event.target.value })} className="u-input" /></L><L label="Estado"><select value={form.status || O_STATUS[0]} onChange={(event) => set({ status: event.target.value })} className="u-input">{O_STATUS.map((status) => <option key={status}>{status}</option>)}</select></L><L label="Clasificación"><input value={form.category || ""} onChange={(event) => set({ category: event.target.value })} className="u-input" /></L></div></section>
+          <section><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Cliente y servicio</h3><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Cliente *"><input list="edit-order-clients" value={form.client || ""} onChange={(event) => { const client = clients.find((item) => item.name === event.target.value); set({ client: event.target.value, ...(client ? { site: client.site || form.site, contact: client.contactName || form.contact } : {}) }); }} className="u-input" /><datalist id="edit-order-clients">{clients.map((client) => <option key={client.id} value={client.name} />)}</datalist></L><L label="Sitio *"><input value={form.site || ""} onChange={(event) => set({ site: event.target.value })} className="u-input" /></L><L label="Contacto"><input value={form.contact || ""} onChange={(event) => set({ contact: event.target.value })} className="u-input" /></L><L label="Técnico de campo"><input list="edit-order-techs" value={form.tech || ""} onChange={(event) => set({ tech: event.target.value })} className="u-input" /><datalist id="edit-order-techs">{fieldTechs.map((user) => <option key={user.id} value={user.name} />)}</datalist></L><L label="Tipo de servicio"><select value={form.service || SERVICE_TYPES[0]} onChange={(event) => set({ service: event.target.value })} className="u-input">{SERVICE_TYPES.map((service) => <option key={service}>{service}</option>)}</select></L><L label="Fecha"><input type="date" value={form.date || ""} onChange={(event) => set({ date: event.target.value })} className="u-input" /></L><L label="Estado"><select value={form.status || O_STATUS[0]} onChange={(event) => set({ status: event.target.value })} className="u-input">{O_STATUS.map((status) => <option key={status}>{status}</option>)}</select></L><L label="Clasificación"><input value={form.category || ""} onChange={(event) => set({ category: event.target.value })} className="u-input" /></L></div></section>
 
           <section><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Trabajo realizado</h3><div className="space-y-2"><input value={form.equipo || ""} onChange={(event) => set({ equipo: event.target.value })} placeholder="Equipo o sistema intervenido" className="u-input" /><textarea value={form.sintoma || ""} onChange={(event) => set({ sintoma: event.target.value })} rows={2} placeholder="Síntoma o falla reportada" className="u-input resize-none" /><textarea value={form.solucion || ""} onChange={(event) => set({ solucion: event.target.value })} rows={3} placeholder="Intervención y solución" className="u-input resize-none" /></div></section>
 
@@ -2223,8 +2267,8 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         <div key={step} className="motion-step space-y-4">
         {step === 0 && (<>
         <Section title="Cliente y sitio">
-          <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => { setClientMode("existing"); const selected = clients.find((c) => c.id === clientId); setSiteLabel(selected?.site || ""); setLocation(null); }}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => { setClientMode("new"); setSiteLabel(newClient.site || ""); setLocation(null); }}>Cliente nuevo</Toggle></div>
-          {clientMode === "existing" ? (<select value={clientId} onChange={(e) => { const nextId = e.target.value; const selected = clients.find((c) => c.id === nextId); setClientId(nextId); setSiteLabel(selected?.site || ""); setLocation(null); }} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name} — {c.site}</option>)}</select>) : (<input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className={`u-input ${errCls(!newClient.name)}`} />)}
+          <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => { setClientMode("existing"); const selected = clients.find((c) => c.id === clientId); setSiteLabel(selected?.site || ""); setContact(selected?.contactName || ""); setLocation(null); }}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => { setClientMode("new"); setSiteLabel(newClient.site || ""); setLocation(null); }}>Cliente nuevo</Toggle></div>
+          {clientMode === "existing" ? (<select value={clientId} onChange={(e) => { const nextId = e.target.value; const selected = clients.find((c) => c.id === nextId); setClientId(nextId); setSiteLabel(selected?.site || ""); setContact(selected?.contactName || ""); setLocation(null); }} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name} — {c.site}</option>)}</select>) : (<input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className={`u-input ${errCls(!newClient.name)}`} />)}
           <div className="mt-2"><ReqLabel>Sitio de intervención</ReqLabel></div>
           <input list="known-client-sites" value={siteLabel} onChange={(e) => { const value = e.target.value; setSiteLabel(value); if (clientMode === "new") setNewClient((current) => ({ ...current, site: value })); setLocation((current) => current ? { ...current, label: value } : current); }} placeholder="Buscar un sitio o escribir una etiqueta" className={`u-input mt-1 ${errCls(!siteLabel.trim())}`} />
           <datalist id="known-client-sites">{clients.filter((c) => c.site).map((c) => <option key={c.id} value={c.site} label={c.name} />)}</datalist>
@@ -2646,13 +2690,13 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
 const IVA_CONDITIONS = ["IVA Responsable Inscripto", "Responsable Monotributo", "IVA Sujeto Exento", "Consumidor Final", "IVA No Responsable", "Sujeto No Categorizado"];
 const SALE_CONDITIONS = ["Contado", "Transferencia Bancaria", "Cheque", "eCheq", "Cuenta Corriente", "Tarjeta de Crédito", "Otro"];
 function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", cuit: "", site: "", code: "" });
+  const [nf, setNf] = useState({ name: "", cuit: "", contactName: "", site: "", code: "" });
   const [editingClient, setEditingClient] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const suggest = (name) => (name || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
   const add = async () => {
     if (!nf.name.trim()) return;
-    try { await onAdd({ name: nf.name.trim(), cuit: nf.cuit.trim(), site: nf.site.trim(), code: nf.code.trim().toUpperCase() || undefined }); setNf({ name: "", cuit: "", site: "", code: "" }); }
+    try { await onAdd({ name: nf.name.trim(), cuit: nf.cuit.trim(), contactName: nf.contactName.trim(), site: nf.site.trim(), code: nf.code.trim().toUpperCase() || undefined }); setNf({ name: "", cuit: "", contactName: "", site: "", code: "" }); }
     catch (e) { onErr(e); }
   };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
@@ -2677,6 +2721,7 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
         <div className="space-y-2">
           <L label="Apellido y Nombre / Razón Social"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value, code: nf.code || suggest(e.target.value) })} placeholder="Razón social" className="u-input" /></L>
           <L label="CUIT"><input value={nf.cuit} onChange={(e) => setNf({ ...nf, cuit: e.target.value })} placeholder="20-12345678-9" className="u-input" /></L>
+          <L label="Atención (contacto)"><input value={nf.contactName} onChange={(e) => setNf({ ...nf, contactName: e.target.value })} placeholder="Nombre de la persona de contacto" className="u-input" /></L>
           <L label="Sitio / ubicación"><input value={nf.site} onChange={(e) => setNf({ ...nf, site: e.target.value })} placeholder="Planta, línea, sala…" className="u-input" /></L>
           <L label="Código (para el N° de OT)"><input value={nf.code} onChange={(e) => setNf({ ...nf, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} placeholder="Ej. LDV" className="u-input font-mono" /></L>
           <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar cliente</button>
