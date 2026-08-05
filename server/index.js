@@ -99,6 +99,8 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS tasks   ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS notifications ( id text PRIMARY KEY, user_id text, text text, link text, read boolean DEFAULT false, created_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS parts ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS suppliers ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS purchase_orders ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS app_settings ( key text PRIMARY KEY, value jsonb, updated_at timestamptz DEFAULT now());
   `);
   // Migración idempotente para instalaciones existentes
@@ -363,6 +365,16 @@ async function uniqueClientCode(base, excludeId) {
   for (let i = 1; i < 1000; i++) { const cand = (base.slice(0, 2) + i); if (!taken.has(cand)) return cand; }
   return base + Date.now().toString().slice(-3);
 }
+function codeFromSupplierName(name) {
+  return (String(name || "PRV").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3)) || "PRV";
+}
+async function uniqueSupplierCode(base, excludeId) {
+  const rows = (await pool.query("SELECT id, data->>'code' AS c FROM suppliers")).rows;
+  const taken = new Set(rows.filter((r) => r.id !== excludeId).map((r) => r.c).filter(Boolean));
+  if (!taken.has(base)) return base;
+  for (let i = 1; i < 1000; i++) { const cand = (base.slice(0, 2) + i); if (!taken.has(cand)) return cand; }
+  return base + Date.now().toString().slice(-3);
+}
 async function uniqueProjectKey(base, db = pool) {
   const clean = (String(base || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)) || "PRJ";
   const taken = new Set((await db.query("SELECT upper(data->>'key') AS key FROM projects")).rows.map((row) => row.key).filter(Boolean));
@@ -499,7 +511,7 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -511,6 +523,8 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
     pool.query("SELECT data FROM parts ORDER BY data->>'name'"),
     loadBranding(),
+    pool.query("SELECT data FROM suppliers ORDER BY data->>'name'"),
+    pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC"),
   ]);
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
@@ -533,6 +547,8 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
+    suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
+    purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
   });
 });
@@ -747,6 +763,192 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, invoice]);
   return invoice;
 }
+
+/* ------------------------------------------------ Órdenes de compra ------------------------------------------------ */
+const PO_STAGES = ["Borrador", "Enviada", "Confirmada", "Recibida", "Cancelada"];
+const PO_CURRENCIES = ["USD", "ARS", "EUR"];
+const PO_VAT_RATES = [10.5, 21];
+const normalizePurchaseOrderItem = (item) => {
+  const currency = PO_CURRENCIES.includes(item?.currency) ? item.currency : "USD";
+  const vatRate = PO_VAT_RATES.includes(Number(item?.vatRate)) ? Number(item.vatRate) : 21;
+  const qty = Math.max(0, Number(item?.qty) || 0);
+  const unitPrice = Math.max(0, Number(item?.unitPrice) || 0);
+  const exchangeRate = currency === "USD" ? 1 : Math.max(0, Number(item?.exchangeRate) || 0);
+  const netAmount = Math.round(qty * unitPrice * 100) / 100;
+  const vatAmount = Math.round(netAmount * vatRate) / 100;
+  const grossAmount = Math.round((netAmount + vatAmount) * 100) / 100;
+  const netAmountUsd = Math.round((exchangeRate > 0 ? netAmount / exchangeRate : 0) * 100) / 100;
+  const vatAmountUsd = Math.round((exchangeRate > 0 ? vatAmount / exchangeRate : 0) * 100) / 100;
+  const grossAmountUsd = Math.round((netAmountUsd + vatAmountUsd) * 100) / 100;
+  return { ...item, description: String(item?.description || "").trim().slice(0, 200), sku: String(item?.sku || "").trim().slice(0, 60), unit: String(item?.unit || "u").trim().slice(0, 10) || "u", qty, unitPrice, currency, vatRate, exchangeRate, netAmount, vatAmount, grossAmount, netAmountUsd, vatAmountUsd, grossAmountUsd };
+};
+const normalizePurchaseOrder = (input, previous = {}) => {
+  const po = { ...previous, ...(input || {}) };
+  delete po._updatedAt;
+  po.stage = PO_STAGES.includes(po.stage) ? po.stage : "Borrador";
+  po.number = String(po.number || po.id || "").trim().slice(0, 40);
+  po.supplierId = String(po.supplierId || "").trim();
+  po.supplierName = String(po.supplierName || "").trim();
+  po.projectId = String(po.projectId || "").trim();
+  po.supplierInvoiceNumber = String(po.supplierInvoiceNumber || "").trim().slice(0, 80);
+  po.dueDate = String(po.dueDate || "").slice(0, 10);
+  po.notes = String(po.notes || "").trim().slice(0, 1000);
+  po.items = Array.isArray(po.items) ? po.items.map(normalizePurchaseOrderItem).filter((item) => item.description && item.qty > 0) : [];
+  po.netAmountUsd = Math.round(po.items.reduce((sum, item) => sum + item.netAmountUsd, 0) * 100) / 100;
+  po.vatAmountUsd = Math.round(po.items.reduce((sum, item) => sum + item.vatAmountUsd, 0) * 100) / 100;
+  po.grossAmountUsd = Math.round((po.netAmountUsd + po.vatAmountUsd) * 100) / 100;
+  return po;
+};
+// Genera/actualiza el compromiso de pago en Finanzas al recibir la orden de compra; lo retira si se reabre o cancela.
+async function upsertPurchaseOrderPayable(po, user, db = pool) {
+  const id = `EXP-PO-${po.id}`;
+  if (po.stage !== "Recibida") {
+    await db.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourcePurchaseOrderId' IS NOT NULL", [id]);
+    return null;
+  }
+  const existing = (await db.query("SELECT id,data FROM financial_movements WHERE id=$1", [id])).rows[0];
+  const effectiveVatRate = po.netAmountUsd > 0 ? Math.round((po.vatAmountUsd / po.netAmountUsd) * 1000) / 10 : 21;
+  const movement = {
+    ...(existing?.data || {}), id, kind: "expense", category: "Compras a proveedores",
+    concept: `${po.number || po.id} · ${po.supplierName || "Proveedor"}`,
+    amount: po.grossAmountUsd, currency: "USD", exchangeRate: 1, amountUsd: po.grossAmountUsd,
+    vatIncluded: true, vatRate: effectiveVatRate, netAmountUsd: po.netAmountUsd, vatAmountUsd: po.vatAmountUsd, grossAmountUsd: po.grossAmountUsd,
+    date: String(po.receivedAt || existing?.data?.date || new Date().toISOString()).slice(0, 10),
+    projectId: po.projectId || "", supplier: po.supplierName || "", receiptNumber: po.supplierInvoiceNumber || po.number || po.id,
+    paymentStatus: existing?.data?.paymentStatus || "pending", paidAt: existing?.data?.paidAt || "",
+    sourcePurchaseOrderId: po.id, purchaseOrderNumber: po.number || po.id,
+    detail: `Generado automáticamente al recibir la orden de compra ${po.number || po.id}. Se actualiza si cambian los ítems.`,
+    createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name,
+    updatedAt: new Date().toISOString(),
+  };
+  await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
+  return movement;
+}
+
+app.get("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM suppliers ORDER BY data->>'name'");
+  res.json(rows.map((r) => r.data));
+});
+app.post("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const s = { ...(req.body || {}) };
+  s.name = String(s.name || "").trim();
+  if (!s.name) return res.status(400).json({ error: "El nombre del proveedor es obligatorio" });
+  const existingRows = (await pool.query("SELECT data FROM suppliers")).rows.map((r) => r.data);
+  const dup = existingRows.find((x) => (x.name || "").trim().toLowerCase() === s.name.toLowerCase());
+  if (dup) return res.json(dup);
+  if (!s.id) s.id = "sup" + Date.now();
+  s.cuit = String(s.cuit || "").trim().slice(0, 20);
+  s.address = String(s.address || "").trim().slice(0, 200);
+  s.contact = String(s.contact || "").trim().slice(0, 120);
+  s.paymentTermsDays = Math.max(0, Math.round(Number(s.paymentTermsDays) || 0));
+  s.active = s.active !== false;
+  if (s.code) {
+    const taken = new Set(existingRows.map((x) => x.code).filter(Boolean));
+    if (taken.has(s.code)) return res.status(400).json({ error: "Ese código de proveedor ya existe" });
+  } else {
+    s.code = await uniqueSupplierCode(codeFromSupplierName(s.name));
+  }
+  try { await pool.query("INSERT INTO suppliers(id,data) VALUES($1,$2)", [s.id, s]); }
+  catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un proveedor con ese identificador" }); throw error; }
+  res.json(s);
+});
+app.patch("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM suppliers WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "No existe" });
+  const patch = req.body || {};
+  if (patch.code) {
+    const code = await uniqueSupplierCode(patch.code, req.params.id);
+    if (code !== patch.code) return res.status(400).json({ error: "Ese código de proveedor ya existe" });
+  }
+  const merged = { ...rows[0].data, ...patch, id: req.params.id };
+  merged.name = String(merged.name || "").trim();
+  if (!merged.name) return res.status(400).json({ error: "El nombre del proveedor es obligatorio" });
+  if (patch.paymentTermsDays !== undefined) merged.paymentTermsDays = Math.max(0, Math.round(Number(patch.paymentTermsDays) || 0));
+  const duplicateName = (await pool.query("SELECT 1 FROM suppliers WHERE id<>$1 AND lower(trim(data->>'name'))=lower($2) LIMIT 1", [req.params.id, merged.name])).rows[0];
+  if (duplicateName) return res.status(409).json({ error: "Ya existe otro proveedor con ese nombre" });
+  await pool.query("UPDATE suppliers SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  res.json(merged);
+});
+app.delete("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const linked = (await pool.query("SELECT count(*)::int count FROM purchase_orders WHERE data->>'supplierId'=$1", [req.params.id])).rows[0].count;
+  if (linked) return res.status(409).json({ error: `No se puede eliminar: el proveedor tiene ${linked} orden(es) de compra vinculada(s). Reasigná o eliminá primero esas órdenes.` });
+  const deleted = await pool.query("DELETE FROM suppliers WHERE id=$1 RETURNING id", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  res.status(204).end();
+});
+
+app.get("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC");
+  res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+});
+app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const po = normalizePurchaseOrder(req.body);
+  if (!po.supplierId) return res.status(400).json({ error: "El proveedor es obligatorio" });
+  const supplier = (await pool.query("SELECT data FROM suppliers WHERE id=$1", [po.supplierId])).rows[0]?.data;
+  if (!supplier) return res.status(400).json({ error: "El proveedor seleccionado ya no existe." });
+  po.supplierName = supplier.name;
+  if (!po.items.length) return res.status(400).json({ error: "Agregá al menos un ítem a la orden de compra." });
+  if (po.stage === "Recibida" && !po.supplierInvoiceNumber) return res.status(400).json({ error: "El número de factura del proveedor es obligatorio para marcar la orden como Recibida." });
+  if (!po.id) {
+    const year = new Date().getFullYear();
+    const rows = (await pool.query("SELECT id FROM purchase_orders WHERE id LIKE $1", [`OC-${year}-%`])).rows;
+    const next = Math.max(0, ...rows.map((row) => Number(String(row.id).split("-").pop()) || 0)) + 1;
+    po.id = `OC-${year}-${String(next).padStart(3, "0")}`;
+  }
+  po.number = po.number || po.id;
+  po.createdAt = po.createdAt || new Date().toISOString();
+  if (po.stage === "Recibida") po.receivedAt = po.receivedAt || new Date().toISOString();
+  po.activity = [...(po.activity || []), { type: "created", text: "Orden de compra creada", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("INSERT INTO purchase_orders(id,data) VALUES($1,$2)", [po.id, po]);
+    const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    await db.query("COMMIT");
+    res.json({ ...po, _generatedMovement: generatedMovement });
+  } catch (error) {
+    await db.query("ROLLBACK");
+    if (error.code === "23505") return res.status(409).json({ error: "Ya existe una orden de compra con ese identificador." });
+    return res.status(500).json({ error: "No se pudo guardar la orden de compra de forma consistente." });
+  } finally { db.release(); }
+});
+app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const current = (await pool.query("SELECT data FROM purchase_orders WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!current) return res.status(404).json({ error: "No existe" });
+  const po = normalizePurchaseOrder(req.body, current);
+  po.id = req.params.id;
+  if (!po.supplierId) return res.status(400).json({ error: "El proveedor es obligatorio" });
+  if (po.supplierId !== current.supplierId) {
+    const supplier = (await pool.query("SELECT data FROM suppliers WHERE id=$1", [po.supplierId])).rows[0]?.data;
+    if (!supplier) return res.status(400).json({ error: "El proveedor seleccionado ya no existe." });
+    po.supplierName = supplier.name;
+  }
+  po.number = po.number || po.id;
+  if (!po.items.length) return res.status(400).json({ error: "Agregá al menos un ítem a la orden de compra." });
+  if (po.stage === "Recibida" && !po.supplierInvoiceNumber) return res.status(400).json({ error: "El número de factura del proveedor es obligatorio para marcar la orden como Recibida." });
+  if (po.stage === "Recibida" && current.stage !== "Recibida") po.receivedAt = po.receivedAt || new Date().toISOString();
+  const changes = [];
+  if (po.stage !== current.stage) changes.push(`Estado: ${current.stage} → ${po.stage}`);
+  if (!changes.length) changes.push("Orden de compra actualizada");
+  po.activity = [...(current.activity || []), { type: "update", text: changes.join(" · "), by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("UPDATE purchase_orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, po]);
+    const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    await db.query("COMMIT");
+    res.json({ ...po, _generatedMovement: generatedMovement });
+  } catch (error) {
+    await db.query("ROLLBACK");
+    return res.status(500).json({ error: "No se pudo actualizar la orden de compra de forma consistente." });
+  } finally { db.release(); }
+});
+app.delete("/api/purchase-orders/:id", auth, requireRole("admin"), async (req, res) => {
+  await pool.query("DELETE FROM financial_movements WHERE data->>'sourcePurchaseOrderId'=$1", [req.params.id]);
+  const deleted = await pool.query("DELETE FROM purchase_orders WHERE id=$1 RETURNING id", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  res.status(204).end();
+});
 
 app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res) => {
   const budget = normalizeBudget(req.body);
@@ -1016,6 +1218,7 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   const current = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   if (current.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo y no se edita manualmente." });
+  if (current.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra y no se edita manualmente." });
   const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
@@ -1036,6 +1239,7 @@ app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (re
   const movement = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (movement?.sourceBudgetId) return res.status(409).json({ error: "Esta factura se administra desde el presupuesto. Cambia su etapa para quitarla de Finanzas." });
   if (movement?.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo. Se actualiza o se quita solo si la OT deja de estar aprobada o vinculada a un proyecto." });
+  if (movement?.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra. Cambia su estado para quitarla de Finanzas." });
   await pool.query("DELETE FROM financial_movements WHERE id=$1", [req.params.id]);
   res.status(204).end();
 });
