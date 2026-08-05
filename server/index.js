@@ -690,13 +690,13 @@ const normalizeBudget = (input, previous = {}) => {
   budget.purchaseOrderNotes = String(budget.purchaseOrderNotes || "").trim().slice(0, 500);
   budget.durationDays = Math.max(0, Math.round(Number(budget.durationDays) || 0));
   budget.teamSize = Math.max(1, Math.round(Number(budget.teamSize) || 1));
-  budget.targetMargin = Math.min(90, Math.max(0, Number(budget.targetMargin) || 35));
+  budget.targetMargin = Math.min(100, Math.max(0, Number(budget.targetMargin) || 35));
   budget.items = Array.isArray(budget.items) ? budget.items.map((item) => {
     const laborRole = LABOR_ROLE_COST[item.description] != null ? item.description : LABOR_DEFAULT_ROLE[item.type];
     const isLabor = Boolean(laborRole && LABOR_ROLE_COST[laborRole] != null);
     const originalCost = Math.max(0, Number(item.unitCost) || 0);
     const unitCost = isLabor ? LABOR_ROLE_COST[laborRole] : originalCost;
-    const suggestedSale = Math.round((unitCost / (1 - budget.targetMargin / 100)) * 100) / 100;
+    const suggestedSale = budget.targetMargin >= 100 ? unitCost : Math.round((unitCost / (1 - budget.targetMargin / 100)) * 100) / 100;
     return { ...item, description: isLabor ? laborRole : item.description, unit: isLabor ? "h" : item.unit, qty: Math.max(0, Number(item.qty) || 0), unitPrice: Math.max(0, originalCost <= 0 && isLabor ? suggestedSale : Number(item.unitPrice) || 0), unitCost };
   }) : [];
   budget.additionalCosts = Array.isArray(budget.additionalCosts) ? budget.additionalCosts.map(normalizeAdditionalCost).filter((cost) => cost.description && cost.amount > 0) : [];
