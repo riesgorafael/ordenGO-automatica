@@ -720,7 +720,6 @@ export default function App() {
   // En escritorio, "Administración" se pliega en un único menú desplegable
   // para que la barra no desborde el ancho disponible con muchas pestañas.
   const adminGroupTabs = modTabs.filter((tab) => tab.group === "Administración");
-  const firstAdminIndex = modTabs.findIndex((tab) => tab.group === "Administración");
   const adminGroupActive = adminGroupTabs.some((tab) => tab.id === activeModule);
   const adminGroupBadge = adminGroupTabs.reduce((sum, tab) => sum + (tab.badge || 0), 0);
 
@@ -763,43 +762,43 @@ export default function App() {
             <button onClick={logout} title="Cerrar sesión" aria-label="Cerrar sesión" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
-        <div className={`nav-tabs-scroll mx-auto max-w-6xl overflow-x-auto px-2 ${tvMode ? "hidden" : "hidden sm:block"}`}>
-          <nav className="flex gap-0.5 pb-1">
-            {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
-              const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
-              if (group === "Administración") {
-                if (index !== firstAdminIndex) return null;
+        <div className={`mx-auto flex max-w-6xl items-stretch gap-1 px-2 ${tvMode ? "hidden" : "hidden sm:flex"}`}>
+          <div className="nav-tabs-scroll min-w-0 flex-1 overflow-x-auto">
+            <nav className="flex gap-0.5 pb-1">
+              {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
+                if (group === "Administración") return null;
+                const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
                 return (
-                  <React.Fragment key="admin-group">
+                  <React.Fragment key={id}>
                     {divider}
-                    <div ref={adminMenuRef} className="relative shrink-0">
-                      <button onClick={() => setAdminMenuOpen((v) => !v)} aria-expanded={adminMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${adminGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
-                        <Settings2 className="h-4 w-4" /> Administración
-                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${adminMenuOpen ? "rotate-180" : ""}`} />
-                        {adminGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{adminGroupBadge}</span>}
-                      </button>
-                      {adminMenuOpen && (
-                        <div role="menu" className="motion-popover absolute left-0 top-full z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1.5 text-slate-800 shadow-lg">
-                          {adminGroupTabs.map((tab) => (
-                            <button key={tab.id} role="menuitem" onClick={() => { navigateModule(tab.id); setAdminMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${activeModule === tab.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
-                              <tab.icon className="h-4 w-4 shrink-0" /> {tab.label}
-                              {tab.badge > 0 && <span className="ml-auto grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{tab.badge}</span>}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
                   </React.Fragment>
                 );
-              }
-              return (
-                <React.Fragment key={id}>
-                  {divider}
-                  <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
-                </React.Fragment>
-              );
-            })}
-          </nav>
+              })}
+            </nav>
+          </div>
+          {adminGroupTabs.length > 0 && (
+            <>
+              <span aria-hidden="true" className="my-2 w-px shrink-0 bg-slate-700" />
+              <div ref={adminMenuRef} className="relative shrink-0 py-1">
+                <button onClick={() => setAdminMenuOpen((v) => !v)} aria-expanded={adminMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${adminGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
+                  <Settings2 className="h-4 w-4" /> Administración
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${adminMenuOpen ? "rotate-180" : ""}`} />
+                  {adminGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{adminGroupBadge}</span>}
+                </button>
+                {adminMenuOpen && (
+                  <div role="menu" className="motion-popover absolute right-0 top-full z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1.5 text-slate-800 shadow-lg">
+                    {adminGroupTabs.map((tab) => (
+                      <button key={tab.id} role="menuitem" onClick={() => { navigateModule(tab.id); setAdminMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${activeModule === tab.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
+                        <tab.icon className="h-4 w-4 shrink-0" /> {tab.label}
+                        {tab.badge > 0 && <span className="ml-auto grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{tab.badge}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </header>
 
