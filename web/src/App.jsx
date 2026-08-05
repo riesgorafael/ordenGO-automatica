@@ -592,7 +592,7 @@ export default function App() {
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
   if (!isOffice && module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
+    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
@@ -1878,7 +1878,7 @@ function ReasonDialog({ onClose, onConfirm }) {
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted }) {
+function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
   const fieldTechs = users.filter((u) => u.active && u.role === "tecnico");
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
@@ -1932,6 +1932,11 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   useEffect(() => { if (technical.startedAt) setLaborHours(round2(elapsedWorkMs / 3600000)); }, [technical.startedAt, technical.completedAt, technical.workSessions, timelineNow]);
   const profile = SERVICE_PROFILES[service] || SERVICE_PROFILES["Mantenimiento correctivo"];
   const timelineAction = (action) => {
+    if (action === "finish" && !solucion.trim()) {
+      toast?.("Completá 'Procedimiento, trabajo realizado y solución aplicada' en Intervención realizada antes de finalizar.", "error");
+      setStep(2);
+      return;
+    }
     const now = new Date().toISOString();
     const next = { ...technical, workSessions: [...(technical.workSessions || [])] };
     if (action === "arrival") next.arrivalAt = next.arrivalAt || now;
