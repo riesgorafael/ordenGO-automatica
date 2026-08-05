@@ -404,6 +404,41 @@ const orderBusinessErrors = (order) => {
   }
   return errors;
 };
+// Reconcilia el costo real de mano de obra + materiales de una OT aprobada con Finanzas,
+// para que "Ejecución del presupuesto" refleje costos reales sin carga manual duplicada.
+async function upsertOrderCostExpense(order) {
+  const id = `EXP-ORDER-${order.id}`;
+  if (!order.projectId || !["Aprobada", "Facturada"].includes(order.status)) {
+    await pool.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
+    return null;
+  }
+  const actualHours = (Number(order.laborHours) || 0) + (Math.max(0, Number(order.technical?.billableWaitMinutes) || 0) / 60);
+  const laborCost = actualHours * (Number(order.technicians) || 1) * (Number(order.laborCost) || 0);
+  const materialsCost = (order.materials || []).reduce((sum, m) => sum + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
+  const totalCost = Math.round((laborCost + materialsCost) * 100) / 100;
+  if (totalCost <= 0) {
+    await pool.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
+    return null;
+  }
+  const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [order.projectId])).rows[0]?.data;
+  const existing = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [id])).rows[0]?.data;
+  const movement = {
+    ...(existing || {}), id, kind: "expense", category: "Órdenes de trabajo",
+    concept: `Costo real de mano de obra y materiales · OT ${order.id}`,
+    amount: totalCost, currency: "USD", exchangeRate: 1, amountUsd: totalCost,
+    vatIncluded: false, vatRate: 0, netAmountUsd: totalCost, vatAmountUsd: 0, grossAmountUsd: totalCost,
+    date: String(order.technical?.completedAt || order.date || "").slice(0, 10),
+    projectId: order.projectId, clientId: project?.clientId || "", clientName: order.client || project?.client || "",
+    budgetId: project?.budgetId || "", budgetNumber: existing?.budgetNumber || "",
+    sourceOrderId: order.id, paymentStatus: "paid", paidAt: String(order.technical?.completedAt || order.date || "").slice(0, 10),
+    receiptNumber: order.id, supplier: "",
+    detail: `Generado automáticamente al aprobar la orden de trabajo ${order.id}. Se actualiza si cambian horas, costo/h o materiales.`,
+    createdAt: existing?.createdAt || new Date().toISOString(), createdBy: existing?.createdBy || "system", createdByName: existing?.createdByName || "Sistema (OT aprobada)",
+    updatedAt: new Date().toISOString(),
+  };
+  await pool.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
+  return movement;
+}
 // ¿El usuario (si es técnico) tiene permiso sobre este proyecto?
 async function tecCanProject(user, projectId) {
   if (!isProjectScoped(user.role)) return true;
@@ -645,8 +680,10 @@ const normalizeBudget = (input, previous = {}) => {
   delete budget._updatedAt;
   budget.currency = "USD";
   budget.stage = BUDGET_STAGES.includes(budget.stage) ? budget.stage : "Borrador";
-  budget.probability = BUDGET_STAGE_PROBABILITY[budget.stage];
+  budget.probabilityOverridden = Boolean(budget.probabilityOverridden);
+  budget.probability = budget.probabilityOverridden ? Math.min(100, Math.max(0, Number(budget.probability) || 0)) : BUDGET_STAGE_PROBABILITY[budget.stage];
   if (budget.projectId && budget.stage !== "Facturado") { budget.stage = "Aprobado"; budget.probability = 100; }
+  budget.negativeMarginReason = String(budget.negativeMarginReason || "").trim().slice(0, 500);
   budget.number = String(budget.number || budget.id || "").trim().slice(0, 40);
   budget.purchaseOrderNumber = String(budget.purchaseOrderNumber || "").trim().slice(0, 80);
   budget.purchaseOrderDate = String(budget.purchaseOrderDate || "").slice(0, 10);
@@ -686,7 +723,11 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   const duplicate = (await db.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 AND ($2::text IS NULL OR id<>$2) LIMIT 1", [invoiceNumber, existing?.id || null])).rows[0];
   if (duplicate) throw new Error("DUPLICATE_INVOICE");
   const id = existing?.id || `INV-${budget.id}`;
-  const invoice = { ...(existing?.data || {}), id, kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vatAmount, grossAmountUsd: grossAmount, currency: "USD", exchangeRate: 1, date: invoiceDate, dueDate: budget.invoiceDueDate || "", invoiceNumber, receiptNumber: invoiceNumber, detail: budget.invoiceDetail || "", projectId: budget.projectId || "", budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || "", clientName: budget.client || "", sourceBudgetId: budget.id, paymentStatus: existing?.data?.paymentStatus || "pending", createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name, updatedAt: new Date().toISOString() };
+  // Referencia informativa en ARS al tipo de cambio BNA disponible al momento de facturar.
+  // No cambia la moneda de registro (USD): es solo trazabilidad para el circuito fiscal local.
+  const arsQuote = bnaRateCache?.data?.arsPerUsd || null;
+  const arsReference = arsQuote ? { arsPerUsd: arsQuote, source: "BNA dólar billete vendedor", quotedAt: bnaRateCache?.data?.updatedAt || null, netArs: Math.round(net * arsQuote * 100) / 100, vatArs: Math.round(vatAmount * arsQuote * 100) / 100, grossArs: Math.round(grossAmount * arsQuote * 100) / 100 } : (existing?.data?.arsReference || null);
+  const invoice = { ...(existing?.data || {}), id, kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vatAmount, grossAmountUsd: grossAmount, arsReference, currency: "USD", exchangeRate: 1, date: invoiceDate, dueDate: budget.invoiceDueDate || "", invoiceNumber, receiptNumber: invoiceNumber, detail: budget.invoiceDetail || "", projectId: budget.projectId || "", budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || "", clientName: budget.client || "", sourceBudgetId: budget.id, paymentStatus: existing?.data?.paymentStatus || "pending", createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name, updatedAt: new Date().toISOString() };
   await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, invoice]);
   return invoice;
 }
@@ -702,6 +743,7 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res)
   }
   budget.number = budget.number || budget.id;
   if (["Aprobado", "Facturado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
+  if (["Aprobado", "Facturado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
   if (budget.stage === "Facturado" && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
   if (budget.stage === "Facturado" && (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 LIMIT 1", [String(budget.invoiceNumber).trim()])).rows[0]) return res.status(409).json({ error: "Ya existe una factura con ese número." });
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id=$1 OR data->>'number'=$1 LIMIT 1", [budget.number])).rows[0];
@@ -749,6 +791,7 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req,
   budget.id = req.params.id;
   budget.number = budget.number || budget.id;
   if (["Aprobado", "Facturado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
+  if (["Aprobado", "Facturado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
   if (budget.stage === "Facturado" && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
   if (budget.stage === "Facturado") { const currentInvoiceId = (await pool.query("SELECT id FROM financial_movements WHERE data->>'sourceBudgetId'=$1 LIMIT 1", [budget.id])).rows[0]?.id; const duplicateInvoice = (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 AND ($2::text IS NULL OR id<>$2) LIMIT 1", [String(budget.invoiceNumber).trim(), currentInvoiceId || null])).rows[0]; if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." }); }
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id<>$2 AND (id=$1 OR data->>'number'=$1) LIMIT 1", [budget.number, req.params.id])).rows[0];
@@ -881,6 +924,16 @@ const normalizeFinancialMovement = (input, previous = {}) => {
     movement.netAmountUsd = Math.round(movement.amountUsd * 100) / 100;
     movement.vatAmountUsd = Math.round(movement.netAmountUsd * movement.vatRate) / 100;
     movement.grossAmountUsd = Math.round((movement.netAmountUsd + movement.vatAmountUsd) * 100) / 100;
+  } else if (movement.kind === "expense") {
+    // El importe cargado es el total pagado (IVA incluido si corresponde). Se descompone para
+    // poder calcular crédito fiscal, sin alterar el monto en caja que efectivamente salió.
+    movement.vatIncluded = Boolean(movement.vatIncluded);
+    movement.vatRate = movement.vatIncluded ? 21 : 0;
+    movement.grossAmountUsd = movement.amountUsd;
+    movement.netAmountUsd = movement.vatIncluded ? Math.round((movement.amountUsd / (1 + movement.vatRate / 100)) * 100) / 100 : movement.amountUsd;
+    movement.vatAmountUsd = movement.vatIncluded ? Math.round((movement.grossAmountUsd - movement.netAmountUsd) * 100) / 100 : 0;
+    movement.paymentStatus = ["paid", "pending"].includes(movement.paymentStatus) ? movement.paymentStatus : "paid";
+    movement.paidAt = movement.paymentStatus === "paid" ? String(movement.paidAt || movement.date || "").slice(0, 10) : "";
   }
   return movement;
 };
@@ -946,6 +999,7 @@ app.get("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, 
 app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const current = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
+  if (current.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo y no se edita manualmente." });
   const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
@@ -965,6 +1019,7 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
 app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const movement = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (movement?.sourceBudgetId) return res.status(409).json({ error: "Esta factura se administra desde el presupuesto. Cambia su etapa para quitarla de Finanzas." });
+  if (movement?.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo. Se actualiza o se quita solo si la OT deja de estar aprobada o vinculada a un proyecto." });
   await pool.query("DELETE FROM financial_movements WHERE id=$1", [req.params.id]);
   res.status(204).end();
 });
@@ -1146,6 +1201,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
     merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   }
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  if (merged.projectId || prev.projectId) { try { await upsertOrderCostExpense(merged); } catch (error) { console.error("No se pudo reconciliar el costo de la OT en Finanzas:", error); } }
   res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
 });
 
