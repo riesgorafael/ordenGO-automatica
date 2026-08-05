@@ -992,7 +992,13 @@ function FinanceModule({ movements, projects, budgets, clients, createSignal, on
     catch (error) { setBnaError(error.message || "No se pudo consultar la cotización del BNA."); }
     finally { setBnaLoading(false); }
   };
-  useEffect(() => { loadBnaQuote(); }, []);
+  useEffect(() => {
+    loadBnaQuote();
+    const interval = setInterval(loadBnaQuote, 15 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === "visible") loadBnaQuote(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
 
   const projectRows = projectFilter === "all" ? movements : movements.filter((movement) => movement.projectId === projectFilter);
   const monthRows = (key) => projectRows.filter((movement) => String(movement.date || "").slice(0, 7) === key);
@@ -1061,7 +1067,7 @@ function FinanceModule({ movements, projects, budgets, clients, createSignal, on
       <div className="grid min-h-28 grid-rows-[auto_auto_1fr] rounded-xl border border-sky-200 bg-white p-4 shadow-sm shadow-sky-100/60" aria-label="Cotización vendedor del dólar Banco Nación Argentina">
         <div className="flex items-center justify-between gap-3"><div><span className="block text-xs font-medium leading-4 text-slate-500">Cotización dólar BNA</span><span className="text-[9px] text-slate-400">Billete · vendedor</span></div><button type="button" onClick={loadBnaQuote} disabled={bnaLoading} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-sky-50 text-sky-600 hover:bg-sky-100 disabled:opacity-50" title="Actualizar cotización del BNA" aria-label="Actualizar cotización del BNA"><RefreshCw className={`h-4 w-4 ${bnaLoading ? "animate-spin" : ""}`} /></button></div>
         {bnaQuote ? <div className="mt-2 flex flex-wrap items-baseline gap-x-1.5"><span className="text-xs font-semibold text-slate-500">USD 1 =</span><b className="whitespace-nowrap text-lg leading-6 text-sky-700 sm:text-xl">{ars(bnaQuote.arsPerUsd)}</b></div> : bnaLoading ? <div className="mt-2 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> Consultando…</div> : <div className="mt-2 text-xs font-medium text-rose-600">Cotización no disponible</div>}
-        <div className="mt-1 self-end text-[9px] leading-4 text-slate-400">{bnaError || (bnaQuote?.stale ? "Última cotización disponible" : bnaUpdatedAt ? `Actualizada ${bnaUpdatedAt}` : "Fuente: Banco Nación Argentina")}</div>
+        <div className="mt-1 self-end text-[9px] leading-4 text-slate-400">{bnaError || (bnaQuote?.stale ? "Última cotización disponible" : bnaUpdatedAt ? `Actualizada ${bnaUpdatedAt} · se autoactualiza cada 15 min` : "Fuente: Banco Nación Argentina")}</div>
       </div>
     </div>
 
