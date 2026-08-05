@@ -361,6 +361,15 @@ export default function App() {
   }, [me, module, oTab, pTab]);
 
   useEffect(() => {
+    // Las pantallas TV (Monitor Oficina) quedan encendidas indefinidamente; re-consultan su propia
+    // configuración (nombre, modo TV, rotación) periódicamente para reflejar cambios hechos por un admin
+    // sin necesidad de recargar la página manualmente en el televisor.
+    if (!me || me.role !== "monitor_oficina" || !online) return;
+    const interval = window.setInterval(() => { boot().catch(() => {}); }, 60000);
+    return () => window.clearInterval(interval);
+  }, [me?.id, me?.role, online]);
+
+  useEffect(() => {
     if (!me || !online || module !== "orders") return;
     let cancelled = false;
     const refreshOrders = async () => {
