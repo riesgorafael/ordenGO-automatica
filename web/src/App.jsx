@@ -437,6 +437,20 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [me?.role, tvSettings.tvModeEnabled, tvSettings.tvCycleEnabled, tvSettings.tvCycleSeconds, projects.map((project) => project.id).join("|")]);
 
+  // Evita que la pantalla del televisor se suspenda mientras esté en modo TV.
+  // El Wake Lock del navegador se libera solo si la pestaña pierde visibilidad; lo reactivamos al volver.
+  useEffect(() => {
+    if (me?.role !== "monitor_oficina" || !tvSettings.tvModeEnabled) return;
+    if (!("wakeLock" in navigator)) return;
+    let wakeLock = null;
+    let cancelled = false;
+    const requestLock = async () => { try { wakeLock = await navigator.wakeLock.request("screen"); } catch {} };
+    requestLock();
+    const onVisibility = () => { if (document.visibilityState === "visible" && !cancelled) requestLock(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", onVisibility); wakeLock?.release().catch(() => {}); };
+  }, [me?.role, tvSettings.tvModeEnabled]);
+
   const logout = () => { setToken(null); setMe(null); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
