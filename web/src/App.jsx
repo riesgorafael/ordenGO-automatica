@@ -678,7 +678,12 @@ export default function App() {
   };
   const continueOrder = (order) => {
     const linkedClient = clients.find((client) => client.name === order.client);
-    const resumeStep = order.technical?.completedAt ? 3 : (!(order.photos || []).length || !(order.sintoma || order.technical?.diagnosis) ? 1 : order.technical?.startedAt ? 2 : 0);
+    // Retoma en el primer paso realmente incompleto, con las mismas reglas obligatorias del asistente
+    // (síntoma Y diagnóstico son ambos obligatorios, no alcanza con uno solo) — así no se salta ningún dato pendiente.
+    const step0Missing = !order.client || !(order.site || "").trim() || !(order.equipo || order.technical?.assetTag);
+    const step1Missing = !(order.sintoma || "").trim() || !(order.technical?.diagnosis || "").trim() || !(order.photos || []).length;
+    const step2Missing = !(order.solucion || "").trim() || !order.technical?.completedAt;
+    const resumeStep = step0Missing ? 0 : step1Missing ? 1 : step2Missing ? 2 : 3;
     setODetail(null);
     setOrderPrefill({ ...order, existingOrderId: order.id, clientMode: linkedClient ? "existing" : "new", clientId: linkedClient?.id || "", newClient: linkedClient ? undefined : { name: order.client || "", site: order.site || "" }, siteLabel: order.site || "", step: resumeStep });
     setOView("new");
