@@ -2646,13 +2646,15 @@ function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) 
 
 /* ===================================== INVENTARIO / REPUESTOS ===================================== */
 function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" });
+  const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "" });
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
-  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0 }); setNf({ name: "", unit: "u", price: "", cost: "", stock: "", minStock: "" }); } catch (e) { onErr(e); } };
-  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, stock: p.stock ?? 0, minStock: p.minStock ?? 0 }); };
+  // Si hay un margen de venta cargado, el precio de venta se recalcula automáticamente a partir del costo.
+  const applyMargin = (state) => state.margin !== "" && state.margin != null ? { ...state, price: String(wholeMoney(Number(state.cost || 0) * (1 + (Number(state.margin) || 0) / 100))) } : state;
+  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0 }); setNf({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "" }); } catch (e) { onErr(e); } };
+  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, margin: "", stock: p.stock ?? 0, minStock: p.minStock ?? 0 }); };
   const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), unit: ef.unit.trim() || "u", price: wholeMoney(ef.price), cost: wholeMoney(ef.cost), stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0 }); setEditId(null); } catch (e) { onErr(e); } };
   const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
   const sorted = [...parts].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -2673,8 +2675,9 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
                     <L label="Unidad"><input value={ef.unit} onChange={(e) => setEf({ ...ef, unit: e.target.value })} className="u-input" /></L>
                     <L label="Stock"><input type="number" value={ef.stock} onChange={(e) => setEf({ ...ef, stock: e.target.value })} className="u-input" /></L>
                     <L label="Stock mínimo" help="Nivel que activa la alerta de reposición. El repuesto se considera crítico cuando el stock disponible es igual o menor a este valor."><input type="number" value={ef.minStock} onChange={(e) => setEf({ ...ef, minStock: e.target.value })} className="u-input" /></L>
-                    <L label="Precio venta"><input type="number" min="0" step="1" value={ef.price} onChange={(e) => setEf({ ...ef, price: e.target.value })} onBlur={(e) => setEf({ ...ef, price: wholeMoney(e.target.value) })} className="u-input" /></L>
-                    <L label="Costo"><input type="number" min="0" step="1" value={ef.cost} onChange={(e) => setEf({ ...ef, cost: e.target.value })} onBlur={(e) => setEf({ ...ef, cost: wholeMoney(e.target.value) })} className="u-input" /></L>
+                    <L label="Costo"><input type="number" min="0" step="1" value={ef.cost} onChange={(e) => setEf(applyMargin({ ...ef, cost: e.target.value }))} onBlur={(e) => setEf({ ...ef, cost: wholeMoney(e.target.value) })} className="u-input" /></L>
+                    <L label="Margen de venta (%)" help="Si lo completás, el precio de venta se calcula automáticamente como costo + este porcentaje."><input type="number" min="0" step="1" value={ef.margin} onChange={(e) => setEf(applyMargin({ ...ef, margin: e.target.value }))} placeholder="Ej. 40" className="u-input" /></L>
+                    <L label="Precio venta"><input type="number" min="0" step="1" value={ef.price} onChange={(e) => setEf({ ...ef, price: e.target.value, margin: "" })} onBlur={(e) => setEf({ ...ef, price: wholeMoney(e.target.value) })} className="u-input" /></L>
                   </div>
                   <div className="mt-3 flex gap-2">
                     <button onClick={() => setEditId(null)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
@@ -2710,8 +2713,9 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
           <div className="grid grid-cols-2 gap-2">
             <L label="Unidad"><input value={nf.unit} onChange={(e) => setNf({ ...nf, unit: e.target.value })} placeholder="u / m / kg" className="u-input" /></L>
             <L label="Stock"><input type="number" value={nf.stock} onChange={(e) => setNf({ ...nf, stock: e.target.value })} className="u-input" /></L>
-            <L label="Precio venta"><input type="number" min="0" step="1" value={nf.price} onChange={(e) => setNf({ ...nf, price: e.target.value })} onBlur={(e) => setNf({ ...nf, price: wholeMoney(e.target.value) })} className="u-input" /></L>
-            <L label="Costo"><input type="number" min="0" step="1" value={nf.cost} onChange={(e) => setNf({ ...nf, cost: e.target.value })} onBlur={(e) => setNf({ ...nf, cost: wholeMoney(e.target.value) })} className="u-input" /></L>
+            <L label="Costo"><input type="number" min="0" step="1" value={nf.cost} onChange={(e) => setNf(applyMargin({ ...nf, cost: e.target.value }))} onBlur={(e) => setNf({ ...nf, cost: wholeMoney(e.target.value) })} className="u-input" /></L>
+            <L label="Margen de venta (%)" help="Si lo completás, el precio de venta se calcula automáticamente como costo + este porcentaje."><input type="number" min="0" step="1" value={nf.margin} onChange={(e) => setNf(applyMargin({ ...nf, margin: e.target.value }))} placeholder="Ej. 40" className="u-input" /></L>
+            <L label="Precio venta"><input type="number" min="0" step="1" value={nf.price} onChange={(e) => setNf({ ...nf, price: e.target.value, margin: "" })} onBlur={(e) => setNf({ ...nf, price: wholeMoney(e.target.value) })} className="u-input" /></L>
             <L label="Stock mínimo" help="Nivel que activa la alerta de reposición. El repuesto se considera crítico cuando el stock disponible es igual o menor a este valor."><input type="number" value={nf.minStock} onChange={(e) => setNf({ ...nf, minStock: e.target.value })} className="u-input" /></L>
           </div>
           <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar repuesto</button>
