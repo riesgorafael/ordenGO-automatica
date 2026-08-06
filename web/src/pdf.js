@@ -543,13 +543,13 @@ export function materialListReportPDF(ml, project, client) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(15, 23, 42);
   doc.text(String(audience === "interno" ? "AUTOMATICA ARG" : ml.client || "Cliente sin asignar").toUpperCase(), midX, y + headH / 2 - 3, { align: "center" });
   doc.setFontSize(9);
-  doc.text(`Listado de Materiales ${ml.discipline || ""}`.trim(), midX, y + headH / 2 + 5.5, { align: "center" });
+  doc.text("Listado de Materiales I&C", midX, y + headH / 2 + 5.5, { align: "center" });
 
   const docColX = M + logoColW + midColW;
   doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(71, 85, 105);
-  doc.text("Desarrollo Automatización", docColX + docColW / 2, y + 6, { align: "center" });
+  doc.text("Desarrollo Automatización", docColX + docColW / 2, y + headH / 2 - 2, { align: "center" });
   doc.setFont("helvetica", "bold"); doc.setFontSize(7.2); doc.setTextColor(15, 23, 42);
-  doc.text(ml.number || ml.id || "—", docColX + docColW / 2, y + 11, { align: "center" });
+  doc.text(ml.number || ml.id || "—", docColX + docColW / 2, y + headH / 2 + 3.5, { align: "center" });
   y += headH + 4;
 
   /* ---------- Versión / Planta / Proyecto — Fecha de actualización ---------- */

@@ -1526,9 +1526,14 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   o.materials = await materialsFromInventory(o.materials);
   if (!o.id) {
     const year = new Date().getFullYear();
-    const cl = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data)
-      .find((x) => (x.name || "").trim().toLowerCase() === String(o.client || "").trim().toLowerCase());
-    const code = (cl && cl.code) ? cl.code : "GEN";
+    // Un cliente puede tener varias plantas, cada una con su propio código de numeración.
+    // Si la orden indica de qué planta se trata (siteCode), ese código manda sobre el del cliente.
+    let code = String(o.siteCode || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    if (!code) {
+      const cl = (await pool.query("SELECT data FROM clients")).rows.map((r) => r.data)
+        .find((x) => (x.name || "").trim().toLowerCase() === String(o.client || "").trim().toLowerCase());
+      code = (cl && cl.code) ? cl.code : "GEN";
+    }
     const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id LIKE $1", [`OT-${code}-${year}-%`])).rows[0].c + 1;
     o.id = `OT-${code}-${year}-${String(n).padStart(3, "0")}`;
   }
