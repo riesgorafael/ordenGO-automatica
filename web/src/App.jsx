@@ -41,6 +41,17 @@ const applyBrandingTheme = (branding) => {
 const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#6366f1"];
 const money = (n) => `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const wholeMoney = (value) => Math.max(0, Math.round(Number(value) || 0));
+// Los diálogos de confirmación viven dentro de cada módulo (no en el estado global de App),
+// así que usamos una clase en <body> para poder ocultar el botón flotante mientras alguno esté abierto,
+// sin tener que subir el estado de cada "pendingDelete" hasta la raíz.
+let openDialogCount = 0;
+function useDialogOpenClass() {
+  useEffect(() => {
+    openDialogCount++;
+    document.body.classList.add("dialog-open");
+    return () => { openDialogCount = Math.max(0, openDialogCount - 1); if (openDialogCount === 0) document.body.classList.remove("dialog-open"); };
+  }, []);
+}
 // Un cliente puede tener varias plantas, cada una con su propio código (usado para numerar OTs).
 // Los clientes viejos solo tienen site/code sueltos — se tratan como una única planta.
 const clientSites = (c) => c?.sites?.length ? c.sites : (c?.site ? [{ code: c.code || "", name: c.site }] : []);
@@ -983,7 +994,7 @@ export default function App() {
 
       {/* Botón de acción flotante (móvil) */}
       {!isMonitor && (activeModule === "orders" || activeModule === "projects" || activeModule === "budgets" || activeModule === "finances" || activeModule === "purchaseOrders" || activeModule === "materialLists") && (
-        <button onClick={() => { if (activeModule === "orders") { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); } else if (activeModule === "budgets") setBudgetCreateSignal((value) => value + 1); else if (activeModule === "finances") setFinanceCreateSignal((value) => value + 1); else if (activeModule === "purchaseOrders") setPurchaseOrderCreateSignal((value) => value + 1); else if (activeModule === "materialLists") setMaterialListCreateSignal((value) => value + 1); else setEditing(null); }} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : activeModule === "purchaseOrders" ? "Nueva orden de compra" : activeModule === "materialLists" ? "Nuevo listado de materiales" : "Nueva tarea"}>
+        <button onClick={() => { if (activeModule === "orders") { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); } else if (activeModule === "budgets") setBudgetCreateSignal((value) => value + 1); else if (activeModule === "finances") setFinanceCreateSignal((value) => value + 1); else if (activeModule === "purchaseOrders") setPurchaseOrderCreateSignal((value) => value + 1); else if (activeModule === "materialLists") setMaterialListCreateSignal((value) => value + 1); else setEditing(null); }} className="mobile-fab fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : activeModule === "purchaseOrders" ? "Nueva orden de compra" : activeModule === "materialLists" ? "Nuevo listado de materiales" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
       )}
@@ -1101,7 +1112,8 @@ function ChangePassword({ onClose, forced, onDone }) {
 
 function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger, onClose, onConfirm }) {
   const mouseDownOnBackdrop = useRef(false);
-  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl ${danger ? "bg-rose-50 text-rose-600" : "bg-brand-50 text-brand-600"}`}>{danger ? <Trash2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</div><h2 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-2 text-sm leading-relaxed text-slate-500">{message}</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={onConfirm} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-brand-500 hover:bg-brand-400"}`}>{confirmLabel}</button></div></div></div>;
+  useDialogOpenClass();
+  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-2xl sm:pb-5" onClick={(e) => e.stopPropagation()}><div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl ${danger ? "bg-rose-50 text-rose-600" : "bg-brand-50 text-brand-600"}`}>{danger ? <Trash2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</div><h2 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-2 text-sm leading-relaxed text-slate-500">{message}</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={onConfirm} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-brand-500 hover:bg-brand-400"}`}>{confirmLabel}</button></div></div></div>;
 }
 
 function ProjectEditor({ value, onClose, onSave }) {

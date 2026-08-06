@@ -77,6 +77,12 @@ button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Mientras hay un diálogo de confirmación abierto (ConfirmDialog vive dentro de cada
+   módulo, no en el estado global), ocultamos el botón flotante para que no tape sus botones. */
+body.dialog-open .mobile-fab {
+  display: none;
+}
+
 .mobile-nav-item { min-width: 0; }
 .mobile-nav-label {
   display: block;
