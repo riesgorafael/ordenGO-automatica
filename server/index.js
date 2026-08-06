@@ -1044,7 +1044,7 @@ app.delete("/api/purchase-orders/:id", auth, requireRole("admin"), async (req, r
 /* ------------------------------------------------ Listado de materiales ------------------------------------------------ */
 // Documento que Automática entrega al cliente para que este cotice los materiales con su
 // proveedor (columnas de precio quedan siempre en blanco; las completa quien cotiza).
-const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Otro"];
+const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Automatización", "Otro"];
 const MATERIAL_LIST_DEFAULT_NOTES = [
   "Los datos de cómputos y unidades presentados en este documento son provistos solo a efectos orientativos, pudiendo presentar cierto grado de incerteza producto de la calidad y metodología de la medición empleada. Es responsabilidad de los oferentes verificar las cantidades a suministrar de la mejor manera que consideren pertinente y ajustarlos o asumirlos como verdaderos.",
   "El formato aquí suministrado es a los efectos de facilitar la comparación y ecualización de ofertas. Se ruega no alterar la estructura de los ítems mayores que componen el alcance del trabajo y en caso de considerar necesario acrecentar el grado de apertura para brindar mayor detalle sobre algún ítem en particular, favor de hacerlo agregando líneas debajo de la línea al final. En caso de opcionales y/o variantes a lo especificado cotizar por separado dejándolo expresamente indicado.",

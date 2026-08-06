@@ -101,7 +101,7 @@ const poItemMath = (item) => {
   const grossAmountUsd = Math.round((netAmountUsd + vatAmountUsd) * 100) / 100;
   return { netAmount, vatAmount, grossAmount, netAmountUsd, vatAmountUsd, grossAmountUsd };
 };
-const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Otro"];
+const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Automatización", "Otro"];
 const MATERIAL_LIST_DEFAULT_NOTES = [
   "Los datos de cómputos y unidades presentados en este documento son provistos solo a efectos orientativos, pudiendo presentar cierto grado de incerteza producto de la calidad y metodología de la medición empleada. Es responsabilidad de los oferentes verificar las cantidades a suministrar de la mejor manera que consideren pertinente y ajustarlos o asumirlos como verdaderos.",
   "El formato aquí suministrado es a los efectos de facilitar la comparación y ecualización de ofertas. Se ruega no alterar la estructura de los ítems mayores que componen el alcance del trabajo y en caso de considerar necesario acrecentar el grado de apertura para brindar mayor detalle sobre algún ítem en particular, favor de hacerlo agregando líneas debajo de la línea al final. En caso de opcionales y/o variantes a lo especificado cotizar por separado dejándolo expresamente indicado.",
@@ -915,7 +915,7 @@ export default function App() {
         {activeModule === "whiteboard" && <Whiteboard />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
-        {activeModule === "materialLists" && isMgr && <MaterialListsModule materialLists={materialLists} projects={projects} me={me} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
+        {activeModule === "materialLists" && isMgr && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
@@ -1568,7 +1568,7 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
 
 /* ===================================== LISTADO DE MATERIALES ===================================== */
 const SECTION_LETTERS_CLIENT = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-function MaterialListEditor({ materialList, projects, onClose, onSave, onErr }) {
+function MaterialListEditor({ materialList, projects, clients, onClose, onSave, onErr }) {
   const [form, setForm] = useState(() => ({
     projectId: "", discipline: "Eléctricos", version: "1.0", client: "", site: "", notes: [...MATERIAL_LIST_DEFAULT_NOTES],
     ...(materialList || {}),
@@ -1586,6 +1586,7 @@ function MaterialListEditor({ materialList, projects, onClose, onSave, onErr }) 
   const addNote = () => set("notes", [...form.notes, ""]);
   const removeNote = (index) => set("notes", form.notes.filter((_, noteIndex) => noteIndex !== index));
   const selectProject = (projectId) => { const project = projects.find((p) => p.id === projectId); setForm((current) => ({ ...current, projectId, client: project?.client || current.client, site: project?.site || current.site })); };
+  const selectClient = (clientId) => { const client = clients.find((c) => c.id === clientId); setForm((current) => ({ ...current, clientId, client: client?.name || "" })); };
   const validSections = form.sections.map((section) => ({ ...section, items: section.items.filter((item) => item.description.trim() && Number(item.qty) > 0) })).filter((section) => section.title.trim() && section.items.length > 0);
   const submit = async () => { setSaving(true); try { const saved = await onSave({ ...form, sections: validSections, notes: form.notes.filter((note) => note.trim()) }); if (saved) onClose(); } finally { setSaving(false); } };
   const mouseDownOnBackdrop = useRef(false);
@@ -1597,7 +1598,7 @@ function MaterialListEditor({ materialList, projects, onClose, onSave, onErr }) 
         <Section title="Encabezado"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <L label="Proyecto *"><select value={form.projectId} onChange={(event) => selectProject(event.target.value)} className="u-input"><option value="">Seleccionar proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L>
           <L label="Disciplina"><select value={form.discipline} onChange={(event) => set("discipline", event.target.value)} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((discipline) => <option key={discipline}>{discipline}</option>)}</select></L>
-          <L label="Cliente / Empresa"><input value={form.client || ""} onChange={(event) => set("client", event.target.value)} placeholder="Razón social del cliente" className="u-input" /></L>
+          <L label="Cliente / Empresa"><select value={form.clientId || ""} onChange={(event) => selectClient(event.target.value)} className="u-input"><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L>
           <L label="Planta"><input value={form.site || ""} onChange={(event) => set("site", event.target.value)} placeholder="Ej. Venado Tuerto" className="u-input" /></L>
           <L label="Versión"><input value={form.version || ""} onChange={(event) => set("version", event.target.value)} placeholder="1.0" className="u-input" /></L>
         </div></Section>
@@ -1634,7 +1635,7 @@ function MaterialListEditor({ materialList, projects, onClose, onSave, onErr }) 
   </div>;
 }
 
-function MaterialListsModule({ materialLists, projects, me, createSignal, onConsumeCreate, onSave, onDelete, onErr }) {
+function MaterialListsModule({ materialLists, projects, clients, me, createSignal, onConsumeCreate, onSave, onDelete, onErr }) {
   const [editingMl, setEditingMl] = useState(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -1647,7 +1648,7 @@ function MaterialListsModule({ materialLists, projects, me, createSignal, onCons
     <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-3"><Metric label="Listados" value={materialLists.length} icon={Package} tint="text-brand-600" /><Metric label="Proyectos con listado" value={new Set(materialLists.map((ml) => ml.projectId)).size} icon={Folder} tint="text-violet-600" /><Metric label="Ítems totales" value={materialLists.reduce((sum, ml) => sum + (ml.totalItems || 0), 0)} icon={ClipboardList} tint="text-slate-600" /></div>
     <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar listado, proyecto o planta…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
     {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><Package className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin listados de materiales para mostrar</h3><p className="mt-1 text-xs text-slate-400">Creá uno para pedirle a un cliente que cotice materiales con su proveedor.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((ml) => <Box key={ml.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{ml.number || ml.id}</span><Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">{ml.discipline}</Chip></div><h3 className="mt-2 text-base font-semibold text-slate-900">{ml.projectName}</h3><p className="mt-0.5 text-xs text-slate-500">{ml.client || "Sin cliente"}{ml.site ? ` · ${ml.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => materialListReportPDF(ml, projects.find((p) => p.id === ml.projectId))} title="Descargar PDF" aria-label="Descargar PDF del listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingMl(ml); setEditorOpen(true); }} title="Editar listado" aria-label="Editar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => setPendingDelete(ml)} title="Eliminar listado" aria-label="Eliminar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>{(ml.sections || []).length} sección(es)</span><span>{ml.totalItems || 0} ítem(s)</span><span>Versión {ml.version}</span></div></Box>)}</div>}
-    {editorOpen && <MaterialListEditor materialList={editingMl} projects={projects} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingMl?.id))} onErr={onErr} />}
+    {editorOpen && <MaterialListEditor materialList={editingMl} projects={projects} clients={clients} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingMl?.id))} onErr={onErr} />}
     {pendingDelete && <ConfirmDialog title="Eliminar listado de materiales" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
   </div>;
 }
