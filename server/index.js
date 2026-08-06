@@ -1533,7 +1533,7 @@ app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req,
 const TASK_STATUSES = new Set(["Por hacer", "En progreso", "En revisión", "Hecho"]);
 const TASK_PRIORITIES = new Set(["Baja", "Media", "Alta", "Urgente"]);
 const TASK_TYPES = new Set(["Tarea", "Bug", "Mejora", "Historia"]);
-const TECH_TASK_PATCH = new Set(["title", "desc", "status", "priority", "type", "due"]);
+const TECH_TASK_PATCH = new Set(["title", "desc", "status", "priority", "type", "due", "participants"]);
 app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
   t.title = String(t.title || "").trim();

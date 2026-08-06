@@ -2537,6 +2537,23 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
           <input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={readOnly} placeholder="Título de la tarea" className="u-input text-sm font-medium disabled:bg-slate-50" />
           <textarea value={f.desc} onChange={(e) => set({ desc: e.target.value })} disabled={readOnly} rows={3} placeholder="Descripción / criterios" className="u-input resize-none disabled:bg-slate-50" />
           <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto"><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={editingExisting || readOnly} className="u-input disabled:bg-slate-50">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
+          <L label="Participantes (opcional)" help="Otras personas que colaboran en la tarea además del responsable.">
+            <div className="flex flex-wrap gap-1.5">
+              {(f.participants || []).map((id) => { const u = users.find((user) => user.id === id); if (!u) return null; return (
+                <span key={id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-1 pl-2.5 pr-1 text-xs font-medium text-slate-700">
+                  {u.name}
+                  {!readOnly && <button type="button" onClick={() => set({ participants: (f.participants || []).filter((pid) => pid !== id) })} aria-label={`Quitar a ${u.name}`} className="grid h-4 w-4 place-items-center rounded-full hover:bg-slate-200"><X className="h-3 w-3" /></button>}
+                </span>
+              ); })}
+              {(f.participants || []).length === 0 && <span className="text-xs text-slate-400">Sin participantes adicionales</span>}
+            </div>
+            {!readOnly && (
+              <select value="" onChange={(e) => { const id = e.target.value; if (id) set({ participants: [...(f.participants || []), id] }); }} className="u-input mt-1.5">
+                <option value="">+ Agregar participante</option>
+                {assignable.filter((u) => u.id !== f.assignee && !(f.participants || []).includes(u.id)).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            )}
+          </L>
           <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
           <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50" /></L>
         </div>
