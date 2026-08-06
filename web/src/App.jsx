@@ -1618,7 +1618,7 @@ function MaterialListEditor({ materialList, projects, clients, onClose, onSave, 
   const addNote = () => set("notes", [...form.notes, ""]);
   const removeNote = (index) => set("notes", form.notes.filter((_, noteIndex) => noteIndex !== index));
   const selectProject = (projectId) => { const project = projects.find((p) => p.id === projectId); setForm((current) => ({ ...current, projectId, client: project?.client || current.client, site: project?.site || current.site })); };
-  const selectClient = (clientId) => { const client = clients.find((c) => c.id === clientId); setForm((current) => ({ ...current, clientId, client: client?.name || "" })); };
+  const selectClient = (clientId) => { const client = clients.find((c) => c.id === clientId); setForm((current) => ({ ...current, clientId, client: client?.name || "", site: clientSites(client)[0]?.name || "" })); };
   const validSections = form.sections.map((section) => ({ ...section, items: section.items.filter((item) => item.description.trim() && Number(item.qty) > 0) })).filter((section) => section.title.trim() && section.items.length > 0);
   const submit = async () => { setSaving(true); try { const saved = await onSave({ ...form, sections: validSections, notes: form.notes.filter((note) => note.trim()) }); if (saved) onClose(); } finally { setSaving(false); } };
   const mouseDownOnBackdrop = useRef(false);
@@ -1630,10 +1630,10 @@ function MaterialListEditor({ materialList, projects, clients, onClose, onSave, 
         <Section title="Encabezado">
           <L label="Uso del reporte" help="Define qué logo se imprime en el PDF: el de Automática (uso interno) o el del cliente elegido abajo."><div className="flex gap-2"><Toggle active={form.audience !== "interno"} onClick={() => set("audience", "cliente")}>Para el cliente</Toggle><Toggle active={form.audience === "interno"} onClick={() => set("audience", "interno")}>Uso interno (Automática)</Toggle></div></L>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <L label="Proyecto *"><select value={form.projectId} onChange={(event) => selectProject(event.target.value)} className="u-input"><option value="">Seleccionar proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L>
+          <L label={form.audience === "interno" ? "Proyecto (opcional)" : "Proyecto *"}><select value={form.projectId} onChange={(event) => selectProject(event.target.value)} className="u-input"><option value="">{form.audience === "interno" ? "Sin vincular" : "Seleccionar proyecto"}</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L>
           <L label="Disciplina"><select value={form.discipline} onChange={(event) => set("discipline", event.target.value)} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((discipline) => <option key={discipline}>{discipline}</option>)}</select></L>
           <L label="Cliente / Empresa"><select value={form.clientId || ""} onChange={(event) => selectClient(event.target.value)} className="u-input"><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L>
-          <L label="Planta"><input value={form.site || ""} onChange={(event) => set("site", event.target.value)} placeholder="Ej. Venado Tuerto" className="u-input" /></L>
+          <L label="Planta">{clientSites(clients.find((c) => c.id === form.clientId)).length > 0 ? (<select value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input"><option value="">Seleccionar planta</option>{clientSites(clients.find((c) => c.id === form.clientId)).map((s) => <option key={s.code || s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select>) : (<input value={form.site || ""} onChange={(event) => set("site", event.target.value)} placeholder="Ej. Venado Tuerto" className="u-input" />)}</L>
           <L label="Versión"><input value={form.version || ""} onChange={(event) => set("version", event.target.value)} placeholder="1.0" className="u-input" /></L>
         </div></Section>
 
@@ -1664,7 +1664,7 @@ function MaterialListEditor({ materialList, projects, clients, onClose, onSave, 
           <button onClick={addNote} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar nota</button>
         </Section>
       </div>
-      <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || !form.projectId || validSections.length === 0} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar listado</button></div>
+      <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || (form.audience !== "interno" && !form.projectId) || validSections.length === 0} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar listado</button></div>
     </div>
   </div>;
 }

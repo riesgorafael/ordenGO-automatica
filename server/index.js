@@ -1090,13 +1090,19 @@ app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"),
 });
 app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const ml = normalizeMaterialList(req.body);
-  if (!ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
-  const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
-  if (!project) return res.status(400).json({ error: "El proyecto seleccionado ya no existe." });
-  ml.projectName = project.name;
+  // El proyecto solo es obligatorio para el listado destinado al cliente; uno de uso interno no necesita estar atado a un proyecto.
+  if (ml.audience !== "interno" && !ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
+  let project = null;
+  if (ml.projectId) {
+    project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
+    if (!project) return res.status(400).json({ error: "El proyecto seleccionado ya no existe." });
+    ml.projectName = project.name;
+  } else {
+    ml.projectName = "";
+  }
   if (!ml.sections.length) return res.status(400).json({ error: "Agregá al menos una sección con un ítem." });
   if (!ml.id) {
-    const siteCode = String(project.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
+    const siteCode = String(project?.key || "INT").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "INT";
     const stamp = new Date();
     const mmdd = `${String(stamp.getMonth() + 1).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}`;
     const prefix = `${siteCode}-${mmdd}-MAT-`;
@@ -1116,10 +1122,13 @@ app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecn
   if (!current) return res.status(404).json({ error: "No existe" });
   const ml = normalizeMaterialList(req.body, current);
   ml.id = req.params.id; ml.number = ml.id;
-  if (ml.projectId !== current.projectId) {
+  if (ml.audience !== "interno" && !ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
+  if (ml.projectId && ml.projectId !== current.projectId) {
     const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
     if (!project) return res.status(400).json({ error: "El proyecto seleccionado ya no existe." });
     ml.projectName = project.name;
+  } else if (!ml.projectId) {
+    ml.projectName = "";
   }
   if (!ml.sections.length) return res.status(400).json({ error: "Agregá al menos una sección con un ítem." });
   ml.updatedBy = req.user.id; ml.updatedByName = req.user.name;
