@@ -205,6 +205,8 @@ const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).p
 const addCalendarDays = (date, days) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
 const startOfCalendarWeek = (date) => addCalendarDays(date, -((date.getDay() + 6) % 7));
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
+// Vence en los próximos N días (por defecto 2), sin contar las que ya están vencidas.
+const isDueSoon = (t, days = 2) => t.due && t.status !== "Hecho" && t.due >= todayStr() && t.due <= localDateKey(addCalendarDays(new Date(), days));
 const dueLabel = (due) => {
   if (!due) return "Sin fecha";
   const today = new Date(`${todayStr()}T12:00:00`);
@@ -1940,13 +1942,24 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
     .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
   const myOrders = orders.filter((o) => (o.tech === me.name || o.assignedTechs?.includes(me.name)) && ["Borrador", "En progreso", "En proceso de ejecución"].includes(o.status));
   const overdue = myTasks.filter(isOverdue).length;
+  const dueSoon = myTasks.filter((t) => !isOverdue(t) && isDueSoon(t));
   const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold text-slate-900">Hola, {me.name.split(" ")[0]}</h2><p className="text-sm text-slate-500">Esto es lo que tienes pendiente hoy.</p></div>
+      {dueSoon.length > 0 && (
+        <div className="motion-banner flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <b className="block">{dueSoon.length === 1 ? "Tenés una tarea por vencer" : `Tenés ${dueSoon.length} tareas por vencer`}</b>
+            <span className="text-xs text-amber-700">Vencen en los próximos 2 días: {dueSoon.slice(0, 4).map((t) => t.title).join(", ")}{dueSoon.length > 4 ? "…" : ""}. El aviso se mantiene hasta que las marques como Hecho.</span>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metric label="Mis tareas abiertas" value={myTasks.length} icon={LayoutGrid} tint="text-brand-600" />
         <Metric label="Tareas vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" />
+        <Metric label="Por vencer (2 días)" value={dueSoon.length} icon={Clock} tint="text-amber-600" />
         <Metric label="Mis órdenes activas" value={myOrders.length} icon={ClipboardList} tint="text-emerald-600" />
         {ger && <Metric label="Por facturar" value={pend.length} icon={FileText} tint="text-amber-600" />}
       </div>
@@ -1959,8 +1972,11 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
                 <div className="flex items-center gap-2">
                   <Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip>
                   <span className="truncate text-sm font-medium text-slate-800">{t.title}</span>
-                  {isOverdue(t) && <Chip className="ml-auto bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>}
-                  {!isOverdue(t) && isStale(t) && <Chip className="ml-auto bg-amber-50 text-amber-700 ring-amber-600/20">Estancada</Chip>}
+                  {isOverdue(t)
+                    ? <Chip className="ml-auto bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>
+                    : isDueSoon(t)
+                      ? <Chip className="ml-auto bg-amber-50 text-amber-700 ring-amber-600/20">Vence pronto</Chip>
+                      : isStale(t) && <Chip className="ml-auto bg-amber-50 text-amber-700 ring-amber-600/20">Estancada</Chip>}
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due}</span>}<span>· {t.status}</span></div>
               </button>
