@@ -709,6 +709,24 @@ app.patch("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req,
   const duplicateName = (await pool.query("SELECT 1 FROM clients WHERE id<>$1 AND lower(trim(data->>'name'))=lower($2) LIMIT 1", [req.params.id, merged.name])).rows[0];
   if (duplicateName) return res.status(409).json({ error: "Ya existe otro cliente con ese nombre" });
   await pool.query("UPDATE clients SET data=$2 WHERE id=$1", [req.params.id, merged]);
+  // Si cambió el nombre, se propaga a los presupuestos, órdenes y listados de materiales que ya
+  // referencian a este cliente (por clientId cuando lo tienen, o por coincidencia del nombre anterior
+  // para registros más viejos que solo guardaban el texto), para que no queden con un nombre desactualizado.
+  const oldName = rows[0].data.name;
+  if (oldName && oldName !== merged.name) {
+    await pool.query(
+      "UPDATE budgets SET data = jsonb_set(data, '{client}', to_jsonb($3::text)), updated_at=now() WHERE data->>'clientId'=$1 OR data->>'client'=$2",
+      [req.params.id, oldName, merged.name],
+    );
+    await pool.query(
+      "UPDATE orders SET data = jsonb_set(data, '{client}', to_jsonb($2::text)), updated_at=now() WHERE data->>'client'=$1",
+      [oldName, merged.name],
+    );
+    await pool.query(
+      "UPDATE material_lists SET data = jsonb_set(data, '{client}', to_jsonb($3::text)), updated_at=now() WHERE data->>'clientId'=$1 OR data->>'client'=$2",
+      [req.params.id, oldName, merged.name],
+    );
+  }
   res.json(merged);
 });
 app.delete("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
