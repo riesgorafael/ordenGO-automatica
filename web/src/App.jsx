@@ -739,7 +739,7 @@ export default function App() {
   // catálogos de uso esporádico, plegados en un menú aparte).
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
-    { id: "whiteboard", label: "Pizarra", icon: Pencil, group: "Utilidades" },
+    { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
   ] : [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
@@ -750,7 +750,7 @@ export default function App() {
     ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Negocio" }] : []),
-    { id: "whiteboard", label: "Pizarra", icon: Pencil, group: "Utilidades" },
+    { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Utilidades" }] : []),
     ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2, group: "Utilidades" }] : []),
@@ -3093,7 +3093,7 @@ function Whiteboard({ notes, projects, users, me, onSave, onDelete, onErr }) {
 
   return (
     <div className="space-y-3">
-      <div><h2 className="text-lg font-semibold text-slate-900">Pizarra</h2><p className="text-xs text-slate-500">Notas escritas o dibujadas — pensadas para un relevamiento en planta, antes de armar, aprobar o ejecutar un proyecto. Podés duplicarlas y compartirlas con otros usuarios.</p></div>
+      <div><h2 className="text-lg font-semibold text-slate-900">Notas</h2><p className="text-xs text-slate-500">Notas escritas o dibujadas — pensadas para un relevamiento en planta, antes de armar, aprobar o ejecutar un proyecto. Podés duplicarlas y compartirlas con otros usuarios.</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar nota…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
         <button onClick={() => startNew("text")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><StickyNote className="h-4 w-4" /> Nota de texto</button>
