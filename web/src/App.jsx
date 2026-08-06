@@ -551,7 +551,7 @@ export default function App() {
   const nextTaskId = (projectId) => { const key = projects.find((p) => p.id === projectId)?.key || "TASK"; const n = Math.max(0, ...tasks.filter((t) => t.id.startsWith(key + "-")).map((t) => parseInt(t.id.split("-")[1], 10) || 0)) + 1; return `${key}-${n}`; };
   const createProject = () => setProjectEditor({ mode: "create", name: "", key: "PRJ", color: PALETTE[projects.length % PALETTE.length] });
   const editProject = (id) => { const current = projects.find((p) => p.id === id); if (current) setProjectEditor({ mode: "edit", ...current }); };
-  const saveProjectEditor = async (form) => { try { if (form.mode === "create") { const project = await api.createProject({ name: form.name, key: form.key, color: form.color, active: form.active !== false }); setProjects((items) => [...items, project]); } else { const project = await api.updateProject(form.id, { name: form.name, color: form.color, active: form.active !== false }); setProjects((items) => items.map((item) => item.id === form.id ? project : item)); setTasks((items) => items.map((task) => task.project === project.id ? { ...task, color: project.color } : task)); } setProjectEditor(null); toast("Proyecto guardado", "success"); } catch (e) { err(e); } };
+  const saveProjectEditor = async (form) => { try { if (form.mode === "create") { const project = await api.createProject({ name: form.name, key: form.key, color: form.color, active: form.active !== false }); setProjects((items) => [...items, project]); } else { const project = await api.updateProject(form.id, { name: form.name, color: form.color, active: form.active !== false }); setProjects((items) => items.map((item) => item.id === form.id ? project : item)); setTasks((items) => items.map((task) => task.project === project.id ? { ...task, color: project.color } : task)); if (project.active === false && pProj === project.id) setPProj("all"); } setProjectEditor(null); toast("Proyecto guardado", "success"); } catch (e) { err(e); } };
   const deleteProject = async (id) => {
     const cur = projects.find((p) => p.id === id); if (!cur) return;
     const n = tasks.filter((t) => t.project === id).length;
@@ -844,7 +844,7 @@ export default function App() {
                 })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
-                <option value="all">Todos los proyectos</option>{projects.filter((p) => pShowFinished || p.active !== false || p.id === pProj).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}</option>)}
+                <option value="all">Todos los proyectos</option>{projects.filter((p) => pShowFinished || p.active !== false).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}</option>)}
               </select>
               {projects.some((p) => p.active === false) && <button onClick={() => setPShowFinished((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pShowFinished ? "border-slate-400 bg-slate-100 text-slate-700" : "border-slate-200 bg-white text-slate-600"}`}><Folder className="h-4 w-4" /> Finalizados</button>}
               {activeProjectView !== "reports" && (<>
