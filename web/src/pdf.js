@@ -507,103 +507,164 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   doc.save(`${po.number || po.id}_orden_de_compra.pdf`);
 }
 
-export function materialListReportPDF(ml, project) {
+export function materialListReportPDF(ml, project, client) {
   const doc = new jsPDF("p", "mm", "a4");
-  const W = 210, M = 15;
-  let y = 20;
+  const W = 210, M = 12;
+  const CW = W - 2 * M;
+  let y = 10;
   let drawHead = () => {};
-  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+  const brk = (need = 8) => { if (y + need > 283) { doc.addPage(); y = 10; drawHead(); } };
+  const line = (x0, yy, x1) => doc.line(x0, yy, x1, yy);
+  const vline = (x, y0, y1) => doc.line(x, y0, x, y1);
+  const drawFitImage = (dataUrl, x, boxY, boxW, boxH) => {
+    try {
+      const fmt = /^data:image\/png/i.test(dataUrl) ? "PNG" : /^data:image\/webp/i.test(dataUrl) ? "WEBP" : "JPEG";
+      const props = doc.getImageProperties(dataUrl);
+      const scale = Math.min(boxW / props.width, boxH / props.height);
+      const drawW = props.width * scale, drawH = props.height * scale;
+      doc.addImage(dataUrl, fmt, x + (boxW - drawW) / 2, boxY + (boxH - drawH) / 2, drawW, drawH);
+      return true;
+    } catch { return false; }
+  };
 
-  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 23, 42);
-  doc.text(String(ml.client || "Cliente").toUpperCase(), M, 16);
-  doc.setFontSize(9); doc.setTextColor(71, 85, 105);
-  doc.text(`Listado de Materiales ${ml.discipline || ""}`.trim(), M, 22);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
-  doc.text("Desarrollo Automatización", W - M, 15, { align: "right" });
-  doc.setFont("helvetica", "bold"); doc.text(ml.number || ml.id || "—", W - M, 19.5, { align: "right" });
-  doc.setDrawColor(203, 213, 225); doc.line(M, 24, W - M, 24);
+  /* ---------- Encabezado: logo | razón social + título | datos del documento ---------- */
+  const headH = 20, logoColW = 34, docColW = 44, midColW = CW - logoColW - docColW;
+  doc.setDrawColor(51, 65, 85); doc.setLineWidth(0.3);
+  doc.rect(M, y, CW, headH);
+  vline(M + logoColW, y, y + headH);
+  vline(M + logoColW + midColW, y, y + headH);
+  line(M + logoColW, y + headH / 2, M + logoColW + midColW);
 
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.8); doc.setTextColor(71, 85, 105);
-  doc.text(`Versión: ${ml.version || "1.0"}`, M, 30);
-  doc.text(`Planta: ${ml.site || "—"}`, M, 34.5);
-  doc.text(`Proyecto: ${ml.projectName || project?.name || "—"}`, M, 39);
-  doc.text("Fecha de actualización:", W - M, 30, { align: "right" });
-  doc.setFont("helvetica", "bold"); doc.text(formatDate(ml._updatedAt || ml.updatedAt || ml.createdAt), W - M, 34.5, { align: "right" });
+  const audience = ml.audience === "interno" ? "interno" : "cliente";
+  const logoSource = audience === "interno" ? LOGO : client?.logoDataUrl;
+  if (logoSource) drawFitImage(logoSource, M + 1.5, y + 1.5, logoColW - 3, headH - 3);
 
-  y = 46;
-  doc.setFillColor(30, 41, 59); doc.rect(M, y - 5, W - 2 * M, 7, "F");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
-  doc.text(`LISTADO DE MATERIALES ${(ml.discipline || "").toUpperCase()}`.trim(), M + 2, y);
-  y += 6;
+  const midX = M + logoColW + midColW / 2;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(15, 23, 42);
+  doc.text(String(audience === "interno" ? "AUTOMATICA ARG" : ml.client || "Cliente sin asignar").toUpperCase(), midX, y + headH / 2 - 3, { align: "center" });
+  doc.setFontSize(9);
+  doc.text(`Listado de Materiales ${ml.discipline || ""}`.trim(), midX, y + headH / 2 + 5.5, { align: "center" });
 
+  const docColX = M + logoColW + midColW;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(71, 85, 105);
+  doc.text("Desarrollo Automatización", docColX + docColW / 2, y + 6, { align: "center" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.2); doc.setTextColor(15, 23, 42);
+  doc.text(ml.number || ml.id || "—", docColX + docColW / 2, y + 11, { align: "center" });
+  y += headH + 4;
+
+  /* ---------- Versión / Planta / Proyecto — Fecha de actualización ---------- */
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.4); doc.setTextColor(71, 85, 105);
+  doc.text(`Versión: ${ml.version || "1.0"}`, M, y);
+  doc.text(`Planta: ${ml.site || "—"}`, M, y + 4);
+  doc.text(`Proyecto: ${ml.projectName || project?.name || "—"}`, M, y + 8);
+  doc.text("Fecha de actualización:", W - M, y, { align: "right" });
+  doc.setFont("helvetica", "bold");
+  doc.text(formatDate(ml._updatedAt || ml.updatedAt || ml.createdAt), W - M, y + 4, { align: "right" });
+  y += 13;
+
+  /* ---------- Banner de disciplina ---------- */
+  doc.setFillColor(30, 41, 59); doc.rect(M, y, CW, 6.5, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(255, 255, 255);
+  doc.text(`LISTADO DE MATERIALES ${(ml.discipline || "").toUpperCase()}`.trim(), M + CW / 2, y + 4.3, { align: "center" });
+  y += 6.5;
+
+  /* ---------- Notas importantes ---------- */
   if ((ml.notes || []).length) {
-    doc.setFillColor(254, 249, 231); doc.setDrawColor(253, 224, 71);
-    const noteLines = ml.notes.map((note) => doc.splitTextToSize(note, W - 2 * M - 10));
-    const totalLines = noteLines.reduce((sum, lines) => sum + lines.length, 0) + ml.notes.length * 1.2;
-    const boxHeight = totalLines * 3.6 + 6;
-    brk(boxHeight + 10);
-    doc.rect(M, y, W - 2 * M, boxHeight, "FD");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(120, 90, 10);
-    doc.text("NOTAS IMPORTANTES", M + 3, y + 4.5);
-    let noteY = y + 9;
-    doc.setFont("helvetica", "normal"); doc.setTextColor(71, 85, 105); doc.setFontSize(6.6);
+    const numColW = 8, textColW = CW - numColW;
+    const noteLines = ml.notes.map((note) => doc.splitTextToSize(note, textColW - 4));
+    const rowHeights = noteLines.map((lines) => Math.max(7, lines.length * 3.3 + 3));
+    const headerH = 5;
+    const boxHeight = headerH + rowHeights.reduce((sum, h) => sum + h, 0);
+    brk(boxHeight + 8);
+    const boxTop = y;
+    doc.setFillColor(241, 245, 249); doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.25);
+    doc.rect(M, boxTop, CW, headerH, "FD");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(51, 65, 85);
+    doc.text("NOTAS IMPORTANTES", M + 2, boxTop + 3.6);
+    let rowY = boxTop + headerH;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); doc.setTextColor(71, 85, 105);
     noteLines.forEach((lines, index) => {
-      doc.text(`${index + 1}.`, M + 3, noteY);
-      doc.text(lines, M + 8, noteY);
-      noteY += lines.length * 3.6 + 2;
+      const rowH = rowHeights[index];
+      doc.rect(M, rowY, numColW, rowH); doc.rect(M + numColW, rowY, textColW, rowH);
+      doc.text(String(index + 1), M + numColW / 2, rowY + rowH / 2 + 1, { align: "center" });
+      doc.text(lines, M + numColW + 2, rowY + 3.6);
+      rowY += rowH;
     });
-    y += boxHeight + 6;
+    y = boxTop + boxHeight + 5;
   }
 
-  brk(14);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(241, 135, 0);
-  doc.text("1. LISTADO GENERAL", M, y); y += 7;
+  /* ---------- Título de sección ---------- */
+  brk(12);
+  doc.setFillColor(226, 232, 240); doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.25);
+  doc.rect(M, y, CW, 5.5, "FD");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(30, 41, 59);
+  doc.text("1. LISTADO GENERAL", M + 2, y + 3.8);
+  y += 5.5;
 
-  const colX = { item: M, ref: M + 11, desc: M + 34, brand: M + 92, qty: M + 122, unit: M + 127, matUnit: M + 150, subUnit: M + 172, sub: W - M };
-  const cols = () => {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
-    doc.text("Item", colX.item, y);
-    doc.text("Ref.", colX.ref, y);
-    doc.text("Descripción", colX.desc, y);
-    doc.text("Marca", colX.brand, y);
-    doc.text("Cant.", colX.qty, y, { align: "right" });
-    doc.text("Ud.", colX.unit, y);
-    doc.text("Mat. Unit.", colX.matUnit, y, { align: "right" });
-    doc.text("Subt. Unit.", colX.subUnit, y, { align: "right" });
-    doc.text("Subtotal", colX.sub, y, { align: "right" });
-    y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
+  /* ---------- Tabla de materiales ---------- */
+  // Límites de columna (mm desde M): Item | Ref. | Descripción | Marca | Cant. | Ud. | Material Unit. | Subtotal Unit. | Subtotal
+  const cx = [0, 9, 29, 87, 111, 121, 130, 150, 170, CW].map((offset) => M + offset);
+  const headerLabels = [
+    { text: "Item", align: "left" }, { text: "Ref.", align: "left" }, { text: "Descripción", align: "left" },
+    { text: "Marca", align: "left" }, { text: "Cant.", align: "right" }, { text: "Ud.", align: "left" },
+    { text: "Material Unitario", align: "right" }, { text: "Subtotal Unitario", align: "right" }, { text: "Subtotal", align: "right" },
+  ];
+  const cellText = (index, text, textY, opts = {}) => {
+    const align = headerLabels[index].align;
+    const pad = 1.3;
+    const x = align === "right" ? cx[index + 1] - pad : cx[index] + pad;
+    doc.text(text, x, textY, { align, ...opts });
   };
-  drawHead = cols; cols();
+  const tableHeader = () => {
+    doc.setFillColor(255, 255, 255); doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
+    doc.rect(M, y, CW, 6, "S");
+    cx.slice(1, -1).forEach((x) => vline(x, y, y + 6));
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(51, 65, 85);
+    headerLabels.forEach((label, index) => cellText(index, label.text, y + 4));
+    y += 6;
+  };
+  drawHead = tableHeader; tableHeader();
 
   const sections = ml.sections || [];
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(15, 23, 42);
   sections.forEach((section) => {
-    brk(11);
-    doc.setFillColor(220, 252, 231); doc.rect(M, y - 4, W - 2 * M, 6, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(6, 95, 70);
-    doc.text(section.title, M + 2, y);
-    y += 6.5;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(15, 23, 42);
+    brk(9);
+    doc.setFillColor(220, 252, 231); doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
+    doc.rect(M, y, CW, 5, "FD");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(6, 95, 70);
+    doc.text(section.title, M + 2, y + 3.4);
+    y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(15, 23, 42);
     (section.items || []).forEach((item, index) => {
-      brk(7);
-      doc.text(`${section.code}.${String(index).padStart(2, "0")}`, colX.item, y);
-      doc.text(String(item.ref || "—"), colX.ref, y);
-      const desc = doc.splitTextToSize(item.description || "—", 56);
-      doc.text(desc[0] + (desc.length > 1 ? "…" : ""), colX.desc, y);
-      doc.text(String(item.brand || "—"), colX.brand, y);
-      doc.text(String(item.qty || 0), colX.qty, y, { align: "right" });
-      doc.text(String(item.unit || "un"), colX.unit, y);
-      y += 6;
+      const descLines = doc.splitTextToSize(item.description || "—", cx[3] - cx[2] - 2.6);
+      const brandLines = doc.splitTextToSize(item.brand || "—", cx[4] - cx[3] - 2.6);
+      const lines = Math.max(1, descLines.length, brandLines.length, 2);
+      const rowH = Math.max(7, lines * 3.1 + 1.5);
+      brk(rowH + 2);
+      doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.2);
+      doc.rect(M, y, CW, rowH, "S");
+      cx.slice(1, -1).forEach((x) => vline(x, y, y + rowH));
+      const midY = y + (rowH < 9 ? rowH / 2 + 2 : 4);
+      cellText(0, `${section.code}.${String(index).padStart(2, "0")}`, midY);
+      cellText(1, String(item.ref || "—"), midY);
+      doc.text(descLines, cx[2] + 1.3, midY);
+      doc.text(brandLines, cx[3] + 1.3, midY);
+      cellText(4, String(item.qty || 0), midY);
+      cellText(5, String(item.unit || "un"), midY);
+      y += rowH;
     });
   });
 
-  brk(14); doc.setDrawColor(148, 163, 184); doc.line(M, y, W - M, y); y += 2;
-  doc.setFillColor(241, 245, 249); doc.rect(M, y, W - 2 * M, 8, "F");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+  brk(9);
+  doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
+  doc.setFillColor(241, 245, 249);
+  doc.rect(M, y, CW, 8, "FD");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(15, 23, 42);
   doc.text("Total de Materiales", M + 3, y + 5.3);
-  y += 14;
+  y += 8;
 
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(148, 163, 184);
+  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 293);
 
   doc.save(`${ml.number || ml.id}_listado_de_materiales.pdf`);
 }

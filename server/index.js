@@ -1065,8 +1065,10 @@ function normalizeMaterialList(input, previous = {}) {
   ml.version = String(ml.version || "1.0").trim().slice(0, 10) || "1.0";
   ml.projectId = String(ml.projectId || "").trim();
   ml.projectName = String(ml.projectName || "").trim();
+  ml.clientId = String(ml.clientId || "").trim();
   ml.client = String(ml.client || "").trim();
   ml.site = String(ml.site || "").trim();
+  ml.audience = ml.audience === "interno" ? "interno" : "cliente";
   ml.discipline = MATERIAL_LIST_DISCIPLINES.includes(ml.discipline) ? ml.discipline : "Eléctricos";
   ml.notes = Array.isArray(ml.notes) ? ml.notes.map((note) => String(note || "").trim().slice(0, 600)).filter(Boolean) : MATERIAL_LIST_DEFAULT_NOTES;
   ml.sections = (Array.isArray(ml.sections) ? ml.sections : [])
