@@ -2932,6 +2932,27 @@ function Whiteboard() {
     setConfirmClear(false);
   };
   const toggleFullscreen = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else boardRef.current?.requestFullscreen?.(); };
+  const fileInputRef = useRef(null);
+  const loadImage = (file) => {
+    if (!file) return;
+    const canvas = canvasRef.current, wrap = canvasWrapRef.current;
+    if (!canvas || !wrap) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const ctx = canvas.getContext("2d");
+        const { clientWidth: w, clientHeight: h } = wrap;
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, w, h);
+        const scale = Math.min(w / img.width, h / img.height);
+        const drawW = img.width * scale, drawH = img.height * scale;
+        ctx.drawImage(img, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
+      };
+      img.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  };
 
   return (
     <div className="space-y-3">
@@ -2961,6 +2982,10 @@ function Whiteboard() {
           <button onClick={() => setConfirmClear(true)} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-rose-200 bg-white px-3.5 text-sm font-medium text-rose-600 hover:bg-rose-50">
             <Trash2 className="h-5 w-5" /> Borrar todo
           </button>
+          <button onClick={() => fileInputRef.current?.click()} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            <Upload className="h-5 w-5" /> Cargar imagen
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => { loadImage(event.target.files?.[0]); event.target.value = ""; }} />
           <button onClick={toggleFullscreen} title={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"} aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"} className="ml-auto grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 border-slate-200 text-slate-500 hover:bg-slate-50">
             {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
           </button>
