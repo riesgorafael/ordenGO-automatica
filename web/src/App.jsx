@@ -3166,7 +3166,7 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave,
                     <button onClick={() => startDuplicate(note)} title="Duplicar" aria-label="Duplicar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>
                     {isOwner && <button onClick={() => setShareNote(note)} title="Compartir" aria-label="Compartir nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Share2 className="h-4 w-4" /></button>}
                     {isOwner && <button onClick={() => startEdit(note)} title="Editar" aria-label="Editar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
-                    {isOwner && <button onClick={() => setPendingDelete(note)} title="Eliminar" aria-label="Eliminar nota" className="ml-auto grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}
+                    {(isOwner || me.role === "admin") && <button onClick={() => setPendingDelete(note)} title="Eliminar" aria-label="Eliminar nota" className="ml-auto grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}
                   </div>
                 </div>
               </Box>

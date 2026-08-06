@@ -726,6 +726,10 @@ app.patch("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req,
       "UPDATE material_lists SET data = jsonb_set(data, '{client}', to_jsonb($3::text)), updated_at=now() WHERE data->>'clientId'=$1 OR data->>'client'=$2",
       [req.params.id, oldName, merged.name],
     );
+    await pool.query(
+      "UPDATE financial_movements SET data = jsonb_set(data, '{clientName}', to_jsonb($3::text)), updated_at=now() WHERE data->>'clientId'=$1 OR data->>'clientName'=$2",
+      [req.params.id, oldName, merged.name],
+    );
   }
   res.json(merged);
 });
@@ -1232,7 +1236,7 @@ app.patch("/api/whiteboard-notes/:id", auth, async (req, res) => {
 app.delete("/api/whiteboard-notes/:id", auth, async (req, res) => {
   const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
-  if (current.createdBy !== req.user.id) return res.status(403).json({ error: "Solo quien creó la nota puede eliminarla" });
+  if (current.createdBy !== req.user.id && req.user.role !== "admin") return res.status(403).json({ error: "Solo quien creó la nota (o un administrador) puede eliminarla" });
   await pool.query("DELETE FROM whiteboard_notes WHERE id=$1", [req.params.id]);
   res.status(204).end();
 });
