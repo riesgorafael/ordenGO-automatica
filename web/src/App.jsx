@@ -7,18 +7,18 @@ import {
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
-  ShoppingCart, Truck, ChevronDown, Eraser, Minimize2,
+  ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
-import { clientOrderReportPDF, internalOrderReportPDF, monthlyReportPDF, purchaseOrderReportPDF, valuedClientReportPDF } from "./pdf";
+import { clientOrderReportPDF, internalOrderReportPDF, materialListReportPDF, monthlyReportPDF, purchaseOrderReportPDF, valuedClientReportPDF } from "./pdf";
 import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, updateQueuedOrder } from "./offline";
 
 /* ===================================== CONFIG ===================================== */
 const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "materialLists", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
 const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
 const BRAND_THEMES = [
   { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
@@ -101,6 +101,13 @@ const poItemMath = (item) => {
   const grossAmountUsd = Math.round((netAmountUsd + vatAmountUsd) * 100) / 100;
   return { netAmount, vatAmount, grossAmount, netAmountUsd, vatAmountUsd, grossAmountUsd };
 };
+const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Otro"];
+const MATERIAL_LIST_DEFAULT_NOTES = [
+  "Los datos de cómputos y unidades presentados en este documento son provistos solo a efectos orientativos, pudiendo presentar cierto grado de incerteza producto de la calidad y metodología de la medición empleada. Es responsabilidad de los oferentes verificar las cantidades a suministrar de la mejor manera que consideren pertinente y ajustarlos o asumirlos como verdaderos.",
+  "El formato aquí suministrado es a los efectos de facilitar la comparación y ecualización de ofertas. Se ruega no alterar la estructura de los ítems mayores que componen el alcance del trabajo y en caso de considerar necesario acrecentar el grado de apertura para brindar mayor detalle sobre algún ítem en particular, favor de hacerlo agregando líneas debajo de la línea al final. En caso de opcionales y/o variantes a lo especificado cotizar por separado dejándolo expresamente indicado.",
+];
+const emptyMaterialListItem = () => ({ ref: "", description: "", brand: "", qty: 1, unit: "un" });
+const emptyMaterialListSection = () => ({ title: "", items: [emptyMaterialListItem()] });
 const SIGNER_ROLES = ["Responsable de planta", "Mantenimiento", "Jefe o supervisor de mantenimiento", "Producción / Operaciones", "Ingeniería / Automatización", "Seguridad e Higiene", "Calidad", "Administración / Compras", "Contratista / Integrador"];
 const SERVICE_PROFILES = {
   "Instalación": { assess: "Preparación", work: "Ejecución", symptom: "Alcance de la instalación y condición inicial", diagnosis: "Condiciones previas y requisitos técnicos", automation: true, installation: true },
@@ -304,6 +311,7 @@ export default function App() {
   const [parts, setParts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [materialLists, setMaterialLists] = useState([]);
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
@@ -335,6 +343,7 @@ export default function App() {
   const [budgetCreateSignal, setBudgetCreateSignal] = useState(0);
   const [financeCreateSignal, setFinanceCreateSignal] = useState(0);
   const [purchaseOrderCreateSignal, setPurchaseOrderCreateSignal] = useState(0);
+  const [materialListCreateSignal, setMaterialListCreateSignal] = useState(0);
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [offlineCount, setOfflineCount] = useState(() => offlineQueueSize());
@@ -344,7 +353,7 @@ export default function App() {
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type, leaving: false }]); setTimeout(() => setToasts((t) => t.map((x) => x.id === id ? { ...x, leaving: true } : x)), 3200); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3450); };
   const navigateModule = (nextModule) => {
     if (nextModule !== module) {
-      setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0);
+      setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0); setMaterialListCreateSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
       setProjectEditor(null); setAccessProj(null); setDupProj(null);
       setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setAdminMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
@@ -382,7 +391,7 @@ export default function App() {
   const boot = async () => {
     const d = await api.bootstrap();
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING);
-    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []);
+    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
@@ -682,6 +691,14 @@ export default function App() {
   };
   const deletePurchaseOrder = async (id) => { await api.deletePurchaseOrder(id); setPurchaseOrders((p) => p.filter((x) => x.id !== id)); setFinances((p) => p.filter((x) => x.sourcePurchaseOrderId !== id)); };
 
+  /* Listados de materiales */
+  const saveMaterialList = async (form, id) => {
+    const saved = id ? await api.updateMaterialList(id, form) : await api.createMaterialList(form);
+    setMaterialLists((p) => (p.some((x) => x.id === saved.id) ? p.map((x) => (x.id === saved.id ? saved : x)) : [...p, saved]));
+    return saved;
+  };
+  const deleteMaterialList = async (id) => { await api.deleteMaterialList(id); setMaterialLists((p) => p.filter((x) => x.id !== id)); };
+
   /* Repuestos */
   const addPart = async (pt) => { const s = await api.addPart(pt); setParts((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [...p, s])); };
   const updatePart = async (id, patch) => { const s = await api.updatePart(id, patch); setParts((p) => p.map((x) => (x.id === id ? s : x))); };
@@ -707,6 +724,7 @@ export default function App() {
     ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
+    ...(isMgr ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Negocio" }] : []),
     { id: "whiteboard", label: "Pizarra", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
@@ -749,6 +767,7 @@ export default function App() {
             {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "finances" && <button onClick={() => setFinanceCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Movimiento</button>}
             {activeModule === "purchaseOrders" && <button onClick={() => setPurchaseOrderCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden de compra</button>}
+            {activeModule === "materialLists" && <button onClick={() => setMaterialListCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Listado de materiales</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
@@ -896,6 +915,7 @@ export default function App() {
         {activeModule === "whiteboard" && <Whiteboard />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
+        {activeModule === "materialLists" && isMgr && <MaterialListsModule materialLists={materialLists} projects={projects} me={me} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
@@ -910,7 +930,7 @@ export default function App() {
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
-      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} isMgr={isMgr} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); }} />}
+      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
       {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
@@ -959,8 +979,8 @@ export default function App() {
       </nav>
 
       {/* Botón de acción flotante (móvil) */}
-      {!isMonitor && (activeModule === "orders" || activeModule === "projects" || activeModule === "budgets" || activeModule === "finances" || activeModule === "purchaseOrders") && (
-        <button onClick={() => { if (activeModule === "orders") { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); } else if (activeModule === "budgets") setBudgetCreateSignal((value) => value + 1); else if (activeModule === "finances") setFinanceCreateSignal((value) => value + 1); else if (activeModule === "purchaseOrders") setPurchaseOrderCreateSignal((value) => value + 1); else setEditing(null); }} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : activeModule === "purchaseOrders" ? "Nueva orden de compra" : "Nueva tarea"}>
+      {!isMonitor && (activeModule === "orders" || activeModule === "projects" || activeModule === "budgets" || activeModule === "finances" || activeModule === "purchaseOrders" || activeModule === "materialLists") && (
+        <button onClick={() => { if (activeModule === "orders") { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); } else if (activeModule === "budgets") setBudgetCreateSignal((value) => value + 1); else if (activeModule === "finances") setFinanceCreateSignal((value) => value + 1); else if (activeModule === "purchaseOrders") setPurchaseOrderCreateSignal((value) => value + 1); else if (activeModule === "materialLists") setMaterialListCreateSignal((value) => value + 1); else setEditing(null); }} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : activeModule === "purchaseOrders" ? "Nueva orden de compra" : activeModule === "materialLists" ? "Nuevo listado de materiales" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>
       )}
@@ -1088,7 +1108,7 @@ function ProjectEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
-function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], isMgr, onClose, onSelect }) {
+function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const projectById = (id) => projects.find((p) => p.id === id);
@@ -1102,10 +1122,11 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], f
       ...(isMgr ? clients.filter((c) => `${c.name} ${c.site || ""} ${c.code || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "client", item, title: item.name, meta: `Cliente · ${item.site || "Sin ubicación"}`, icon: Building2 })) : []),
       ...(isMgr ? suppliers.filter((s) => `${s.name} ${s.code || ""} ${s.cuit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "supplier", item, title: item.name, meta: `Proveedor · ${item.cuit || "Sin CUIT"}`, icon: Truck })) : []),
       ...(isMgr ? purchaseOrders.filter((po) => `${po.number || po.id} ${po.supplierName || ""} ${po.supplierInvoiceNumber || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "purchaseOrder", item, title: `${item.number || item.id} · ${item.supplierName}`, meta: `Orden de compra · ${item.stage} · ${money(item.grossAmountUsd)}`, icon: ShoppingCart })) : []),
+      ...(isMgr ? materialLists.filter((ml) => `${ml.number || ml.id} ${ml.projectName || ""} ${ml.client || ""} ${ml.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "materialList", item, title: `${item.number || item.id} · ${item.projectName}`, meta: `Listado de materiales · ${item.discipline} · ${item.totalItems || 0} ítem(s)`, icon: Package })) : []),
       ...(isMgr ? parts.filter((p) => `${p.name} ${p.unit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "part", item, title: item.name, meta: `Inventario · Stock ${item.stock ?? "—"}`, icon: Wrench })) : []),
     ];
     return found.slice(0, 12);
-  }, [q, orders, tasks, clients, parts, projects, budgets, finances, suppliers, purchaseOrders, isMgr]);
+  }, [q, orders, tasks, clients, parts, projects, budgets, finances, suppliers, purchaseOrders, materialLists, isMgr]);
   const mouseDownOnBackdrop = useRef(false);
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-3 pt-[8vh] sm:p-6 sm:pt-[12vh]" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
@@ -1542,6 +1563,92 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
     </>}
     {editorOpen && <PurchaseOrderEditor po={editingPo} suppliers={suppliers} projects={projects} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingPo?.id))} onErr={onErr} />}
     {pendingDelete && <ConfirmDialog title="Eliminar orden de compra" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”. ${pendingDelete.stage === "Recibida" ? "La cuenta por pagar asociada en Finanzas también se eliminará." : "No tiene movimientos financieros asociados."}`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
+  </div>;
+}
+
+/* ===================================== LISTADO DE MATERIALES ===================================== */
+const SECTION_LETTERS_CLIENT = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+function MaterialListEditor({ materialList, projects, onClose, onSave, onErr }) {
+  const [form, setForm] = useState(() => ({
+    projectId: "", discipline: "Eléctricos", version: "1.0", client: "", site: "", notes: [...MATERIAL_LIST_DEFAULT_NOTES],
+    ...(materialList || {}),
+    sections: (materialList?.sections?.length ? materialList.sections : [emptyMaterialListSection()]).map((section) => ({ ...section, items: section.items.map((item) => ({ ...item })) })),
+  }));
+  const [saving, setSaving] = useState(false);
+  const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const setSection = (index, patch) => setForm((current) => ({ ...current, sections: current.sections.map((section, sectionIndex) => sectionIndex === index ? { ...section, ...patch } : section) }));
+  const addSection = () => set("sections", [...form.sections, emptyMaterialListSection()]);
+  const removeSection = (index) => set("sections", form.sections.filter((_, sectionIndex) => sectionIndex !== index));
+  const setItem = (sectionIndex, itemIndex, patch) => setForm((current) => ({ ...current, sections: current.sections.map((section, si) => si === sectionIndex ? { ...section, items: section.items.map((item, ii) => ii === itemIndex ? { ...item, ...patch } : item) } : section) }));
+  const addItem = (sectionIndex) => setSection(sectionIndex, { items: [...form.sections[sectionIndex].items, emptyMaterialListItem()] });
+  const removeItem = (sectionIndex, itemIndex) => setSection(sectionIndex, { items: form.sections[sectionIndex].items.filter((_, ii) => ii !== itemIndex) });
+  const setNote = (index, value) => set("notes", form.notes.map((note, noteIndex) => noteIndex === index ? value : note));
+  const addNote = () => set("notes", [...form.notes, ""]);
+  const removeNote = (index) => set("notes", form.notes.filter((_, noteIndex) => noteIndex !== index));
+  const selectProject = (projectId) => { const project = projects.find((p) => p.id === projectId); setForm((current) => ({ ...current, projectId, client: project?.client || current.client, site: project?.site || current.site })); };
+  const validSections = form.sections.map((section) => ({ ...section, items: section.items.filter((item) => item.description.trim() && Number(item.qty) > 0) })).filter((section) => section.title.trim() && section.items.length > 0);
+  const submit = async () => { setSaving(true); try { const saved = await onSave({ ...form, sections: validSections, notes: form.notes.filter((note) => note.trim()) }); if (saved) onClose(); } finally { setSaving(false); } };
+  const mouseDownOnBackdrop = useRef(false);
+  return <div className="motion-backdrop fixed inset-0 z-[60] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+    <div role="dialog" aria-modal="true" aria-labelledby="ml-dialog-title" className="modal-frame mobile-dialog mobile-sheet-content flex h-[100dvh] w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5"><div><h2 id="ml-dialog-title" className="text-lg font-semibold text-slate-900">{materialList?.id ? `Editar ${materialList.number || materialList.id}` : "Nuevo listado de materiales"}</h2><p className="text-xs text-slate-500">Documento para que el cliente cotice los materiales con su proveedor</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+        {projects.length === 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Todavía no hay proyectos cargados. Creá uno en la pestaña “Proyectos” antes de emitir el listado.</div>}
+        <Section title="Encabezado"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <L label="Proyecto *"><select value={form.projectId} onChange={(event) => selectProject(event.target.value)} className="u-input"><option value="">Seleccionar proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L>
+          <L label="Disciplina"><select value={form.discipline} onChange={(event) => set("discipline", event.target.value)} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((discipline) => <option key={discipline}>{discipline}</option>)}</select></L>
+          <L label="Cliente / Empresa"><input value={form.client || ""} onChange={(event) => set("client", event.target.value)} placeholder="Razón social del cliente" className="u-input" /></L>
+          <L label="Planta"><input value={form.site || ""} onChange={(event) => set("site", event.target.value)} placeholder="Ej. Venado Tuerto" className="u-input" /></L>
+          <L label="Versión"><input value={form.version || ""} onChange={(event) => set("version", event.target.value)} placeholder="1.0" className="u-input" /></L>
+        </div></Section>
+
+        <Section title="Secciones y materiales">
+          <div className="space-y-3">{form.sections.map((section, sectionIndex) => (
+            <div key={sectionIndex} className="rounded-lg border border-slate-200 p-2.5">
+              <div className="flex items-center gap-2"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-emerald-100 font-mono text-xs font-bold text-emerald-800">{SECTION_LETTERS_CLIENT[sectionIndex] || sectionIndex + 1}</span><input value={section.title} onChange={(event) => setSection(sectionIndex, { title: event.target.value })} placeholder="Título de la sección (ej. Arquitectura de Red)" className="u-input flex-1" /><button onClick={() => removeSection(sectionIndex)} aria-label="Quitar sección" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>
+              <div className="mt-2 space-y-2">{section.items.map((item, itemIndex) => (
+                <div key={itemIndex} className="grid grid-cols-2 gap-2 sm:grid-cols-[6.5rem_minmax(0,1fr)_7rem_4rem_4rem_auto]">
+                  <input value={item.ref} onChange={(event) => setItem(sectionIndex, itemIndex, { ref: event.target.value })} placeholder="Ref." aria-label="Referencia" className="u-input font-mono" />
+                  <input value={item.description} onChange={(event) => setItem(sectionIndex, itemIndex, { description: event.target.value })} placeholder="Descripción" aria-label="Descripción" className="u-input col-span-2 sm:col-span-1" />
+                  <input value={item.brand} onChange={(event) => setItem(sectionIndex, itemIndex, { brand: event.target.value })} placeholder="Marca" aria-label="Marca" className="u-input" />
+                  <input type="number" min="0" step="1" value={item.qty} onChange={(event) => setItem(sectionIndex, itemIndex, { qty: event.target.value === "" ? "" : Math.max(0, Math.round(Number(event.target.value))) })} placeholder="Cant." aria-label="Cantidad" className="u-input" />
+                  <input value={item.unit} onChange={(event) => setItem(sectionIndex, itemIndex, { unit: event.target.value })} placeholder="Ud." aria-label="Unidad" className="u-input" />
+                  <button onClick={() => removeItem(sectionIndex, itemIndex)} aria-label="Quitar ítem" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              ))}</div>
+              <button onClick={() => addItem(sectionIndex)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar ítem</button>
+            </div>
+          ))}</div>
+          <button onClick={addSection} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"><Plus className="h-4 w-4" /> Agregar sección</button>
+        </Section>
+
+        <Section title="Notas importantes">
+          <div className="space-y-2">{form.notes.map((note, index) => (
+            <div key={index} className="flex gap-2"><textarea rows={2} value={note} onChange={(event) => setNote(index, event.target.value)} className="u-input flex-1 resize-none text-xs" /><button onClick={() => removeNote(index)} aria-label="Quitar nota" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>
+          ))}</div>
+          <button onClick={addNote} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar nota</button>
+        </Section>
+      </div>
+      <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || !form.projectId || validSections.length === 0} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar listado</button></div>
+    </div>
+  </div>;
+}
+
+function MaterialListsModule({ materialLists, projects, me, createSignal, onConsumeCreate, onSave, onDelete, onErr }) {
+  const [editingMl, setEditingMl] = useState(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [query, setQuery] = useState("");
+  useEffect(() => { if (createSignal > 0) { setEditingMl(null); setEditorOpen(true); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
+  const wrap = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { onErr(e); } };
+  const visible = materialLists.filter((ml) => !query || `${ml.number || ml.id} ${ml.projectName || ""} ${ml.client || ""} ${ml.site || ""}`.toLowerCase().includes(query.toLowerCase()));
+  return <div className="space-y-4">
+    <div><h2 className="text-lg font-semibold text-slate-900">Listados de materiales</h2><p className="text-xs text-slate-500">Documentos para que el cliente cotice materiales con su proveedor</p></div>
+    <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-3"><Metric label="Listados" value={materialLists.length} icon={Package} tint="text-brand-600" /><Metric label="Proyectos con listado" value={new Set(materialLists.map((ml) => ml.projectId)).size} icon={Folder} tint="text-violet-600" /><Metric label="Ítems totales" value={materialLists.reduce((sum, ml) => sum + (ml.totalItems || 0), 0)} icon={ClipboardList} tint="text-slate-600" /></div>
+    <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar listado, proyecto o planta…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+    {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><Package className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin listados de materiales para mostrar</h3><p className="mt-1 text-xs text-slate-400">Creá uno para pedirle a un cliente que cotice materiales con su proveedor.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((ml) => <Box key={ml.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{ml.number || ml.id}</span><Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">{ml.discipline}</Chip></div><h3 className="mt-2 text-base font-semibold text-slate-900">{ml.projectName}</h3><p className="mt-0.5 text-xs text-slate-500">{ml.client || "Sin cliente"}{ml.site ? ` · ${ml.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => materialListReportPDF(ml, projects.find((p) => p.id === ml.projectId))} title="Descargar PDF" aria-label="Descargar PDF del listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingMl(ml); setEditorOpen(true); }} title="Editar listado" aria-label="Editar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => setPendingDelete(ml)} title="Eliminar listado" aria-label="Eliminar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>{(ml.sections || []).length} sección(es)</span><span>{ml.totalItems || 0} ítem(s)</span><span>Versión {ml.version}</span></div></Box>)}</div>}
+    {editorOpen && <MaterialListEditor materialList={editingMl} projects={projects} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingMl?.id))} onErr={onErr} />}
+    {pendingDelete && <ConfirmDialog title="Eliminar listado de materiales" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
   </div>;
 }
 
@@ -2566,11 +2673,25 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
 
 /* ===================================== PROYECTOS: REPORTES ===================================== */
 function Reports({ tasks, users, projects, proj }) {
+  const [staffQuery, setStaffQuery] = useState("");
   const done = tasks.filter((t) => t.status === "Hecho").length;
   const wip = tasks.filter((t) => t.status === "En progreso" || t.status === "En revisión").length;
   const overdue = tasks.filter(isOverdue).length;
   const byStatus = T_STATUS.map((s) => ({ name: s, value: tasks.filter((t) => t.status === s).length, fill: T_STYLE[s].bar }));
-  const byAssignee = users.filter((u) => u.active && u.role !== "monitor_oficina").map((u) => ({ name: u.name.split(" ")[0], value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }));
+  const activeUsers = users.filter((u) => u.active && u.role !== "monitor_oficina");
+  // Si dos personas comparten primer nombre, se distinguen con la inicial del apellido para no confundirlas en el gráfico.
+  const firstNameCounts = activeUsers.reduce((acc, u) => { const first = u.name.split(" ")[0]; acc[first] = (acc[first] || 0) + 1; return acc; }, {});
+  const byAssignee = activeUsers.map((u) => { const parts = u.name.split(" "); const first = parts[0]; const label = firstNameCounts[first] > 1 && parts[1] ? `${first} ${parts[1][0]}.` : first; return { name: label, value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }; });
+  const projectLabel = (id) => { const p = projects.find((item) => item.id === id); return p ? `${p.key} · ${p.name}` : "Sin proyecto"; };
+  const staffWorkload = activeUsers
+    .map((u) => ({
+      user: u,
+      items: [
+        ...tasks.filter((t) => t.assignee === u.id).map((t) => ({ ...t, role: "Responsable" })),
+        ...tasks.filter((t) => (t.participants || []).includes(u.id)).map((t) => ({ ...t, role: "Participante" })),
+      ],
+    }))
+    .filter((row) => row.items.length > 0 && (!staffQuery || row.user.name.toLowerCase().includes(staffQuery.toLowerCase())));
   const projList = proj === "all" ? projects : projects.filter((p) => p.id === proj);
   const activeProjects = projList.filter((p) => p.active !== false).length;
   const finishedProjects = projList.filter((p) => p.active === false).length;
@@ -2585,6 +2706,29 @@ function Reports({ tasks, users, projects, proj }) {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Tareas" value={tasks.length} icon={LayoutGrid} tint="text-brand-600" /><Metric label="Completadas" value={done} icon={CheckCircle2} tint="text-emerald-600" /><Metric label="En curso" value={wip} icon={Clock} tint="text-violet-600" /><Metric label="Vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" /></div>
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Tareas por estado"><ChartBox data={byStatus} /></Panel><Panel title="Carga por responsable"><ChartBox data={byAssignee} /></Panel></div>
+      <Panel title="Carga de trabajo por persona">
+        <div className="relative mb-3"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={staffQuery} onChange={(e) => setStaffQuery(e.target.value)} placeholder="Buscar persona…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+        {staffWorkload.length === 0 ? <Empty text="Nadie tiene tareas asignadas con este filtro." /> : (
+          <div className="space-y-3">
+            {staffWorkload.map(({ user, items }) => (
+              <div key={user.id} className="rounded-lg border border-slate-200 p-3">
+                <div className="mb-2 flex items-center gap-2"><Avatar user={user} size={24} /><b className="text-sm text-slate-800">{user.name}</b><span className="ml-auto text-xs text-slate-400">{items.length} tarea(s)</span></div>
+                <div className="space-y-1.5">
+                  {items.map((t) => (
+                    <div key={`${t.id}-${t.role}`} className="flex flex-wrap items-center gap-2 rounded-md bg-slate-50 px-2.5 py-1.5 text-xs">
+                      <span className="font-mono text-slate-400">{t.id}</span>
+                      <span className="font-medium text-slate-700">{t.title}</span>
+                      <span className="text-slate-400">· {projectLabel(t.project)}</span>
+                      <Chip className={T_STYLE[t.status]?.chip}>{t.status}</Chip>
+                      <span className="ml-auto rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">{t.role}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
       <Panel title="Progreso por proyecto"><div className="space-y-3">{projList.map((p) => { const ts = tasks.filter((t) => t.project === p.id); const d = ts.filter((t) => t.status === "Hecho").length; const pct = ts.length ? Math.round((d / ts.length) * 100) : 0; return (<div key={p.id}><div className="mb-1 flex items-center justify-between text-sm"><span className="font-medium text-slate-700"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}</span><span className="text-slate-500">{d}/{ts.length} · {pct}%</span></div><HealthBar v={pct} color={p.color} /></div>); })}</div></Panel>
     </div>
   );

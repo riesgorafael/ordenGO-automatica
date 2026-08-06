@@ -47,6 +47,10 @@ export const api = {
   updatePurchaseOrder: (id, patch) => req("/purchase-orders/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deletePurchaseOrder: (id) => req("/purchase-orders/" + id, { method: "DELETE" }),
 
+  createMaterialList: (ml) => req("/material-lists", { method: "POST", body: JSON.stringify(ml) }),
+  updateMaterialList: (id, patch) => req("/material-lists/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteMaterialList: (id) => req("/material-lists/" + id, { method: "DELETE" }),
+
   orders: () => req("/orders"),
   createOrder: (o) => req("/orders", { method: "POST", body: JSON.stringify(o) }),
   updateOrder: (id, patch) => req("/orders/" + id, { method: "PATCH", body: JSON.stringify(patch) }),

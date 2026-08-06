@@ -102,6 +102,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS parts ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS suppliers ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS purchase_orders ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS material_lists ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS app_settings ( key text PRIMARY KEY, value jsonb, updated_at timestamptz DEFAULT now());
   `);
   // Migración idempotente para instalaciones existentes
@@ -584,7 +585,7 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -598,6 +599,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     loadBranding(),
     pool.query("SELECT data FROM suppliers ORDER BY data->>'name'"),
     pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC"),
+    pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC"),
   ]);
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
@@ -622,6 +624,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     parts: pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
     purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    materialLists: tec || isMonitor(req.user.role) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
   });
 });
@@ -1034,6 +1037,92 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), asy
 app.delete("/api/purchase-orders/:id", auth, requireRole("admin"), async (req, res) => {
   await pool.query("DELETE FROM financial_movements WHERE data->>'sourcePurchaseOrderId'=$1", [req.params.id]);
   const deleted = await pool.query("DELETE FROM purchase_orders WHERE id=$1 RETURNING id", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  res.status(204).end();
+});
+
+/* ------------------------------------------------ Listado de materiales ------------------------------------------------ */
+// Documento que Automática entrega al cliente para que este cotice los materiales con su
+// proveedor (columnas de precio quedan siempre en blanco; las completa quien cotiza).
+const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Otro"];
+const MATERIAL_LIST_DEFAULT_NOTES = [
+  "Los datos de cómputos y unidades presentados en este documento son provistos solo a efectos orientativos, pudiendo presentar cierto grado de incerteza producto de la calidad y metodología de la medición empleada. Es responsabilidad de los oferentes verificar las cantidades a suministrar de la mejor manera que consideren pertinente y ajustarlos o asumirlos como verdaderos.",
+  "El formato aquí suministrado es a los efectos de facilitar la comparación y ecualización de ofertas. Se ruega no alterar la estructura de los ítems mayores que componen el alcance del trabajo y en caso de considerar necesario acrecentar el grado de apertura para brindar mayor detalle sobre algún ítem en particular, favor de hacerlo agregando líneas debajo de la línea al final. En caso de opcionales y/o variantes a lo especificado cotizar por separado dejándolo expresamente indicado.",
+];
+const SECTION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+function normalizeMaterialListItem(item) {
+  return {
+    ref: String(item?.ref || "").trim().slice(0, 60),
+    description: String(item?.description || "").trim().slice(0, 300),
+    brand: String(item?.brand || "").trim().slice(0, 80),
+    qty: Math.max(0, Number(item?.qty) || 0),
+    unit: String(item?.unit || "un").trim().slice(0, 10) || "un",
+  };
+}
+function normalizeMaterialList(input, previous = {}) {
+  const ml = { ...previous, ...(input || {}) };
+  delete ml._updatedAt;
+  ml.version = String(ml.version || "1.0").trim().slice(0, 10) || "1.0";
+  ml.projectId = String(ml.projectId || "").trim();
+  ml.projectName = String(ml.projectName || "").trim();
+  ml.client = String(ml.client || "").trim();
+  ml.site = String(ml.site || "").trim();
+  ml.discipline = MATERIAL_LIST_DISCIPLINES.includes(ml.discipline) ? ml.discipline : "Eléctricos";
+  ml.notes = Array.isArray(ml.notes) ? ml.notes.map((note) => String(note || "").trim().slice(0, 600)).filter(Boolean) : MATERIAL_LIST_DEFAULT_NOTES;
+  ml.sections = (Array.isArray(ml.sections) ? ml.sections : [])
+    .map((section) => ({
+      title: String(section?.title || "").trim().slice(0, 120),
+      items: (Array.isArray(section?.items) ? section.items : []).map(normalizeMaterialListItem).filter((item) => item.description),
+    }))
+    .filter((section) => section.title && section.items.length > 0)
+    .map((section, index) => ({ ...section, code: SECTION_LETTERS[index] || `S${index + 1}` }));
+  ml.totalItems = ml.sections.reduce((sum, section) => sum + section.items.length, 0);
+  return ml;
+}
+app.get("/api/material-lists", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC");
+  res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+});
+app.post("/api/material-lists", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const ml = normalizeMaterialList(req.body);
+  if (!ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
+  const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
+  if (!project) return res.status(400).json({ error: "El proyecto seleccionado ya no existe." });
+  ml.projectName = project.name;
+  if (!ml.sections.length) return res.status(400).json({ error: "Agregá al menos una sección con un ítem." });
+  if (!ml.id) {
+    const siteCode = String(project.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
+    const stamp = new Date();
+    const mmdd = `${String(stamp.getMonth() + 1).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}`;
+    const prefix = `${siteCode}-${mmdd}-MAT-`;
+    const rows = (await pool.query("SELECT id FROM material_lists WHERE id LIKE $1", [`${prefix}%`])).rows;
+    const next = Math.max(0, ...rows.map((row) => Number(String(row.id).slice(prefix.length)) || 0)) + 1;
+    ml.id = `${prefix}${String(next).padStart(3, "0")}`;
+  }
+  ml.number = ml.id;
+  ml.createdAt = ml.createdAt || new Date().toISOString();
+  ml.createdBy = ml.createdBy || req.user.id; ml.createdByName = ml.createdByName || req.user.name;
+  try { await pool.query("INSERT INTO material_lists(id,data) VALUES($1,$2)", [ml.id, ml]); }
+  catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un listado con ese identificador" }); throw error; }
+  res.json(ml);
+});
+app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const current = (await pool.query("SELECT data FROM material_lists WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!current) return res.status(404).json({ error: "No existe" });
+  const ml = normalizeMaterialList(req.body, current);
+  ml.id = req.params.id; ml.number = ml.id;
+  if (ml.projectId !== current.projectId) {
+    const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
+    if (!project) return res.status(400).json({ error: "El proyecto seleccionado ya no existe." });
+    ml.projectName = project.name;
+  }
+  if (!ml.sections.length) return res.status(400).json({ error: "Agregá al menos una sección con un ítem." });
+  ml.updatedBy = req.user.id; ml.updatedByName = req.user.name;
+  await pool.query("UPDATE material_lists SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, ml]);
+  res.json(ml);
+});
+app.delete("/api/material-lists/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const deleted = await pool.query("DELETE FROM material_lists WHERE id=$1 RETURNING id", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
   res.status(204).end();
 });

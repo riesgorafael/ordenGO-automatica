@@ -506,3 +506,104 @@ export function purchaseOrderReportPDF(po, supplier, project) {
 
   doc.save(`${po.number || po.id}_orden_de_compra.pdf`);
 }
+
+export function materialListReportPDF(ml, project) {
+  const doc = new jsPDF("p", "mm", "a4");
+  const W = 210, M = 15;
+  let y = 20;
+  let drawHead = () => {};
+  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 23, 42);
+  doc.text(String(ml.client || "Cliente").toUpperCase(), M, 16);
+  doc.setFontSize(9); doc.setTextColor(71, 85, 105);
+  doc.text(`Listado de Materiales ${ml.discipline || ""}`.trim(), M, 22);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
+  doc.text("Desarrollo Automatización", W - M, 15, { align: "right" });
+  doc.setFont("helvetica", "bold"); doc.text(ml.number || ml.id || "—", W - M, 19.5, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 24, W - M, 24);
+
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.8); doc.setTextColor(71, 85, 105);
+  doc.text(`Versión: ${ml.version || "1.0"}`, M, 30);
+  doc.text(`Planta: ${ml.site || "—"}`, M, 34.5);
+  doc.text(`Proyecto: ${ml.projectName || project?.name || "—"}`, M, 39);
+  doc.text("Fecha de actualización:", W - M, 30, { align: "right" });
+  doc.setFont("helvetica", "bold"); doc.text(formatDate(ml._updatedAt || ml.updatedAt || ml.createdAt), W - M, 34.5, { align: "right" });
+
+  y = 46;
+  doc.setFillColor(30, 41, 59); doc.rect(M, y - 5, W - 2 * M, 7, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
+  doc.text(`LISTADO DE MATERIALES ${(ml.discipline || "").toUpperCase()}`.trim(), M + 2, y);
+  y += 6;
+
+  if ((ml.notes || []).length) {
+    doc.setFillColor(254, 249, 231); doc.setDrawColor(253, 224, 71);
+    const noteLines = ml.notes.map((note) => doc.splitTextToSize(note, W - 2 * M - 10));
+    const totalLines = noteLines.reduce((sum, lines) => sum + lines.length, 0) + ml.notes.length * 1.2;
+    const boxHeight = totalLines * 3.6 + 6;
+    brk(boxHeight + 10);
+    doc.rect(M, y, W - 2 * M, boxHeight, "FD");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(120, 90, 10);
+    doc.text("NOTAS IMPORTANTES", M + 3, y + 4.5);
+    let noteY = y + 9;
+    doc.setFont("helvetica", "normal"); doc.setTextColor(71, 85, 105); doc.setFontSize(6.6);
+    noteLines.forEach((lines, index) => {
+      doc.text(`${index + 1}.`, M + 3, noteY);
+      doc.text(lines, M + 8, noteY);
+      noteY += lines.length * 3.6 + 2;
+    });
+    y += boxHeight + 6;
+  }
+
+  brk(14);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(241, 135, 0);
+  doc.text("1. LISTADO GENERAL", M, y); y += 7;
+
+  const colX = { item: M, ref: M + 11, desc: M + 34, brand: M + 92, qty: M + 122, unit: M + 127, matUnit: M + 150, subUnit: M + 172, sub: W - M };
+  const cols = () => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
+    doc.text("Item", colX.item, y);
+    doc.text("Ref.", colX.ref, y);
+    doc.text("Descripción", colX.desc, y);
+    doc.text("Marca", colX.brand, y);
+    doc.text("Cant.", colX.qty, y, { align: "right" });
+    doc.text("Ud.", colX.unit, y);
+    doc.text("Mat. Unit.", colX.matUnit, y, { align: "right" });
+    doc.text("Subt. Unit.", colX.subUnit, y, { align: "right" });
+    doc.text("Subtotal", colX.sub, y, { align: "right" });
+    y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
+  };
+  drawHead = cols; cols();
+
+  const sections = ml.sections || [];
+  sections.forEach((section) => {
+    brk(11);
+    doc.setFillColor(220, 252, 231); doc.rect(M, y - 4, W - 2 * M, 6, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(6, 95, 70);
+    doc.text(section.title, M + 2, y);
+    y += 6.5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(15, 23, 42);
+    (section.items || []).forEach((item, index) => {
+      brk(7);
+      doc.text(`${section.code}.${String(index).padStart(2, "0")}`, colX.item, y);
+      doc.text(String(item.ref || "—"), colX.ref, y);
+      const desc = doc.splitTextToSize(item.description || "—", 56);
+      doc.text(desc[0] + (desc.length > 1 ? "…" : ""), colX.desc, y);
+      doc.text(String(item.brand || "—"), colX.brand, y);
+      doc.text(String(item.qty || 0), colX.qty, y, { align: "right" });
+      doc.text(String(item.unit || "un"), colX.unit, y);
+      y += 6;
+    });
+  });
+
+  brk(14); doc.setDrawColor(148, 163, 184); doc.line(M, y, W - M, y); y += 2;
+  doc.setFillColor(241, 245, 249); doc.rect(M, y, W - 2 * M, 8, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+  doc.text("Total de Materiales", M + 3, y + 5.3);
+  y += 14;
+
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+
+  doc.save(`${ml.number || ml.id}_listado_de_materiales.pdf`);
+}
