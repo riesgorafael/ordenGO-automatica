@@ -684,30 +684,30 @@ export default function App() {
   // Los módulos se agrupan por área de trabajo: Inicio/Órdenes/Proyectos quedan
   // como núcleo operativo sin agrupar (uso diario, incluye técnicos de campo);
   // el resto se organiza en Negocio (pipeline comercial → compras → resultado
-  // financiero, de uso frecuente para gerencia) y Administración (catálogos y
-  // configuración de uso esporádico, plegados en un menú aparte).
+  // financiero, de uso frecuente para gerencia) y Utilidades (herramientas y
+  // catálogos de uso esporádico, plegados en un menú aparte).
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
-    { id: "whiteboard", label: "Pizarra", icon: Pencil },
+    { id: "whiteboard", label: "Pizarra", icon: Pencil, group: "Utilidades" },
   ] : [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
-    { id: "whiteboard", label: "Pizarra", icon: Pencil },
     ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Negocio" }] : []),
-    ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Administración" }] : []),
-    ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Administración" }] : []),
-    ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2, group: "Administración" }] : []),
+    { id: "whiteboard", label: "Pizarra", icon: Pencil, group: "Utilidades" },
+    ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
+    ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Utilidades" }] : []),
+    ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2, group: "Utilidades" }] : []),
   ];
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
   const activeModule = allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio");
   // En teléfono priorizamos las áreas operativas de uso diario. El resto
-  // queda agrupado en “Más” por área (Comercial, Compras, Administración);
+  // queda agrupado en “Más” por área (Negocio, Utilidades);
   // además de evitar etiquetas superpuestas, reduce cambios de contexto accidentales.
   const mobilePrimaryIds = isMgr ? ["inicio", "panel", "orders", "projects"] : modTabs.map((tab) => tab.id).slice(0, 4);
   const mobilePrimaryTabs = mobilePrimaryIds.map((id) => modTabs.find((tab) => tab.id === id)).filter(Boolean);
@@ -720,9 +720,9 @@ export default function App() {
   }, []);
   const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
   const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
-  // En escritorio, "Administración" se pliega en un único menú desplegable
+  // En escritorio, "Utilidades" se pliega en un único menú desplegable
   // para que la barra no desborde el ancho disponible con muchas pestañas.
-  const adminGroupTabs = modTabs.filter((tab) => tab.group === "Administración");
+  const adminGroupTabs = modTabs.filter((tab) => tab.group === "Utilidades");
   const adminGroupActive = adminGroupTabs.some((tab) => tab.id === activeModule);
   const adminGroupBadge = adminGroupTabs.reduce((sum, tab) => sum + (tab.badge || 0), 0);
 
@@ -769,7 +769,7 @@ export default function App() {
           <div className="nav-tabs-scroll min-w-0 flex-1 overflow-x-auto">
             <nav className="flex gap-0.5 pb-1">
               {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
-                if (group === "Administración") return null;
+                if (group === "Utilidades") return null;
                 const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
                 return (
                   <React.Fragment key={id}>
@@ -785,7 +785,7 @@ export default function App() {
               <span aria-hidden="true" className="my-2 w-px shrink-0 bg-slate-700" />
               <div ref={adminMenuRef} className="relative shrink-0 py-1">
                 <button onClick={() => setAdminMenuOpen((v) => !v)} aria-expanded={adminMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${adminGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
-                  <Settings2 className="h-4 w-4" /> Administración
+                  <Settings2 className="h-4 w-4" /> Utilidades
                   <ChevronDown className={`h-3.5 w-3.5 transition-transform ${adminMenuOpen ? "rotate-180" : ""}`} />
                   {adminGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{adminGroupBadge}</span>}
                 </button>
