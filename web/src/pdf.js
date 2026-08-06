@@ -629,9 +629,9 @@ export function materialListReportPDF(ml, project, client) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(15, 23, 42);
   sections.forEach((section) => {
     brk(9);
-    doc.setFillColor(220, 252, 231); doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
+    doc.setFillColor(226, 239, 218); doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
     doc.rect(M, y, CW, 5, "FD");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(6, 95, 70);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(55, 86, 35);
     doc.text(section.title, M + 2, y + 3.4);
     y += 5;
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(15, 23, 42);
