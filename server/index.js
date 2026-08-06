@@ -603,6 +603,23 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC"),
   ]);
+  // Aviso de tareas por vencer (próximos 2 días): se genera una sola vez por tarea (id determinístico)
+  // y queda en la bandeja de notificaciones —visible en la campana de cualquier pantalla— hasta que
+  // el usuario la lea; no se repite en cada carga porque ON CONFLICT la ignora si ya existe.
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const dueSoonKey = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+  const dueSoonTasks = ta.rows.map((r) => r.data).filter((t) => t.assignee === req.user.id && t.status !== "Hecho" && t.due && t.due >= todayKey && t.due <= dueSoonKey);
+  for (const t of dueSoonTasks) {
+    try {
+      await pool.query(
+        "INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING",
+        [`due-${t.id}`, req.user.id, `La tarea ${t.id}: ${t.title} vence pronto (${t.due}).`, "task:" + t.id],
+      );
+    } catch {}
+  }
+  const notifRows = dueSoonTasks.length
+    ? (await pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id])).rows
+    : no.rows;
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
   // Técnicos y monitores solo ven los proyectos que el administrador les habilitó.
@@ -622,7 +639,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     }),
     orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.filter((row) => orderVisibleToUser(req.user, row.data)).map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
-    notifications: no.rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
+    notifications: notifRows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
     purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
