@@ -7,7 +7,7 @@ import {
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
-  ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package,
+  ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -18,7 +18,7 @@ import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, q
 const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "materialLists", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
 const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
 const BRAND_THEMES = [
   { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
@@ -326,6 +326,7 @@ export default function App() {
   const [suppliers, setSuppliers] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [materialLists, setMaterialLists] = useState([]);
+  const [whiteboardNotes, setWhiteboardNotes] = useState([]);
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
@@ -405,7 +406,7 @@ export default function App() {
   const boot = async () => {
     const d = await api.bootstrap();
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING);
-    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []);
+    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setWhiteboardNotes(d.whiteboardNotes || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
@@ -713,6 +714,15 @@ export default function App() {
   };
   const deleteMaterialList = async (id) => { await api.deleteMaterialList(id); setMaterialLists((p) => p.filter((x) => x.id !== id)); };
 
+  /* Pizarra: notas y dibujos */
+  const saveWhiteboardNote = async (note) => {
+    const { id, ...rest } = note;
+    const saved = id ? await api.updateWhiteboardNote(id, rest) : await api.createWhiteboardNote(rest);
+    setWhiteboardNotes((p) => (p.some((x) => x.id === saved.id) ? p.map((x) => (x.id === saved.id ? saved : x)) : [...p, saved]));
+    return saved;
+  };
+  const deleteWhiteboardNote = async (id) => { await api.deleteWhiteboardNote(id); setWhiteboardNotes((p) => p.filter((x) => x.id !== id)); };
+
   /* Repuestos */
   const addPart = async (pt) => { const s = await api.addPart(pt); setParts((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [...p, s])); };
   const updatePart = async (id, patch) => { const s = await api.updatePart(id, patch); setParts((p) => p.map((x) => (x.id === id ? s : x))); };
@@ -738,7 +748,7 @@ export default function App() {
     ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
-    ...(isMgr ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Negocio" }] : []),
+    ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Negocio" }] : []),
     { id: "whiteboard", label: "Pizarra", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
@@ -926,10 +936,10 @@ export default function App() {
             })()}
           </>
         )}
-        {activeModule === "whiteboard" && <Whiteboard />}
+        {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
-        {activeModule === "materialLists" && isMgr && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
+        {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
@@ -944,7 +954,7 @@ export default function App() {
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
-      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
+      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
       {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
@@ -1123,7 +1133,7 @@ function ProjectEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
-function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, onClose, onSelect }) {
+function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const projectById = (id) => projects.find((p) => p.id === id);
@@ -1137,7 +1147,7 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], f
       ...(isMgr ? clients.filter((c) => `${c.name} ${c.site || ""} ${c.code || ""} ${clientSites(c).map((s) => `${s.name} ${s.code}`).join(" ")}`.toLowerCase().includes(q)).map((item) => ({ kind: "client", item, title: item.name, meta: `Cliente · ${clientSites(item).map((s) => s.name).join(", ") || "Sin ubicación"}`, icon: Building2 })) : []),
       ...(isMgr ? suppliers.filter((s) => `${s.name} ${s.code || ""} ${s.cuit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "supplier", item, title: item.name, meta: `Proveedor · ${item.cuit || "Sin CUIT"}`, icon: Truck })) : []),
       ...(isMgr ? purchaseOrders.filter((po) => `${po.number || po.id} ${po.supplierName || ""} ${po.supplierInvoiceNumber || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "purchaseOrder", item, title: `${item.number || item.id} · ${item.supplierName}`, meta: `Orden de compra · ${item.stage} · ${money(item.grossAmountUsd)}`, icon: ShoppingCart })) : []),
-      ...(isMgr ? materialLists.filter((ml) => `${ml.number || ml.id} ${ml.projectName || ""} ${ml.client || ""} ${ml.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "materialList", item, title: `${item.number || item.id} · ${item.projectName}`, meta: `Listado de materiales · ${item.discipline} · ${item.totalItems || 0} ítem(s)`, icon: Package })) : []),
+      ...(canSeeMaterialLists ? materialLists.filter((ml) => `${ml.number || ml.id} ${ml.projectName || ""} ${ml.client || ""} ${ml.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "materialList", item, title: `${item.number || item.id} · ${item.projectName}`, meta: `Listado de materiales · ${item.discipline} · ${item.totalItems || 0} ítem(s)`, icon: Package })) : []),
       ...(isMgr ? parts.filter((p) => `${p.name} ${p.unit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "part", item, title: item.name, meta: `Inventario · Stock ${item.stock ?? "—"}`, icon: Wrench })) : []),
     ];
     return found.slice(0, 12);
@@ -1536,7 +1546,7 @@ function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }
               <select value={item.vatRate} onChange={(event) => setItem(index, { vatRate: Number(event.target.value) })} aria-label="Alícuota de IVA" className="u-input">{PO_VAT_RATES.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select>
               <button onClick={() => removeItem(index)} aria-label="Quitar ítem" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 sm:justify-self-end"><Trash2 className="h-4 w-4" /></button>
             </div>
-            {item.currency !== "USD" && <div className="mt-2 flex flex-wrap items-center gap-2"><L label={`Tipo de cambio (${item.currency}/USD)`}><input type="number" min="0" step="0.0001" value={item.exchangeRate || ""} onChange={(event) => setItem(index, { exchangeRate: event.target.value })} placeholder="Ej. 1050" className="u-input w-40" /></L>{item.currency === "ARS" && <button type="button" disabled={rateLoading} onClick={() => applyBnaRate(index)} className="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-[11px] font-medium text-sky-700 disabled:opacity-50">{rateLoading ? "Consultando…" : "Usar cotización BNA"}</button>}</div>}
+            {item.currency !== "USD" && <div className="mt-2 flex flex-wrap items-center gap-2"><div className="w-40"><L label={`Tipo de cambio (${item.currency}/USD)`}><input type="number" min="0" step="0.0001" value={item.exchangeRate || ""} onChange={(event) => setItem(index, { exchangeRate: event.target.value })} placeholder="Ej. 1050" className="u-input" /></L></div>{item.currency === "ARS" && <button type="button" disabled={rateLoading} onClick={() => applyBnaRate(index)} className="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-[11px] font-medium text-sky-700 disabled:opacity-50">{rateLoading ? "Consultando…" : "Usar cotización BNA"}</button>}</div>}
             <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-[11px] text-slate-500"><span>Neto: <b>{money(math.netAmountUsd)}</b></span><span>IVA: <b>{money(math.vatAmountUsd)}</b></span><span>Total: <b>{money(math.grossAmountUsd)}</b></span></div>
           </div>; })}</div>
           <button onClick={addItem} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"><Plus className="h-4 w-4" /> Agregar ítem</button>
@@ -1652,7 +1662,7 @@ function MaterialListEditor({ materialList, projects, clients, onClose, onSave, 
   </div>;
 }
 
-function MaterialListsModule({ materialLists, projects, clients, me, createSignal, onConsumeCreate, onSave, onDelete, onErr }) {
+function MaterialListsModule({ materialLists, projects, clients, me, isMgr, createSignal, onConsumeCreate, onSave, onDelete, onErr }) {
   const [editingMl, setEditingMl] = useState(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -1664,7 +1674,7 @@ function MaterialListsModule({ materialLists, projects, clients, me, createSigna
     <div><h2 className="text-lg font-semibold text-slate-900">Listados de materiales</h2><p className="text-xs text-slate-500">Documentos para que el cliente cotice materiales con su proveedor</p></div>
     <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-3"><Metric label="Listados" value={materialLists.length} icon={Package} tint="text-brand-600" /><Metric label="Proyectos con listado" value={new Set(materialLists.map((ml) => ml.projectId)).size} icon={Folder} tint="text-violet-600" /><Metric label="Ítems totales" value={materialLists.reduce((sum, ml) => sum + (ml.totalItems || 0), 0)} icon={ClipboardList} tint="text-slate-600" /></div>
     <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar listado, proyecto o planta…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
-    {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><Package className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin listados de materiales para mostrar</h3><p className="mt-1 text-xs text-slate-400">Creá uno para pedirle a un cliente que cotice materiales con su proveedor.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((ml) => <Box key={ml.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{ml.number || ml.id}</span><Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">{ml.discipline}</Chip></div><h3 className="mt-2 text-base font-semibold text-slate-900">{ml.projectName}</h3><p className="mt-0.5 text-xs text-slate-500">{ml.client || "Sin cliente"}{ml.site ? ` · ${ml.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => materialListReportPDF(ml, projects.find((p) => p.id === ml.projectId), clients.find((c) => c.id === ml.clientId))} title="Descargar PDF" aria-label="Descargar PDF del listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingMl(ml); setEditorOpen(true); }} title="Editar listado" aria-label="Editar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => setPendingDelete(ml)} title="Eliminar listado" aria-label="Eliminar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>{(ml.sections || []).length} sección(es)</span><span>{ml.totalItems || 0} ítem(s)</span><span>Versión {ml.version}</span></div></Box>)}</div>}
+    {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><Package className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin listados de materiales para mostrar</h3><p className="mt-1 text-xs text-slate-400">Creá uno para pedirle a un cliente que cotice materiales con su proveedor.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((ml) => <Box key={ml.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{ml.number || ml.id}</span><Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">{ml.discipline}</Chip></div><h3 className="mt-2 text-base font-semibold text-slate-900">{ml.projectName}</h3><p className="mt-0.5 text-xs text-slate-500">{ml.client || "Sin cliente"}{ml.site ? ` · ${ml.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => materialListReportPDF(ml, projects.find((p) => p.id === ml.projectId), clients.find((c) => c.id === ml.clientId))} title="Descargar PDF" aria-label="Descargar PDF del listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingMl(ml); setEditorOpen(true); }} title="Editar listado" aria-label="Editar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>{isMgr && <button onClick={() => setPendingDelete(ml)} title="Eliminar listado" aria-label="Eliminar listado" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}</div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>{(ml.sections || []).length} sección(es)</span><span>{ml.totalItems || 0} ítem(s)</span><span>Versión {ml.version}</span></div></Box>)}</div>}
     {editorOpen && <MaterialListEditor materialList={editingMl} projects={projects} clients={clients} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingMl?.id))} onErr={onErr} />}
     {pendingDelete && <ConfirmDialog title="Eliminar listado de materiales" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
   </div>;
@@ -2977,7 +2987,7 @@ function ClientEditor({ value, onClose, onSave }) {
     reader.onerror = () => setLogoError("No se pudo leer la imagen.");
     reader.readAsDataURL(file);
   };
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Apellido y Nombre / Razón Social"><input autoFocus value={form.name} onChange={(e) => set("name", e.target.value)} className="u-input" /></L><L label="Logotipo" help="Se usa en los reportes generados para este cliente (ej. Listado de Materiales)."><div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5"><div className="grid h-14 w-20 shrink-0 place-items-center rounded-lg bg-white ring-1 ring-slate-200">{form.logoDataUrl ? <img src={form.logoDataUrl} alt="Logo del cliente" className="max-h-12 max-w-full object-contain" /> : <Building2 className="h-5 w-5 text-slate-300" />}</div><div className="flex-1"><div className="flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white"><Upload className="h-3.5 w-3.5" /> Cargar logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => { selectLogo(e.target.files?.[0]); e.target.value = ""; }} /></label>{form.logoDataUrl && <button type="button" onClick={() => set("logoDataUrl", "")} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600">Quitar</button>}</div><p className="mt-1 text-[11px] text-slate-500">PNG, JPG o WebP. Máximo 1,5 MB.</p>{logoError && <p className="mt-1 text-xs font-medium text-rose-600">{logoError}</p>}</div></div></L><L label="CUIT"><input value={form.cuit} onChange={(e) => set("cuit", e.target.value)} placeholder="20-12345678-9" className="u-input" /></L><L label="Condición frente al IVA"><select value={form.ivaCondition} onChange={(e) => set("ivaCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{IVA_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L><L label="Domicilio comercial"><input value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="Calle y número" className="u-input" /></L><L label="Localidad"><input value={form.locality} onChange={(e) => set("locality", e.target.value)} placeholder="Ciudad, provincia" className="u-input" /></L><L label="Condición de venta"><select value={form.saleCondition} onChange={(e) => set("saleCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{SALE_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L><L label="Atención (contacto)"><input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="Nombre de la persona de contacto" className="u-input" /></L><div className="grid grid-cols-2 gap-2"><L label="Teléfono"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="u-input" /></L><L label="Email"><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="u-input" /></L></div><L label="Plantas / sitios" help="Un mismo cliente puede tener varias plantas. Cada una tiene su propio código, usado para numerar las órdenes de trabajo (ej. OT-VTU-2026-001)."><div className="space-y-2">{form.sites.map((s, index) => (<div key={index} className="flex gap-2"><input value={s.code} onChange={(e) => setSite(index, { code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} placeholder="Código" className="u-input w-24 font-mono" /><input value={s.name} onChange={(e) => setSite(index, { name: e.target.value })} placeholder="Nombre de la planta (ej. Venado Tuerto)" className="u-input flex-1" /><button type="button" onClick={() => removeSite(index)} aria-label="Quitar planta" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>))}</div><button type="button" onClick={addSite} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar planta</button></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim()} onClick={() => { const payload = { name: form.name.trim(), cuit: form.cuit.trim(), sites: validSites, site: validSites[0]?.name || "", ivaCondition: form.ivaCondition, address: form.address.trim(), locality: form.locality.trim(), phone: form.phone.trim(), email: form.email.trim(), contactName: form.contactName.trim(), saleCondition: form.saleCondition, logoDataUrl: form.logoDataUrl }; if (validSites[0]?.code) payload.code = validSites[0].code; onSave(payload); }} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Editar cliente</h2><p className="text-xs text-slate-500">Los cambios se aplican a futuras selecciones.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Apellido y Nombre / Razón Social"><input autoFocus value={form.name} onChange={(e) => set("name", e.target.value)} className="u-input" /></L><L label="Logotipo" help="Se usa en los reportes generados para este cliente (ej. Listado de Materiales)."><div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5"><div className="grid h-14 w-20 shrink-0 place-items-center rounded-lg bg-white ring-1 ring-slate-200">{form.logoDataUrl ? <img src={form.logoDataUrl} alt="Logo del cliente" className="max-h-12 max-w-full object-contain" /> : <Building2 className="h-5 w-5 text-slate-300" />}</div><div className="flex-1"><div className="flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white"><Upload className="h-3.5 w-3.5" /> Cargar logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => { selectLogo(e.target.files?.[0]); e.target.value = ""; }} /></label>{form.logoDataUrl && <button type="button" onClick={() => set("logoDataUrl", "")} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600">Quitar</button>}</div><p className="mt-1 text-[11px] text-slate-500">PNG, JPG o WebP. Máximo 1,5 MB.</p>{logoError && <p className="mt-1 text-xs font-medium text-rose-600">{logoError}</p>}</div></div></L><L label="CUIT"><input value={form.cuit} onChange={(e) => set("cuit", e.target.value)} placeholder="20-12345678-9" className="u-input" /></L><L label="Condición frente al IVA"><select value={form.ivaCondition} onChange={(e) => set("ivaCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{IVA_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L><L label="Domicilio comercial"><input value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="Calle y número" className="u-input" /></L><L label="Localidad"><input value={form.locality} onChange={(e) => set("locality", e.target.value)} placeholder="Ciudad, provincia" className="u-input" /></L><L label="Condición de venta"><select value={form.saleCondition} onChange={(e) => set("saleCondition", e.target.value)} className="u-input"><option value="">Sin especificar</option>{SALE_CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></L><L label="Atención (contacto)"><input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="Nombre de la persona de contacto" className="u-input" /></L><div className="grid grid-cols-2 gap-2"><L label="Teléfono"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="u-input" /></L><L label="Email"><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="u-input" /></L></div><L label="Plantas / sitios" help="Un mismo cliente puede tener varias plantas. Cada una tiene su propio código, usado para numerar las órdenes de trabajo (ej. OT-VTU-2026-001)."><div className="space-y-2">{form.sites.map((s, index) => (<div key={index} className="grid grid-cols-[5.5rem_minmax(0,1fr)_auto] gap-2"><input value={s.code} onChange={(e) => setSite(index, { code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} placeholder="Código" className="u-input font-mono" /><input value={s.name} onChange={(e) => setSite(index, { name: e.target.value })} placeholder="Nombre de la planta (ej. Venado Tuerto)" className="u-input" /><button type="button" onClick={() => removeSite(index)} aria-label="Quitar planta" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>))}</div><button type="button" onClick={addSite} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar planta</button></L></div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim()} onClick={() => { const payload = { name: form.name.trim(), cuit: form.cuit.trim(), sites: validSites, site: validSites[0]?.name || "", ivaCondition: form.ivaCondition, address: form.address.trim(), locality: form.locality.trim(), phone: form.phone.trim(), email: form.email.trim(), contactName: form.contactName.trim(), saleCondition: form.saleCondition, logoDataUrl: form.logoDataUrl }; if (validSites[0]?.code) payload.code = validSites[0].code; onSave(payload); }} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div></div></div>;
 }
 
 function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr }) {
@@ -3052,7 +3062,154 @@ function SupplierEditor({ value, onClose, onSave }) {
 const WHITEBOARD_COLORS = ["#111827", "#DC2626", "#2563EB", "#16A34A", "#F18700", "#FFFFFF"];
 const WHITEBOARD_WIDTHS = [{ label: "Fino", value: 4 }, { label: "Medio", value: 10 }, { label: "Grueso", value: 20 }];
 const WHITEBOARD_ERASER_WIDTH = 44;
-function Whiteboard() {
+const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5E7EB"];
+
+/* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
+function Whiteboard({ notes, projects, users, me, onSave, onDelete, onErr }) {
+  const [query, setQuery] = useState("");
+  const [editorMode, setEditorMode] = useState(null); // { kind: "text" | "drawing", note }
+  const [shareNote, setShareNote] = useState(null);
+  const [viewNote, setViewNote] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const visible = notes.filter((n) => !query || `${n.title} ${n.content || ""}`.toLowerCase().includes(query.toLowerCase()));
+  const emptyNote = (type) => ({ type, title: "", content: "", color: WHITEBOARD_NOTE_COLORS[0], projectId: "", imageDataUrl: "" });
+  const startNew = (kind) => setEditorMode({ kind, note: emptyNote(kind) });
+  const startEdit = (note) => setEditorMode({ kind: note.type, note });
+  const startDuplicate = (note) => setEditorMode({ kind: note.type, note: { ...note, id: undefined, _updatedAt: undefined, sharedWith: [], title: `${note.title || "Sin título"} (copia)` } });
+
+  const saveNote = async (payload) => {
+    setSaving(true);
+    try { await onSave({ ...editorMode.note, ...payload }); setEditorMode(null); }
+    catch (e) { onErr(e); }
+    finally { setSaving(false); }
+  };
+
+  if (editorMode?.kind === "drawing") {
+    return <DrawingCanvasEditor note={editorMode.note} projects={projects} saving={saving} onCancel={() => setEditorMode(null)} onSave={(imageDataUrl, meta) => saveNote({ ...meta, type: "drawing", imageDataUrl })} />;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div><h2 className="text-lg font-semibold text-slate-900">Pizarra</h2><p className="text-xs text-slate-500">Notas escritas o dibujadas — pensadas para un relevamiento en planta, antes de armar, aprobar o ejecutar un proyecto. Podés duplicarlas y compartirlas con otros usuarios.</p></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar nota…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+        <button onClick={() => startNew("text")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><StickyNote className="h-4 w-4" /> Nota de texto</button>
+        <button onClick={() => startNew("drawing")} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-brand-400"><PenLine className="h-4 w-4" /> Dibujo</button>
+      </div>
+      {visible.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><StickyNote className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin notas para mostrar</h3><p className="mt-1 text-xs text-slate-400">Agregá una nota o un dibujo para empezar.</p></div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {visible.map((note) => {
+            const isOwner = note.createdBy === me.id;
+            const project = projects.find((p) => p.id === note.projectId);
+            return (
+              <Box key={note.id} className="flex flex-col overflow-hidden">
+                <button onClick={() => (isOwner ? startEdit(note) : setViewNote(note))} className="block text-left">
+                  {note.type === "drawing"
+                    ? <div className="h-36 w-full bg-slate-50">{note.imageDataUrl && <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="h-full w-full object-cover" />}</div>
+                    : <div className="h-36 w-full overflow-hidden p-3" style={{ background: note.color || WHITEBOARD_NOTE_COLORS[0] }}><p className="line-clamp-5 whitespace-pre-wrap text-xs text-slate-700">{note.content || "Sin contenido"}</p></div>}
+                </button>
+                <div className="flex flex-1 flex-col gap-2 p-3">
+                  <div><h3 className="truncate text-sm font-semibold text-slate-900">{note.title || "Sin título"}</h3><p className="text-[11px] text-slate-400">{note.type === "drawing" ? "Dibujo" : "Nota"} · {budgetDate((note.createdAt || "").slice(0, 10))}</p></div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {project && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">{project.key}</span>}
+                    {isOwner
+                      ? ((note.sharedWith || []).length > 0
+                        ? <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">Compartida con {note.sharedWith.length}</span>
+                        : <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Privada</span>)
+                      : <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Compartida por {note.createdByName}</span>}
+                  </div>
+                  <div className="mt-auto flex items-center gap-1.5 border-t border-slate-100 pt-2">
+                    <button onClick={() => startDuplicate(note)} title="Duplicar" aria-label="Duplicar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>
+                    {isOwner && <button onClick={() => setShareNote(note)} title="Compartir" aria-label="Compartir nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Share2 className="h-4 w-4" /></button>}
+                    {isOwner && <button onClick={() => startEdit(note)} title="Editar" aria-label="Editar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
+                    {isOwner && <button onClick={() => setPendingDelete(note)} title="Eliminar" aria-label="Eliminar nota" className="ml-auto grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}
+                  </div>
+                </div>
+              </Box>
+            );
+          })}
+        </div>
+      )}
+      {editorMode?.kind === "text" && <WhiteboardTextEditor note={editorMode.note} projects={projects} saving={saving} onClose={() => setEditorMode(null)} onSave={(form) => saveNote({ ...form, type: "text" })} />}
+      {shareNote && <WhiteboardShareDialog note={shareNote} users={users} me={me} onClose={() => setShareNote(null)} onSave={async (sharedWith) => { try { await onSave({ ...shareNote, sharedWith }); setShareNote(null); } catch (e) { onErr(e); } }} />}
+      {viewNote && <WhiteboardViewDialog note={viewNote} projects={projects} onClose={() => setViewNote(null)} />}
+      {pendingDelete && <ConfirmDialog title="Eliminar nota" message={`Se eliminará “${pendingDelete.title || "esta nota"}”. Esta acción no se puede deshacer.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { try { await onDelete(pendingDelete.id); setPendingDelete(null); } catch (e) { onErr(e); } }} />}
+    </div>
+  );
+}
+
+function WhiteboardTextEditor({ note, projects, saving, onClose, onSave }) {
+  const [form, setForm] = useState({ title: note.title || "", content: note.content || "", color: note.color || WHITEBOARD_NOTE_COLORS[0], projectId: note.projectId || "" });
+  const set = (field, val) => setForm((current) => ({ ...current, [field]: val }));
+  const mouseDownOnBackdrop = useRef(false);
+  useDialogOpenClass();
+  return (
+    <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold text-slate-900">{note.id ? "Editar nota" : "Nueva nota"}</h2><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="space-y-3">
+          <L label="Título"><input autoFocus value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="Ej. Relevamiento tablero sala 2" className="u-input" /></L>
+          <L label="Color"><div className="flex gap-2">{WHITEBOARD_NOTE_COLORS.map((c) => <button key={c} type="button" onClick={() => set("color", c)} aria-label={`Color ${c}`} className={`h-9 w-9 rounded-full border-2 ${form.color === c ? "border-brand-500" : "border-slate-200"}`} style={{ background: c }} />)}</div></L>
+          <L label="Proyecto (opcional)" help="Vinculala a un proyecto si surge de un relevamiento previo a su elaboración, aprobación o ejecución."><select value={form.projectId} onChange={(e) => set("projectId", e.target.value)} className="u-input"><option value="">Sin vincular</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L>
+          <L label="Contenido"><textarea rows={8} value={form.content} onChange={(e) => set("content", e.target.value)} placeholder="Escribí lo que relevaste…" className="u-input resize-none" /></L>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || (!form.title.trim() && !form.content.trim())} onClick={() => onSave(form)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar</button></div>
+      </div>
+    </div>
+  );
+}
+
+function WhiteboardShareDialog({ note, users, me, onClose, onSave }) {
+  const [sel, setSel] = useState(new Set(note.sharedWith || []));
+  const [saving, setSaving] = useState(false);
+  const toggle = (id) => setSel((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const candidates = users.filter((u) => u.active && u.id !== me.id);
+  const mouseDownOnBackdrop = useRef(false);
+  useDialogOpenClass();
+  const submit = async () => { setSaving(true); try { await onSave([...sel]); } finally { setSaving(false); } };
+  return (
+    <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-50 text-brand-600"><Share2 className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">Compartir nota</h2><p className="text-xs text-slate-500">{note.title || "Sin título"}</p></div></div>
+        <div className="max-h-64 space-y-1 overflow-y-auto">
+          {candidates.length === 0 && <p className="text-xs text-slate-400">No hay otros usuarios activos.</p>}
+          {candidates.map((u) => (
+            <label key={u.id} className="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50">
+              <input type="checkbox" checked={sel.has(u.id)} onChange={() => toggle(u.id)} />
+              <Avatar user={u} size={26} /><span className="text-sm text-slate-700">{u.name}</span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar</button></div>
+      </div>
+    </div>
+  );
+}
+
+function WhiteboardViewDialog({ note, projects, onClose }) {
+  const project = projects.find((p) => p.id === note.projectId);
+  const mouseDownOnBackdrop = useRef(false);
+  useDialogOpenClass();
+  return (
+    <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{note.title || "Sin título"}</h2><p className="text-xs text-slate-500">Compartida por {note.createdByName}{project ? ` · ${project.key}` : ""}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        {note.type === "drawing"
+          ? <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="w-full rounded-lg border border-slate-200" />
+          : <p className="whitespace-pre-wrap rounded-lg p-3 text-sm text-slate-700" style={{ background: note.color || WHITEBOARD_NOTE_COLORS[0] }}>{note.content || "Sin contenido"}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ===================================== PIZARRA: EDITOR DE DIBUJO ===================================== */
+function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
+  const [title, setTitle] = useState(note.title || "");
+  const [projectId, setProjectId] = useState(note.projectId || "");
   const boardRef = useRef(null);
   const canvasWrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -3063,8 +3220,10 @@ function Whiteboard() {
   const [tool, setTool] = useState("draw"); // "draw" | "erase"
   const [confirmClear, setConfirmClear] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const fileInputRef = useRef(null);
+  const initialLoadedRef = useRef(false);
 
-  const sizeCanvas = () => {
+  const sizeCanvas = (preserveExisting) => {
     const canvas = canvasRef.current;
     const wrap = canvasWrapRef.current;
     if (!canvas || !wrap) return;
@@ -3072,7 +3231,7 @@ function Whiteboard() {
     if (!clientWidth || !clientHeight) return;
     const ratio = window.devicePixelRatio || 1;
     let snapshot = null;
-    if (canvas.width > 0 && canvas.height > 0) { try { snapshot = canvas.toDataURL(); } catch { snapshot = null; } }
+    if (preserveExisting && canvas.width > 0 && canvas.height > 0) { try { snapshot = canvas.toDataURL(); } catch { snapshot = null; } }
     canvas.width = Math.round(clientWidth * ratio);
     canvas.height = Math.round(clientHeight * ratio);
     canvas.style.width = `${clientWidth}px`;
@@ -3087,9 +3246,23 @@ function Whiteboard() {
   };
 
   useEffect(() => {
-    sizeCanvas();
-    const onResize = () => sizeCanvas();
-    const onFullscreenChange = () => { setIsFullscreen(document.fullscreenElement === boardRef.current); sizeCanvas(); };
+    sizeCanvas(false);
+    if (note.imageDataUrl && !initialLoadedRef.current) {
+      initialLoadedRef.current = true;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current, wrap = canvasWrapRef.current;
+        if (!canvas || !wrap) return;
+        const ctx = canvas.getContext("2d");
+        const { clientWidth: w, clientHeight: h } = wrap;
+        const scale = Math.min(w / img.width, h / img.height);
+        const drawW = img.width * scale, drawH = img.height * scale;
+        ctx.drawImage(img, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
+      };
+      img.src = note.imageDataUrl;
+    }
+    const onResize = () => sizeCanvas(true);
+    const onFullscreenChange = () => { setIsFullscreen(document.fullscreenElement === boardRef.current); sizeCanvas(true); };
     window.addEventListener("resize", onResize);
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => { window.removeEventListener("resize", onResize); document.removeEventListener("fullscreenchange", onFullscreenChange); };
@@ -3134,7 +3307,6 @@ function Whiteboard() {
     setConfirmClear(false);
   };
   const toggleFullscreen = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else boardRef.current?.requestFullscreen?.(); };
-  const fileInputRef = useRef(null);
   const loadImage = (file) => {
     if (!file) return;
     const canvas = canvasRef.current, wrap = canvasWrapRef.current;
@@ -3155,10 +3327,19 @@ function Whiteboard() {
     };
     reader.readAsDataURL(file);
   };
+  const handleSave = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    onSave(canvas.toDataURL("image/png"), { title, projectId });
+  };
 
   return (
     <div className="space-y-3">
-      <div><h2 className="text-lg font-semibold text-slate-900">Pizarra</h2><p className="text-xs text-slate-500">Dibujá a mano alzada con el dedo o el mouse — ideal para explicar algo rápido en la TV de oficina.</p></div>
+      <div className="flex items-center gap-2"><button onClick={onCancel} aria-label="Volver" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ChevronLeft className="h-4 w-4" /></button><h2 className="text-lg font-semibold text-slate-900">{note.id ? "Editar dibujo" : "Nuevo dibujo"}</h2></div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <L label="Título"><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ej. Croquis tablero sala 2" className="u-input" /></L>
+        <L label="Proyecto (opcional)" help="Vinculalo a un proyecto si surge de un relevamiento previo a su elaboración, aprobación o ejecución."><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="u-input"><option value="">Sin vincular</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L>
+      </div>
       <div ref={boardRef} className="motion-card overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-3">
           <div className="flex items-center gap-2">
@@ -3192,13 +3373,14 @@ function Whiteboard() {
             {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
           </button>
         </div>
-        <div ref={canvasWrapRef} className={`relative w-full bg-white ${isFullscreen ? "h-[calc(100vh-4.5rem)]" : "h-[calc(100vh-16rem)] min-h-[420px]"}`}>
+        <div ref={canvasWrapRef} className={`relative w-full bg-white ${isFullscreen ? "h-[calc(100vh-4.5rem)]" : "h-[calc(100vh-20rem)] min-h-[380px]"}`}>
           <canvas ref={canvasRef}
             onPointerDown={startDraw} onPointerMove={draw} onPointerUp={endDraw} onPointerLeave={endDraw} onPointerCancel={endDraw}
             className="absolute inset-0 h-full w-full touch-none" />
         </div>
       </div>
-      {confirmClear && <ConfirmDialog title="Borrar toda la pizarra" message="Se va a borrar todo el dibujo actual. Esta acción no se puede deshacer." confirmLabel="Borrar todo" danger onClose={() => setConfirmClear(false)} onConfirm={clearBoard} />}
+      <div className="grid grid-cols-2 gap-2"><button onClick={onCancel} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving} onClick={handleSave} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar dibujo</button></div>
+      {confirmClear && <ConfirmDialog title="Borrar todo el dibujo" message="Se va a borrar todo el dibujo actual. Esta acción no se puede deshacer." confirmLabel="Borrar todo" danger onClose={() => setConfirmClear(false)} onConfirm={clearBoard} />}
     </div>
   );
 }

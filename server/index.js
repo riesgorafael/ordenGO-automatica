@@ -103,6 +103,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS suppliers ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS purchase_orders ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS material_lists ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS whiteboard_notes ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS app_settings ( key text PRIMARY KEY, value jsonb, updated_at timestamptz DEFAULT now());
   `);
   // Migración idempotente para instalaciones existentes
@@ -585,7 +586,7 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml, wb] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -600,6 +601,7 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     pool.query("SELECT data FROM suppliers ORDER BY data->>'name'"),
     pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC"),
+    pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC"),
   ]);
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
@@ -624,7 +626,8 @@ app.get("/api/bootstrap", auth, async (req, res) => {
     parts: pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
     purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    materialLists: tec || isMonitor(req.user.role) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    materialLists: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    whiteboardNotes: wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
   });
 });
@@ -1081,11 +1084,11 @@ function normalizeMaterialList(input, previous = {}) {
   ml.totalItems = ml.sections.reduce((sum, section) => sum + section.items.length, 0);
   return ml;
 }
-app.get("/api/material-lists", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC");
   res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
-app.post("/api/material-lists", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const ml = normalizeMaterialList(req.body);
   if (!ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
   const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
@@ -1108,7 +1111,7 @@ app.post("/api/material-lists", auth, requireRole("admin", "gerente"), async (re
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un listado con ese identificador" }); throw error; }
   res.json(ml);
 });
-app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const current = (await pool.query("SELECT data FROM material_lists WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const ml = normalizeMaterialList(req.body, current);
@@ -1126,6 +1129,63 @@ app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente"), asyn
 app.delete("/api/material-lists/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const deleted = await pool.query("DELETE FROM material_lists WHERE id=$1 RETURNING id", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  res.status(204).end();
+});
+
+/* ------------------------------------------------ Pizarra: notas y dibujos ------------------------------------------------ */
+const WHITEBOARD_NOTE_TYPES = ["text", "drawing"];
+function normalizeWhiteboardNote(input, previous = {}) {
+  const n = { ...previous, ...(input || {}) };
+  delete n._updatedAt;
+  n.type = WHITEBOARD_NOTE_TYPES.includes(n.type) ? n.type : "text";
+  n.title = String(n.title || "").trim().slice(0, 120);
+  n.content = n.type === "text" ? String(n.content || "").trim().slice(0, 4000) : "";
+  n.imageDataUrl = n.type === "drawing" ? String(n.imageDataUrl || "") : "";
+  n.color = String(n.color || "#FEF3C7").trim().slice(0, 20);
+  n.projectId = String(n.projectId || "").trim();
+  n.sharedWith = Array.isArray(n.sharedWith) ? [...new Set(n.sharedWith.map((id) => String(id || "")).filter(Boolean))] : [];
+  return n;
+}
+// Una nota es visible para quien la creó y para quienes fueron agregados a sharedWith.
+function whiteboardNoteVisible(user, note) {
+  return note.createdBy === user.id || (Array.isArray(note.sharedWith) && note.sharedWith.includes(user.id));
+}
+app.get("/api/whiteboard-notes", auth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC");
+  res.json(rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+});
+app.post("/api/whiteboard-notes", auth, async (req, res) => {
+  const n = normalizeWhiteboardNote(req.body);
+  if (n.type === "text" && !n.title && !n.content) return res.status(400).json({ error: "La nota necesita un título o contenido." });
+  if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
+  if (!n.id) n.id = "wbn" + Date.now();
+  n.createdAt = new Date().toISOString();
+  n.createdBy = req.user.id; n.createdByName = req.user.name;
+  n.sharedWith = []; // una nota nueva siempre arranca privada; compartir es un paso aparte y explícito
+  try { await pool.query("INSERT INTO whiteboard_notes(id,data) VALUES($1,$2)", [n.id, n]); }
+  catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe una nota con ese identificador" }); throw error; }
+  res.json(n);
+});
+app.patch("/api/whiteboard-notes/:id", auth, async (req, res) => {
+  const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!current) return res.status(404).json({ error: "No existe" });
+  const isOwner = current.createdBy === req.user.id;
+  if (!isOwner && !whiteboardNoteVisible(req.user, current)) return res.status(403).json({ error: "No tenés acceso a esta nota" });
+  const patch = { ...(req.body || {}) };
+  if (!isOwner) delete patch.sharedWith; // solo quien la creó decide con quién se comparte
+  const n = normalizeWhiteboardNote(patch, current);
+  n.id = req.params.id;
+  if (n.type === "text" && !n.title && !n.content) return res.status(400).json({ error: "La nota necesita un título o contenido." });
+  if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
+  n.createdBy = current.createdBy; n.createdByName = current.createdByName; n.createdAt = current.createdAt;
+  await pool.query("UPDATE whiteboard_notes SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, n]);
+  res.json(n);
+});
+app.delete("/api/whiteboard-notes/:id", auth, async (req, res) => {
+  const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!current) return res.status(404).json({ error: "No existe" });
+  if (current.createdBy !== req.user.id) return res.status(403).json({ error: "Solo quien creó la nota puede eliminarla" });
+  await pool.query("DELETE FROM whiteboard_notes WHERE id=$1", [req.params.id]);
   res.status(204).end();
 });
 

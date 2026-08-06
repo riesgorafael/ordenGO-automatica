@@ -51,6 +51,10 @@ export const api = {
   updateMaterialList: (id, patch) => req("/material-lists/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteMaterialList: (id) => req("/material-lists/" + id, { method: "DELETE" }),
 
+  createWhiteboardNote: (note) => req("/whiteboard-notes", { method: "POST", body: JSON.stringify(note) }),
+  updateWhiteboardNote: (id, patch) => req("/whiteboard-notes/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteWhiteboardNote: (id) => req("/whiteboard-notes/" + id, { method: "DELETE" }),
+
   orders: () => req("/orders"),
   createOrder: (o) => req("/orders", { method: "POST", body: JSON.stringify(o) }),
   updateOrder: (id, patch) => req("/orders/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
