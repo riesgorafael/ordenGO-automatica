@@ -7,7 +7,7 @@ import {
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
-  ShoppingCart, Truck, ChevronDown,
+  ShoppingCart, Truck, ChevronDown, Eraser, Minimize2,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -18,7 +18,7 @@ import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, q
 const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
 const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
 const BRAND_THEMES = [
   { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
@@ -688,11 +688,13 @@ export default function App() {
   // configuración de uso esporádico, plegados en un menú aparte).
   const modTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
+    { id: "whiteboard", label: "Pizarra", icon: Pencil },
   ] : [
     { id: "inicio", label: "Mi día", icon: Home },
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
+    { id: "whiteboard", label: "Pizarra", icon: Pencil },
     ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
     ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
@@ -866,6 +868,7 @@ export default function App() {
             })()}
           </>
         )}
+        {activeModule === "whiteboard" && <Whiteboard />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
@@ -2807,6 +2810,136 @@ function SupplierEditor({ value, onClose, onSave }) {
       <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim()} onClick={() => onSave({ name: form.name.trim(), code: form.code.trim(), cuit: form.cuit.trim(), address: form.address.trim(), locality: form.locality.trim(), phone: form.phone.trim(), email: form.email.trim(), contactName: form.contactName.trim(), ivaCondition: form.ivaCondition, saleCondition: form.saleCondition, paymentTermsDays: Number(form.paymentTermsDays) || 0, active: form.active })} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar</button></div>
     </div>
   </div>;
+}
+
+/* ===================================== PIZARRA ===================================== */
+const WHITEBOARD_COLORS = ["#111827", "#DC2626", "#2563EB", "#16A34A", "#F18700", "#FFFFFF"];
+const WHITEBOARD_WIDTHS = [{ label: "Fino", value: 4 }, { label: "Medio", value: 10 }, { label: "Grueso", value: 20 }];
+const WHITEBOARD_ERASER_WIDTH = 44;
+function Whiteboard() {
+  const boardRef = useRef(null);
+  const canvasWrapRef = useRef(null);
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const lastPointRef = useRef(null);
+  const [color, setColor] = useState(WHITEBOARD_COLORS[0]);
+  const [width, setWidth] = useState(WHITEBOARD_WIDTHS[1].value);
+  const [tool, setTool] = useState("draw"); // "draw" | "erase"
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const sizeCanvas = () => {
+    const canvas = canvasRef.current;
+    const wrap = canvasWrapRef.current;
+    if (!canvas || !wrap) return;
+    const { clientWidth, clientHeight } = wrap;
+    if (!clientWidth || !clientHeight) return;
+    const ratio = window.devicePixelRatio || 1;
+    let snapshot = null;
+    if (canvas.width > 0 && canvas.height > 0) { try { snapshot = canvas.toDataURL(); } catch { snapshot = null; } }
+    canvas.width = Math.round(clientWidth * ratio);
+    canvas.height = Math.round(clientHeight * ratio);
+    canvas.style.width = `${clientWidth}px`;
+    canvas.style.height = `${clientHeight}px`;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, clientWidth, clientHeight);
+    if (snapshot) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, clientWidth, clientHeight); img.src = snapshot; }
+  };
+
+  useEffect(() => {
+    sizeCanvas();
+    const onResize = () => sizeCanvas();
+    const onFullscreenChange = () => { setIsFullscreen(document.fullscreenElement === boardRef.current); sizeCanvas(); };
+    window.addEventListener("resize", onResize);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => { window.removeEventListener("resize", onResize); document.removeEventListener("fullscreenchange", onFullscreenChange); };
+  }, []);
+
+  const pointFromEvent = (event) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+  const startDraw = (event) => {
+    event.preventDefault();
+    canvasRef.current?.setPointerCapture?.(event.pointerId);
+    drawingRef.current = true;
+    lastPointRef.current = pointFromEvent(event);
+  };
+  const draw = (event) => {
+    if (!drawingRef.current) return;
+    event.preventDefault();
+    const ctx = canvasRef.current.getContext("2d");
+    const point = pointFromEvent(event);
+    const last = lastPointRef.current || point;
+    ctx.strokeStyle = tool === "erase" ? "#FFFFFF" : color;
+    ctx.lineWidth = tool === "erase" ? WHITEBOARD_ERASER_WIDTH : width;
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    lastPointRef.current = point;
+  };
+  const endDraw = (event) => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    lastPointRef.current = null;
+    canvasRef.current?.releasePointerCapture?.(event.pointerId);
+  };
+  const clearBoard = () => {
+    const canvas = canvasRef.current, wrap = canvasWrapRef.current;
+    if (!canvas || !wrap) return;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+    setConfirmClear(false);
+  };
+  const toggleFullscreen = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else boardRef.current?.requestFullscreen?.(); };
+
+  return (
+    <div className="space-y-3">
+      <div><h2 className="text-lg font-semibold text-slate-900">Pizarra</h2><p className="text-xs text-slate-500">Dibujá a mano alzada con el dedo o el mouse — ideal para explicar algo rápido en la TV de oficina.</p></div>
+      <div ref={boardRef} className="motion-card overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-3">
+          <div className="flex items-center gap-2">
+            {WHITEBOARD_COLORS.map((c) => (
+              <button key={c} onClick={() => { setColor(c); setTool("draw"); }} aria-label={`Color ${c}`} aria-pressed={tool === "draw" && color === c}
+                className={`h-11 w-11 shrink-0 rounded-full border-2 transition ${tool === "draw" && color === c ? "border-brand-500 ring-2 ring-brand-500/30" : "border-slate-200"}`}
+                style={{ background: c }} />
+            ))}
+          </div>
+          <div className="h-9 w-px shrink-0 bg-slate-200" />
+          <div className="flex items-center gap-1.5">
+            {WHITEBOARD_WIDTHS.map((w) => (
+              <button key={w.value} onClick={() => { setWidth(w.value); setTool("draw"); }} aria-pressed={tool === "draw" && width === w.value} title={w.label} aria-label={w.label}
+                className={`grid h-11 w-14 shrink-0 place-items-center rounded-lg border-2 ${tool === "draw" && width === w.value ? "border-brand-500 bg-brand-50" : "border-slate-200"}`}>
+                <span className="rounded-full bg-slate-700" style={{ width: Math.min(w.value, 20), height: Math.min(w.value, 20) }} />
+              </button>
+            ))}
+          </div>
+          <div className="h-9 w-px shrink-0 bg-slate-200" />
+          <button onClick={() => setTool("erase")} aria-pressed={tool === "erase"} className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 px-3.5 text-sm font-medium ${tool === "erase" ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-600"}`}>
+            <Eraser className="h-5 w-5" /> Borrador
+          </button>
+          <button onClick={() => setConfirmClear(true)} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-rose-200 bg-white px-3.5 text-sm font-medium text-rose-600 hover:bg-rose-50">
+            <Trash2 className="h-5 w-5" /> Borrar todo
+          </button>
+          <button onClick={toggleFullscreen} title={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"} aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"} className="ml-auto grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 border-slate-200 text-slate-500 hover:bg-slate-50">
+            {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+          </button>
+        </div>
+        <div ref={canvasWrapRef} className={`relative w-full bg-white ${isFullscreen ? "h-[calc(100vh-4.5rem)]" : "h-[calc(100vh-16rem)] min-h-[420px]"}`}>
+          <canvas ref={canvasRef}
+            onPointerDown={startDraw} onPointerMove={draw} onPointerUp={endDraw} onPointerLeave={endDraw} onPointerCancel={endDraw}
+            className="absolute inset-0 h-full w-full touch-none" />
+        </div>
+      </div>
+      {confirmClear && <ConfirmDialog title="Borrar toda la pizarra" message="Se va a borrar todo el dibujo actual. Esta acción no se puede deshacer." confirmLabel="Borrar todo" danger onClose={() => setConfirmClear(false)} onConfirm={clearBoard} />}
+    </div>
+  );
 }
 
 function SettingsModule({ branding, onSaveBranding }) {
