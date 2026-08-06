@@ -2712,7 +2712,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
             {!readOnly && (
               <select value="" onChange={(e) => { const id = e.target.value; if (id) set({ participants: [...(f.participants || []), id] }); }} className="u-input mt-1.5">
                 <option value="">+ Agregar participante</option>
-                {assignable.filter((u) => u.id !== f.assignee && !(f.participants || []).includes(u.id)).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                {users.filter((u) => u.id !== f.assignee && !(f.participants || []).includes(u.id)).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             )}
           </L>
