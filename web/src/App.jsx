@@ -2533,9 +2533,18 @@ function Reports({ tasks, users, projects, proj }) {
   const byStatus = T_STATUS.map((s) => ({ name: s, value: tasks.filter((t) => t.status === s).length, fill: T_STYLE[s].bar }));
   const byAssignee = users.filter((u) => u.active && u.role !== "monitor_oficina").map((u) => ({ name: u.name.split(" ")[0], value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }));
   const projList = proj === "all" ? projects : projects.filter((p) => p.id === proj);
+  const activeProjects = projList.filter((p) => p.active !== false).length;
+  const finishedProjects = projList.filter((p) => p.active === false).length;
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Tareas" value={tasks.length} icon={LayoutGrid} tint="text-brand-600" /><Metric label="Completadas" value={done} icon={CheckCircle2} tint="text-emerald-600" /><Metric label="En curso" value={wip} icon={Clock} tint="text-violet-600" /><Metric label="Vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" /></div>
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Proyectos</h3>
+        <div className="grid grid-cols-3 gap-3"><Metric label="Total" value={projList.length} icon={Folder} tint="text-brand-600" /><Metric label="Activos" value={activeProjects} icon={Clock} tint="text-violet-600" /><Metric label="Finalizados" value={finishedProjects} icon={CheckCircle2} tint="text-emerald-600" /></div>
+      </div>
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tareas</h3>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Tareas" value={tasks.length} icon={LayoutGrid} tint="text-brand-600" /><Metric label="Completadas" value={done} icon={CheckCircle2} tint="text-emerald-600" /><Metric label="En curso" value={wip} icon={Clock} tint="text-violet-600" /><Metric label="Vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" /></div>
+      </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Tareas por estado"><ChartBox data={byStatus} /></Panel><Panel title="Carga por responsable"><ChartBox data={byAssignee} /></Panel></div>
       <Panel title="Progreso por proyecto"><div className="space-y-3">{projList.map((p) => { const ts = tasks.filter((t) => t.project === p.id); const d = ts.filter((t) => t.status === "Hecho").length; const pct = ts.length ? Math.round((d / ts.length) * 100) : 0; return (<div key={p.id}><div className="mb-1 flex items-center justify-between text-sm"><span className="font-medium text-slate-700"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}</span><span className="text-slate-500">{d}/{ts.length} · {pct}%</span></div><HealthBar v={pct} color={p.color} /></div>); })}</div></Panel>
     </div>
