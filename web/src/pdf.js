@@ -529,7 +529,7 @@ export function materialListReportPDF(ml, project, client) {
 
   /* ---------- Encabezado: logo | razón social + título | datos del documento ---------- */
   const headH = 20, logoColW = 34, docColW = 44, midColW = CW - logoColW - docColW;
-  doc.setDrawColor(51, 65, 85); doc.setLineWidth(0.3);
+  doc.setDrawColor(90, 90, 90); doc.setLineWidth(0.3);
   doc.rect(M, y, CW, headH);
   vline(M + logoColW, y, y + headH);
   vline(M + logoColW + midColW, y, y + headH);
@@ -571,13 +571,14 @@ export function materialListReportPDF(ml, project, client) {
   /* ---------- Notas importantes ---------- */
   if ((ml.notes || []).length) {
     const numColW = 8, textColW = CW - numColW;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.4);
     const noteLines = ml.notes.map((note) => doc.splitTextToSize(note, textColW - 4));
     const rowHeights = noteLines.map((lines) => Math.max(7, lines.length * 3.3 + 3));
     const headerH = 5;
     const boxHeight = headerH + rowHeights.reduce((sum, h) => sum + h, 0);
     brk(boxHeight + 8);
     const boxTop = y;
-    doc.setFillColor(216, 216, 216); doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.25);
+    doc.setFillColor(216, 216, 216); doc.setDrawColor(90, 90, 90); doc.setLineWidth(0.25);
     doc.rect(M, boxTop, CW, headerH, "FD");
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
     doc.text("NOTAS IMPORTANTES", M + 2, boxTop + 3.6);
@@ -595,9 +596,9 @@ export function materialListReportPDF(ml, project, client) {
 
   /* ---------- Título de sección ---------- */
   brk(12);
-  doc.setFillColor(226, 232, 240); doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.25);
+  doc.setFillColor(216, 216, 216); doc.setDrawColor(90, 90, 90); doc.setLineWidth(0.25);
   doc.rect(M, y, CW, 5.5, "FD");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(30, 41, 59);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(15, 23, 42);
   doc.text("1. LISTADO GENERAL", M + 2, y + 3.8);
   y += 5.5;
 
@@ -616,10 +617,10 @@ export function materialListReportPDF(ml, project, client) {
     doc.text(text, x, textY, { align, ...opts });
   };
   const tableHeader = () => {
-    doc.setFillColor(255, 255, 255); doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
+    doc.setFillColor(255, 255, 255); doc.setDrawColor(90, 90, 90); doc.setLineWidth(0.25);
     doc.rect(M, y, CW, 6, "S");
     cx.slice(1, -1).forEach((x) => vline(x, y, y + 6));
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(51, 65, 85);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(15, 23, 42);
     headerLabels.forEach((label, index) => cellText(index, label.text, y + 4));
     y += 6;
   };
@@ -629,9 +630,9 @@ export function materialListReportPDF(ml, project, client) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(15, 23, 42);
   sections.forEach((section) => {
     brk(9);
-    doc.setFillColor(221, 216, 195); doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
+    doc.setFillColor(221, 216, 195); doc.setDrawColor(90, 90, 90); doc.setLineWidth(0.25);
     doc.rect(M, y, CW, 5, "FD");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(51, 65, 85);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
     doc.text(section.title, M + 2, y + 3.4);
     y += 5;
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(15, 23, 42);
@@ -641,7 +642,7 @@ export function materialListReportPDF(ml, project, client) {
       const lines = Math.max(1, descLines.length, brandLines.length, 2);
       const rowH = Math.max(7, lines * 3.1 + 1.5);
       brk(rowH + 2);
-      doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.2);
+      doc.setDrawColor(120, 120, 120); doc.setLineWidth(0.2);
       doc.rect(M, y, CW, rowH, "S");
       cx.slice(1, -1).forEach((x) => vline(x, y, y + rowH));
       const midY = y + (rowH < 9 ? rowH / 2 + 2 : 4);
@@ -656,8 +657,8 @@ export function materialListReportPDF(ml, project, client) {
   });
 
   brk(9);
-  doc.setDrawColor(100, 116, 139); doc.setLineWidth(0.25);
-  doc.setFillColor(241, 245, 249);
+  doc.setDrawColor(90, 90, 90); doc.setLineWidth(0.25);
+  doc.setFillColor(216, 216, 216);
   doc.rect(M, y, CW, 8, "FD");
   doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(15, 23, 42);
   doc.text("Total de Materiales", M + 3, y + 5.3);
