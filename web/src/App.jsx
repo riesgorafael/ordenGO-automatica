@@ -355,6 +355,7 @@ export default function App() {
   const [orderPrefill, setOrderPrefill] = useState(null);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
   const [dupProj, setDupProj] = useState(null); // proyecto a duplicar
+  const [whiteboardProjectFilter, setWhiteboardProjectFilter] = useState(""); // al saltar desde Proyectos a Notas, filtra por ese proyecto
   const [budgetCreateSignal, setBudgetCreateSignal] = useState(0);
   const [financeCreateSignal, setFinanceCreateSignal] = useState(0);
   const [purchaseOrderCreateSignal, setPurchaseOrderCreateSignal] = useState(0);
@@ -370,7 +371,7 @@ export default function App() {
     if (nextModule !== module) {
       setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0); setMaterialListCreateSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
-      setProjectEditor(null); setAccessProj(null); setDupProj(null);
+      setProjectEditor(null); setAccessProj(null); setDupProj(null); setWhiteboardProjectFilter("");
       setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setAdminMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
     }
     setModule(nextModule);
@@ -912,6 +913,11 @@ export default function App() {
                   )}
                 </div>
               )}
+              {pProj !== "all" && whiteboardNotes.filter((n) => n.projectId === pProj).length > 0 && (
+                <button onClick={() => { navigateModule("whiteboard"); setWhiteboardProjectFilter(pProj); }} title="Ver notas y dibujos vinculados a este proyecto" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100">
+                  <StickyNote className="h-4 w-4" /> {whiteboardNotes.filter((n) => n.projectId === pProj).length} nota(s)
+                </button>
+              )}
               {activeProjectView !== "reports" && (<>
                 <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
@@ -927,7 +933,7 @@ export default function App() {
             {(() => {
               const finishedProjectIds = new Set(projects.filter((p) => p.active === false).map((p) => p.id));
               const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
-              if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
+              if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} whiteboardNotes={whiteboardNotes} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
               if (isMgr) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} />;
@@ -936,7 +942,7 @@ export default function App() {
             })()}
           </>
         )}
-        {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
+        {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
@@ -2705,7 +2711,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
 }
 
 /* ===================================== PROYECTOS: REPORTES ===================================== */
-function Reports({ tasks, users, projects, proj }) {
+function Reports({ tasks, users, projects, proj, whiteboardNotes = [], onOpenNotes }) {
   const [staffQuery, setStaffQuery] = useState("");
   const done = tasks.filter((t) => t.status === "Hecho").length;
   const wip = tasks.filter((t) => t.status === "En progreso" || t.status === "En revisión").length;
@@ -2762,7 +2768,7 @@ function Reports({ tasks, users, projects, proj }) {
           </div>
         )}
       </Panel>
-      <Panel title="Progreso por proyecto"><div className="space-y-3">{projList.map((p) => { const ts = tasks.filter((t) => t.project === p.id); const d = ts.filter((t) => t.status === "Hecho").length; const pct = ts.length ? Math.round((d / ts.length) * 100) : 0; return (<div key={p.id}><div className="mb-1 flex items-center justify-between text-sm"><span className="font-medium text-slate-700"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}</span><span className="text-slate-500">{d}/{ts.length} · {pct}%</span></div><HealthBar v={pct} color={p.color} /></div>); })}</div></Panel>
+      <Panel title="Progreso por proyecto"><div className="space-y-3">{projList.map((p) => { const ts = tasks.filter((t) => t.project === p.id); const d = ts.filter((t) => t.status === "Hecho").length; const pct = ts.length ? Math.round((d / ts.length) * 100) : 0; const linkedNotes = whiteboardNotes.filter((n) => n.projectId === p.id).length; return (<div key={p.id}><div className="mb-1 flex items-center justify-between text-sm"><span className="font-medium text-slate-700"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}{linkedNotes > 0 && <button onClick={() => onOpenNotes?.(p.id)} title={`${linkedNotes} nota(s)/dibujo(s) vinculados`} className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-amber-700 hover:bg-amber-100"><StickyNote className="h-3 w-3" /> {linkedNotes}</button>}</span><span className="text-slate-500">{d}/{ts.length} · {pct}%</span></div><HealthBar v={pct} color={p.color} /></div>); })}</div></Panel>
     </div>
   );
 }
@@ -3066,15 +3072,17 @@ const WHITEBOARD_ERASER_WIDTH = 44;
 const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5E7EB"];
 
 /* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
-function Whiteboard({ notes, projects, users, me, onSave, onDelete, onErr }) {
+function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave, onDelete, onErr }) {
   const [query, setQuery] = useState("");
+  const [projectFilter, setProjectFilter] = useState(initialProjectId);
   const [editorMode, setEditorMode] = useState(null); // { kind: "text" | "drawing", note }
   const [shareNote, setShareNote] = useState(null);
   const [viewNote, setViewNote] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [saving, setSaving] = useState(false);
+  useEffect(() => { if (initialProjectId) setProjectFilter(initialProjectId); }, [initialProjectId]);
 
-  const visible = notes.filter((n) => !query || `${n.title} ${n.content || ""}`.toLowerCase().includes(query.toLowerCase()));
+  const visible = notes.filter((n) => (!query || `${n.title} ${n.content || ""}`.toLowerCase().includes(query.toLowerCase())) && (!projectFilter || n.projectId === projectFilter));
   const emptyNote = (type) => ({ type, title: "", content: "", color: WHITEBOARD_NOTE_COLORS[0], projectId: "", imageDataUrl: "" });
   const startNew = (kind) => setEditorMode({ kind, note: emptyNote(kind) });
   const startEdit = (note) => setEditorMode({ kind: note.type, note });
@@ -3096,6 +3104,7 @@ function Whiteboard({ notes, projects, users, me, onSave, onDelete, onErr }) {
       <div><h2 className="text-lg font-semibold text-slate-900">Notas</h2><p className="text-xs text-slate-500">Notas escritas o dibujadas — pensadas para un relevamiento en planta, antes de armar, aprobar o ejecutar un proyecto. Podés duplicarlas y compartirlas con otros usuarios.</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar nota…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="">Todos los proyectos</option>{projects.filter((p) => notes.some((n) => n.projectId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select>
         <button onClick={() => startNew("text")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><StickyNote className="h-4 w-4" /> Nota de texto</button>
         <button onClick={() => startNew("drawing")} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-brand-400"><PenLine className="h-4 w-4" /> Dibujo</button>
       </div>
