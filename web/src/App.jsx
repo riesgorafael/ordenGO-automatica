@@ -3114,6 +3114,7 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave,
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {visible.map((note) => {
             const isOwner = note.createdBy === me.id;
+            const isSharedWithMe = !isOwner && (note.sharedWith || []).includes(me.id);
             const project = projects.find((p) => p.id === note.projectId);
             return (
               <Box key={note.id} className="flex flex-col overflow-hidden">
@@ -3130,7 +3131,9 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave,
                       ? ((note.sharedWith || []).length > 0
                         ? <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">Compartida con {note.sharedWith.length}</span>
                         : <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Privada</span>)
-                      : <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Compartida por {note.createdByName}</span>}
+                      : isSharedWithMe
+                        ? <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Compartida por {note.createdByName}</span>
+                        : <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">De {note.createdByName} · vista de administrador</span>}
                   </div>
                   <div className="mt-auto flex items-center gap-1.5 border-t border-slate-100 pt-2">
                     <button onClick={() => startDuplicate(note)} title="Duplicar" aria-label="Duplicar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>

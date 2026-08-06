@@ -1146,8 +1146,10 @@ function normalizeWhiteboardNote(input, previous = {}) {
   n.sharedWith = Array.isArray(n.sharedWith) ? [...new Set(n.sharedWith.map((id) => String(id || "")).filter(Boolean))] : [];
   return n;
 }
-// Una nota es visible para quien la creó y para quienes fueron agregados a sharedWith.
+// Una nota es visible para quien la creó, para quienes fueron agregados a sharedWith,
+// y siempre para Administrador (visibilidad total, no implica permiso de edición/borrado).
 function whiteboardNoteVisible(user, note) {
+  if (user.role === "admin") return true;
   return note.createdBy === user.id || (Array.isArray(note.sharedWith) && note.sharedWith.includes(user.id));
 }
 app.get("/api/whiteboard-notes", auth, async (req, res) => {
@@ -1170,7 +1172,9 @@ app.patch("/api/whiteboard-notes/:id", auth, async (req, res) => {
   const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const isOwner = current.createdBy === req.user.id;
-  if (!isOwner && !whiteboardNoteVisible(req.user, current)) return res.status(403).json({ error: "No tenés acceso a esta nota" });
+  // Ver todo (Administrador) no implica poder editar: solo el dueño o alguien con quien se compartió explícitamente puede modificar la nota.
+  const isCollaborator = Array.isArray(current.sharedWith) && current.sharedWith.includes(req.user.id);
+  if (!isOwner && !isCollaborator) return res.status(403).json({ error: "No tenés acceso a esta nota" });
   const patch = { ...(req.body || {}) };
   if (!isOwner) delete patch.sharedWith; // solo quien la creó decide con quién se comparte
   const n = normalizeWhiteboardNote(patch, current);
