@@ -563,8 +563,8 @@ export function materialListReportPDF(ml, project, client) {
   y += 13;
 
   /* ---------- Banner de disciplina ---------- */
-  doc.setFillColor(216, 216, 216); doc.rect(M, y, CW, 6.5, "F");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(15, 23, 42);
+  doc.setFillColor(64, 64, 64); doc.rect(M, y, CW, 6.5, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(255, 255, 255);
   doc.text(`LISTADO DE MATERIALES ${(ml.discipline || "").toUpperCase()}`.trim(), M + CW / 2, y + 4.3, { align: "center" });
   y += 6.5;
 
@@ -577,9 +577,9 @@ export function materialListReportPDF(ml, project, client) {
     const boxHeight = headerH + rowHeights.reduce((sum, h) => sum + h, 0);
     brk(boxHeight + 8);
     const boxTop = y;
-    doc.setFillColor(241, 245, 249); doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.25);
+    doc.setFillColor(216, 216, 216); doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.25);
     doc.rect(M, boxTop, CW, headerH, "FD");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(51, 65, 85);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
     doc.text("NOTAS IMPORTANTES", M + 2, boxTop + 3.6);
     let rowY = boxTop + headerH;
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); doc.setTextColor(71, 85, 105);
