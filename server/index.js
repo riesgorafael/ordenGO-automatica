@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import path from "path";
 import { fileURLToPath } from "url";
+import nodemailer from "nodemailer";
 
 const { Pool } = pkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -325,6 +326,76 @@ async function notify(userId, text, link) {
   if (!userId) return;
   const id = "n" + Date.now() + Math.floor(Math.random() * 100000);
   try { await pool.query("INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4)", [id, userId, text, link || null]); } catch {}
+}
+
+// Envío de correo de notificación de asignación de tareas. Se configura por variables de
+// entorno (SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS) — nunca hardcodear credenciales acá.
+// Si no está configurado, se omite en silencio (no debe romper la asignación de tareas).
+let mailTransporter = null;
+function getMailTransporter() {
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
+  if (!mailTransporter) {
+    mailTransporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || "smtp.office365.com",
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false, // STARTTLS en el puerto 587
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+  }
+  return mailTransporter;
+}
+async function notifyTaskAssignmentEmail(userId, task, project) {
+  if (!userId) return;
+  const transporter = getMailTransporter();
+  if (!transporter) return;
+  try {
+    const { rows } = await pool.query("SELECT email, name FROM users WHERE id=$1", [userId]);
+    const user = rows[0];
+    if (!user?.email) return;
+    const projectLabel = project ? `${project.key ? project.key + " · " : ""}${project.name}` : "—";
+    const lines = [
+      `Hola ${user.name || ""},`.trim(),
+      "",
+      `Se te asignó una tarea en OrdenGO:`,
+      "",
+      `Proyecto: ${projectLabel}`,
+      `Tarea: ${task.id} — ${task.title}`,
+      task.desc ? `Descripción: ${task.desc}` : null,
+      task.due ? `Vencimiento: ${task.due}` : null,
+      task.priority ? `Prioridad: ${task.priority}` : null,
+      "",
+      "Ingresá a OrdenGO para ver el detalle completo.",
+    ].filter((line) => line !== null).join("\n");
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: user.email,
+      subject: `OrdenGO · Nueva tarea asignada: ${task.title}`,
+      text: lines,
+    });
+  } catch (error) { console.error("No se pudo enviar el correo de asignación de tarea:", error.message); }
+}
+async function notifyProjectAssignmentEmail(userId, project, taskCount) {
+  if (!userId) return;
+  const transporter = getMailTransporter();
+  if (!transporter) return;
+  try {
+    const { rows } = await pool.query("SELECT email, name FROM users WHERE id=$1", [userId]);
+    const user = rows[0];
+    if (!user?.email) return;
+    const lines = [
+      `Hola ${user.name || ""},`.trim(),
+      "",
+      `Se te asignó el proyecto "${project.name}" en OrdenGO, con ${taskCount} tarea(s).`,
+      "",
+      "Ingresá a OrdenGO para ver el detalle completo.",
+    ].join("\n");
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: user.email,
+      subject: `OrdenGO · Nuevo proyecto asignado: ${project.name}`,
+      text: lines,
+    });
+  } catch (error) { console.error("No se pudo enviar el correo de asignación de proyecto:", error.message); }
 }
 function stripMoney(o) {
   const x = { ...o }; delete x.rate; delete x.laborBillable; delete x.laborCost; delete x.billableHours;
@@ -1289,7 +1360,7 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
       newTasks.push(nt); i++;
     }
     await db.query("COMMIT");
-    if (assignee) await notify(assignee, `Se te asignó el proyecto ${project.name} (${newTasks.length} tareas)`, null);
+    if (assignee) { await notify(assignee, `Se te asignó el proyecto ${project.name} (${newTasks.length} tareas)`, null); notifyProjectAssignmentEmail(assignee, project, newTasks.length); }
     res.json({ project, tasks: newTasks });
   } catch (error) { await db.query("ROLLBACK"); res.status(500).json({ error: "No se pudo duplicar el proyecto sin conflictos" }); }
   finally { db.release(); }
@@ -1484,8 +1555,10 @@ app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   }
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [t.id, t]);
   // Notifica al responsable si es una asignación nueva (a otra persona)
-  if (t.assignee && t.assignee !== req.user.id && (!existing || existing.assignee !== t.assignee))
+  if (t.assignee && t.assignee !== req.user.id && (!existing || existing.assignee !== t.assignee)) {
     await notify(t.assignee, `Te asignaron la tarea ${t.id}: ${t.title}`, "task:" + t.id);
+    notifyTaskAssignmentEmail(t.assignee, t, taskProject);
+  }
   res.json(t);
 });
 app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
@@ -1503,8 +1576,10 @@ app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
   if (patch.status && patch.status !== prev.status)
     merged.activity = [...(prev.activity || []), { type: "status", text: `Estado: ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
-  if (patch.assignee && patch.assignee !== prev.assignee && patch.assignee !== req.user.id)
+  if (patch.assignee && patch.assignee !== prev.assignee && patch.assignee !== req.user.id) {
     await notify(patch.assignee, `Te asignaron la tarea ${merged.id}: ${merged.title}`, "task:" + merged.id);
+    pool.query("SELECT data FROM projects WHERE id=$1", [merged.project]).then((result) => notifyTaskAssignmentEmail(patch.assignee, merged, result.rows[0]?.data)).catch(() => {});
+  }
   res.json(merged);
 });
 app.post("/api/tasks/:id/comment", auth, requireProjectWrite, async (req, res) => {
