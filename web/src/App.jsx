@@ -291,7 +291,7 @@ const HealthBar = ({ v, color }) => (<div className="motion-progress h-2 w-full 
 /* ===================================== APP ===================================== */
 export default function App() {
   const savedOrderFilters = useMemo(() => readPreference("ordengo_order_filters", { q: "", status: "Todas", billable: false }), []);
-  const savedProjectFilters = useMemo(() => readPreference("ordengo_project_filters", { project: "all", q: "", mine: false, stale: false, showFinished: false }), []);
+  const savedProjectFilters = useMemo(() => readPreference("ordengo_project_filters", { project: "all", q: "", mine: false, stale: false }), []);
   const [booting, setBooting] = useState(true);
   const [me, setMe] = useState(null);
   const [users, setUsers] = useState([]);
@@ -314,7 +314,8 @@ export default function App() {
   const [pTab, setPTab] = useState("board");
   const [techTaskView, setTechTaskView] = useState(() => { try { return localStorage.getItem("ordengo_tech_task_view") || "work"; } catch { return "work"; } });
   const [pProj, setPProj] = useState(savedProjectFilters.project); const [pQ, setPQ] = useState(savedProjectFilters.q); const [pMine, setPMine] = useState(savedProjectFilters.mine);
-  const [pShowFinished, setPShowFinished] = useState(savedProjectFilters.showFinished);
+  const [finishedMenuOpen, setFinishedMenuOpen] = useState(false);
+  const finishedMenuRef = useRef(null);
   const [editing, setEditing] = useState(undefined);
   const [pwOpen, setPwOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
@@ -346,7 +347,7 @@ export default function App() {
       setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
       setProjectEditor(null); setAccessProj(null); setDupProj(null);
-      setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setAdminMenuOpen(false); setMobileMoreOpen(false);
+      setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setAdminMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
     }
     setModule(nextModule);
   };
@@ -368,6 +369,14 @@ export default function App() {
     document.addEventListener("keydown", closeWithKeyboard);
     return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
   }, [adminMenuOpen]);
+  useEffect(() => {
+    if (!finishedMenuOpen) return;
+    const closeOutside = (event) => { if (finishedMenuRef.current && !finishedMenuRef.current.contains(event.target)) setFinishedMenuOpen(false); };
+    const closeWithKeyboard = (event) => { if (event.key === "Escape") setFinishedMenuOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeWithKeyboard);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
+  }, [finishedMenuOpen]);
   useEffect(() => { setNotifOpen(false); }, [module]);
 
   const boot = async () => {
@@ -390,7 +399,7 @@ export default function App() {
   })(); }, []);
   useEffect(() => { applyBrandingTheme(branding); }, [branding]);
   useEffect(() => { try { localStorage.setItem("ordengo_order_filters", JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} }, [oQ, oStatus, oBillable]);
-  useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale, showFinished: pShowFinished })); } catch {} }, [pProj, pQ, pMine, pStale, pShowFinished]);
+  useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} }, [pProj, pQ, pMine, pStale]);
   useEffect(() => { try { localStorage.setItem("ordengo_tech_task_view", techTaskView); } catch {} }, [techTaskView]);
   useEffect(() => {
     if (!me) return;
@@ -844,9 +853,22 @@ export default function App() {
                 })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
-                <option value="all">Todos los proyectos</option>{projects.filter((p) => pShowFinished || p.active !== false).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}</option>)}
+                <option value="all">Todos los proyectos</option>{projects.filter((p) => p.active !== false || p.id === pProj).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}</option>)}
               </select>
-              {projects.some((p) => p.active === false) && <button onClick={() => setPShowFinished((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pShowFinished ? "border-slate-400 bg-slate-100 text-slate-700" : "border-slate-200 bg-white text-slate-600"}`}><Folder className="h-4 w-4" /> Finalizados</button>}
+              {projects.some((p) => p.active === false) && (
+                <div ref={finishedMenuRef} className="relative shrink-0">
+                  <button onClick={() => setFinishedMenuOpen((v) => !v)} aria-expanded={finishedMenuOpen} aria-haspopup="menu" className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${finishedMenuOpen || projects.find((p) => p.id === pProj)?.active === false ? "border-slate-400 bg-slate-100 text-slate-700" : "border-slate-200 bg-white text-slate-600"}`}><Folder className="h-4 w-4" /> Finalizados</button>
+                  {finishedMenuOpen && (
+                    <div role="menu" className="motion-popover absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white py-1.5 text-slate-800 shadow-lg">
+                      {projects.filter((p) => p.active === false).map((p) => (
+                        <button key={p.id} role="menuitem" onClick={() => { setPProj(p.id); setFinishedMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${pProj === p.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
+                          <span className="font-mono text-xs text-slate-400">{p.key}</span> {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {activeProjectView !== "reports" && (<>
                 <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
@@ -861,7 +883,7 @@ export default function App() {
             </div>}
             {(() => {
               const finishedProjectIds = new Set(projects.filter((p) => p.active === false).map((p) => p.id));
-              const vis = tasks.filter((t) => (pProj === "all" ? (pShowFinished || !finishedProjectIds.has(t.project)) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
+              const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
