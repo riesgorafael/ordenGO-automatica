@@ -549,7 +549,7 @@ const orderAssignedNames = (order) => [order?.tech, ...(Array.isArray(order?.ass
 const orderVisibleToUser = (user, order) => user.role !== "tecnico" || orderAssignedNames(order).includes(normName(user.name));
 // Código corto de tipo de servicio que se incorpora al folio de la OT (ej. OT-VTU-COR-2026-014)
 // para poder identificar de un vistazo qué clase de trabajo es, sin abrir la orden.
-const SERVICE_TYPE_CODES = { "Instalación": "INS", "Automatización": "AUT", "Mantenimiento preventivo": "PRE", "Mantenimiento correctivo": "COR", "Garantía": "GAR", "Emergencia": "EMG" };
+const SERVICE_TYPE_CODES = { "Instalación": "INS", "Automatización": "AUT", "Eléctrico": "ELE", "Mantenimiento preventivo": "PRE", "Mantenimiento correctivo": "COR", "Garantía": "GAR", "Emergencia": "EMG" };
 const TECH_ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Suspendida"]);
 const ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Aprobada", "Facturada", "Suspendida"]);
 const orderBusinessErrors = (order) => {
