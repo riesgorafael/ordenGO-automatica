@@ -366,6 +366,32 @@ export default function App() {
   const notifRef = useRef(null);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
   const adminMenuRef = useRef(null);
+  // La fila de pestañas de escritorio puede desbordar en ventanas angostas; la barra de scroll
+  // nativa queda oculta a propósito (estética), así que sin esto no habría ninguna señal visual
+  // de que hay más pestañas para el costado — se podrían perder de vista sin que nadie lo note.
+  const navTabsRef = useRef(null);
+  const navTabsObserverRef = useRef(null);
+  const [navScroll, setNavScroll] = useState({ left: false, right: false });
+  const updateNavScroll = () => {
+    const el = navTabsRef.current;
+    if (!el) return;
+    setNavScroll({ left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+  };
+  // Con un callback ref nos enteramos apenas el elemento se monta (aunque sea condicional, como
+  // acá con la vista de "Nueva orden"), sin depender de un useEffect con variables que todavía
+  // no existen a esta altura del componente — así no se rompen las reglas de hooks.
+  const setNavTabsRef = (el) => {
+    navTabsRef.current = el;
+    navTabsObserverRef.current?.disconnect();
+    navTabsObserverRef.current = null;
+    if (!el) return;
+    updateNavScroll();
+    if (typeof ResizeObserver !== "undefined") { navTabsObserverRef.current = new ResizeObserver(updateNavScroll); navTabsObserverRef.current.observe(el); }
+  };
+  useEffect(() => {
+    window.addEventListener("resize", updateNavScroll);
+    return () => { window.removeEventListener("resize", updateNavScroll); navTabsObserverRef.current?.disconnect(); };
+  }, []);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -837,7 +863,12 @@ export default function App() {
   // En teléfono priorizamos las áreas operativas de uso diario. El resto
   // queda agrupado en “Más” por área (Negocio, Utilidades);
   // además de evitar etiquetas superpuestas, reduce cambios de contexto accidentales.
-  const mobilePrimaryIds = isMgr ? ["inicio", "panel", "orders", "projects"] : modTabs.map((tab) => tab.id).slice(0, 4);
+  // Elegidos a propósito por rol (no por posición en el arreglo): así un módulo nuevo agregado
+  // en el medio de modTabs no puede empujar sin querer una pestaña de uso frecuente a "Más".
+  // Monitor Oficina y técnico de oficina tienen 3 o menos módulos en total, entran todos igual.
+  const mobilePrimaryIds = isMgr ? ["inicio", "panel", "orders", "projects"]
+    : me.role === "tecnico" ? ["inicio", "orders", "projects", "whiteboard"]
+    : modTabs.map((tab) => tab.id).slice(0, 4);
   const mobilePrimaryTabs = mobilePrimaryIds.map((id) => modTabs.find((tab) => tab.id === id)).filter(Boolean);
   const mobileExtraTabs = modTabs.filter((tab) => !mobilePrimaryIds.includes(tab.id));
   const mobileExtraGroups = mobileExtraTabs.reduce((groups, tab) => {
