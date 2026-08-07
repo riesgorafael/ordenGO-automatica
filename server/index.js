@@ -220,6 +220,38 @@ async function initDb() {
     await pool.query("INSERT INTO app_settings(key,value) VALUES('legacy_rate_850_to_usd_50_v2',$1)", [{ from: 850, to: 50, currency: "USD" }]);
   }
 
+  // Renombra los folios de OT ya existentes al nuevo formato con código de tipo de servicio
+  // (ej. OT-VTU-2026-001 → OT-VTU-AUT-2026-001) y corrige la referencia cruzada conocida (el gasto
+  // automático "EXP-ORDER-<id>" que Finanzas genera para órdenes aprobadas/facturadas vinculadas a
+  // un proyecto). Es idempotente: solo toca folios con el formato viejo (4 segmentos) y no se repite.
+  const orderFolioMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='order_folio_service_code_v1'");
+  if (orderFolioMigration.rowCount === 0) {
+    const legacyIdPattern = /^OT-([A-Z0-9]+)-(\d{4})-(\d+)$/;
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    let renamed = 0;
+    for (const row of orderRows.rows) {
+      const match = legacyIdPattern.exec(row.id);
+      if (!match) continue;
+      const [, siteCode, year, seq] = match;
+      const typeCode = SERVICE_TYPE_CODES[row.data.service] || "GEN";
+      const newId = `OT-${siteCode}-${typeCode}-${year}-${seq}`;
+      if (newId === row.id) continue;
+      const clash = await pool.query("SELECT 1 FROM orders WHERE id=$1", [newId]);
+      if (clash.rowCount > 0) continue; // por seguridad, nunca pisa un folio que ya exista
+      await pool.query("UPDATE orders SET id=$1, data=jsonb_set(data,'{id}',to_jsonb($1::text)), updated_at=now() WHERE id=$2", [newId, row.id]);
+      const oldExpenseId = `EXP-ORDER-${row.id}`;
+      const newExpenseId = `EXP-ORDER-${newId}`;
+      const expenseRow = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [oldExpenseId])).rows[0];
+      if (expenseRow) {
+        const updatedExpense = { ...expenseRow.data, id: newExpenseId, sourceOrderId: newId };
+        await pool.query("UPDATE financial_movements SET id=$1, data=$2, updated_at=now() WHERE id=$3", [newExpenseId, updatedExpense, oldExpenseId]);
+      }
+      renamed++;
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('order_folio_service_code_v1',$1)", [{ renamed }]);
+    if (renamed) console.log(`→ ${renamed} folio(s) de OT actualizados con el código de tipo de servicio.`);
+  }
+
   // Completa órdenes históricas que habían quedado con materiales en cero.
   const materialPriceMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='order_inventory_prices_v1'");
   if (materialPriceMigration.rowCount === 0) {
