@@ -1050,10 +1050,13 @@ export default function App() {
               {tvSettings.tvCycleEnabled && tvProjects.length > 1 && <span key={pProj} className="tv-cycle-progress absolute bottom-0 left-0 h-1 bg-brand-500" style={{ animationDuration: `${tvSettings.tvCycleSeconds}s` }} />}
             </div>}
             {!tvMode && <div className="mb-4 flex flex-wrap items-center gap-2">
-              <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
+              {/* Con Gantt sumado como 4ª pestaña, en móvil este grupo ya no entra completo en el
+                  ancho de pantalla — sin esto, la última ("Reportes") quedaba cortada sin ningún
+                  aviso de que había más para el costado. Ahora se puede desplazar horizontalmente. */}
+              <div className="nav-tabs-scroll mr-1 flex max-w-full overflow-x-auto rounded-lg bg-slate-200 p-0.5">
                 {(isMgr || isMonitor ? [["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar], ...(isMgr && pProj !== "all" ? [["gantt", "Gantt", GanttChartSquare]] : []), ["reports", "Reportes", BarChart3]] : [["work", "Mi trabajo", ListTodo], ["board", "Tablero", LayoutGrid], ["calendar", "Calendario", Calendar]]).map(([id, lb, Ic]) => {
                   const active = isMgr || isMonitor ? pTab === id : techTaskView === id;
-                  return <button key={id} onClick={() => isMgr || isMonitor ? setPTab(id) : setTechTaskView(id)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>;
+                  return <button key={id} onClick={() => isMgr || isMonitor ? setPTab(id) : setTechTaskView(id)} className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-sm font-medium sm:px-3 ${active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>;
                 })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
