@@ -609,6 +609,13 @@ export default function App() {
     try { const s = exists ? await api.updateTask(t.id, t) : await api.saveTask(t); setTasks((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [s, ...p])); setEditing(undefined); } catch (e) { err(e); }
   };
   const onDeleteTask = async (id) => { try { await api.deleteTask(id); setTasks((p) => p.filter((x) => x.id !== id)); setEditing(undefined); } catch (e) { err(e); } };
+  // Copia una tarea a otro proyecto: nace como una tarea nueva e independiente (ID propio del
+  // proyecto destino, "Por hacer", sin comentarios ni historial), no se queda vinculada al original.
+  const duplicateTask = async (source, targetProjectId) => {
+    const { id, activity, createdAt, ...rest } = source;
+    const copy = { ...rest, project: targetProjectId, id: nextTaskId(targetProjectId), status: "Por hacer" };
+    try { const saved = await api.saveTask(copy); setTasks((p) => [saved, ...p]); toast(`Tarea duplicada en ${projects.find((p) => p.id === targetProjectId)?.key || "el proyecto"}`, "success"); } catch (e) { err(e); }
+  };
   const moveTask = async (id, dir) => {
     const t = tasks.find((x) => x.id === id); if (!t) return;
     const i = T_STATUS.indexOf(t.status); const status = T_STATUS[Math.min(T_STATUS.length - 1, Math.max(0, i + dir))];
@@ -1005,7 +1012,7 @@ export default function App() {
 
       {oDetail && <OrderDetail ger={isMgr} users={users} projects={projects} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
-      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
+      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} onDuplicate={duplicateTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
@@ -2965,10 +2972,17 @@ function ActivitySection({ entity, onSend, userById }) {
 }
 
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
-function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, prefill }) {
+function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, onDuplicate, prefill }) {
   const editingExisting = !!task;
   const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
+  const [dupProjectId, setDupProjectId] = useState("");
+  const [duplicating, setDuplicating] = useState(false);
+  const duplicateToProject = async () => {
+    if (!dupProjectId || !onDuplicate) return;
+    setDuplicating(true);
+    try { await onDuplicate(f, dupProjectId); setDupProjectId(""); } finally { setDuplicating(false); }
+  };
   // "activity" (comentarios y cambios de estado) se gestiona en el servidor mediante endpoints propios
   // (comentar, cambiar estado). Nunca se reenvía desde acá para no pisar con una copia desactualizada
   // un comentario que se haya agregado durante esta misma sesión de edición.
@@ -2982,7 +2996,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
         <div className="space-y-3">
           <input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={readOnly} placeholder="Título de la tarea" className="u-input text-sm font-medium disabled:bg-slate-50" />
           <textarea value={f.desc} onChange={(e) => set({ desc: e.target.value })} disabled={readOnly} rows={3} placeholder="Descripción / criterios" className="u-input resize-none disabled:bg-slate-50" />
-          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto"><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={editingExisting || readOnly} className="u-input disabled:bg-slate-50">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
+          <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto" help={editingExisting ? "Podés mover la tarea a otro proyecto. Conserva su ID original." : undefined}><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
           <L label="Participantes (opcional)" help="Otras personas que colaboran en la tarea además del responsable.">
             <div className="flex flex-wrap gap-1.5">
               {(f.participants || []).map((id) => { const u = users.find((user) => user.id === id); if (!u) return null; return (
@@ -3003,6 +3017,18 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
           <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-3"><L label="Estado"><select value={f.status} onChange={(e) => set({ status: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{T_STATUS.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Prioridad"><select value={f.priority} onChange={(e) => set({ priority: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{PRIORITIES.map((s) => <option key={s}>{s}</option>)}</select></L><L label="Tipo"><select value={f.type} onChange={(e) => set({ type: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{TYPES.map((s) => <option key={s}>{s}</option>)}</select></L></div>
           <L label="Fecha límite"><input type="date" value={f.due} onChange={(e) => set({ due: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50" /></L>
         </div>
+        {editingExisting && onDuplicate && !readOnly && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <span className="mb-1.5 block text-[11px] font-medium text-slate-500">Duplicar esta tarea en otro proyecto</span>
+            <div className="flex gap-2">
+              <select value={dupProjectId} onChange={(e) => setDupProjectId(e.target.value)} className="u-input flex-1">
+                <option value="">Elegir proyecto…</option>
+                {projects.filter((p) => p.id !== f.project).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}
+              </select>
+              <button type="button" onClick={duplicateToProject} disabled={!dupProjectId || duplicating} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">{duplicating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />} Duplicar</button>
+            </div>
+          </div>
+        )}
         {editingExisting && onComment && !readOnly && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
         <div className="mt-5 flex gap-2">{editingExisting && canDelete && !readOnly && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">{readOnly ? "Cerrar" : "Cancelar"}</button>{!readOnly && <button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button>}</div>
       </div>
