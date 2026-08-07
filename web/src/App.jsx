@@ -1060,7 +1060,7 @@ export default function App() {
               return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} />;
             })()}
           </>
-        )}
+          ); })()}
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
