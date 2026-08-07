@@ -483,11 +483,12 @@ const requireProjectWrite = (req, res, next) => isMonitor(req.user.role) ? res.s
 const normName = (name) => String(name || "").trim().toLowerCase();
 const orderAssignedNames = (order) => [order?.tech, ...(Array.isArray(order?.assignedTechs) ? order.assignedTechs : [])].map(normName).filter(Boolean);
 const orderVisibleToUser = (user, order) => user.role !== "tecnico" || orderAssignedNames(order).includes(normName(user.name));
-const TECH_ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada"]);
-const ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Aprobada", "Facturada"]);
+const TECH_ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Suspendida"]);
+const ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Aprobada", "Facturada", "Suspendida"]);
 const orderBusinessErrors = (order) => {
   const errors = [];
   if (!ORDER_STATUSES.has(order?.status || "Borrador")) errors.push("El estado de la orden no es válido.");
+  if (order?.status === "Suspendida" && !String(order?.suspendReason || "").trim()) errors.push("El motivo de la suspensión es obligatorio.");
   if (order?.status !== "Borrador") {
     if (!String(order?.client || "").trim()) errors.push("El cliente es obligatorio.");
     if (!String(order?.site || "").trim()) errors.push("El sitio de intervención es obligatorio.");
@@ -1596,8 +1597,8 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs"];
-const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt"];
 const sanitizeAssignedTechs = (value) => Array.isArray(value) ? [...new Set(value.map((name) => String(name || "").trim()).filter(Boolean))].slice(0, 8) : [];
 
 app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
@@ -1712,7 +1713,8 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   } else if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
     merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (patch.status && patch.status !== prev.status) {
-    merged.activity = [...(prev.activity || []), { type: "status", text: `Cambió el estado a ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+    const statusText = patch.status === "Suspendida" && patch.suspendReason ? `Suspendió la orden. Motivo: ${patch.suspendReason}` : prev.status === "Suspendida" && patch.status !== "Suspendida" ? `Reanudó la orden (estado: ${patch.status})` : `Cambió el estado a ${patch.status}`;
+    merged.activity = [...(prev.activity || []), { type: "status", text: statusText, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (req.user.role === "admin" && Object.keys(patch).length) {
     merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   }

@@ -2145,7 +2145,7 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
   const needTechnicianSign = !!next && ["Completada", "Aprobada", "Facturada"].includes(next) && !order.technicianSignatureUrl;
   const canAdvance = next && (next !== "Aprobada" || ger) && (next !== "Facturada" || ger);
   const isSuspended = order.status === "Suspendida";
-  const canSuspend = !isSuspended && order.status !== "Facturada";
+  const canSuspend = ["En proceso de ejecución", "Completada", "Aprobada"].includes(order.status);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const suspend = (reason) => { onUpdate(order.id, { status: "Suspendida", suspendReason: reason, suspendedFromStatus: order.status, suspendedAt: new Date().toISOString() }); setSuspendOpen(false); };
   const resume = () => onUpdate(order.id, { status: order.suspendedFromStatus || "Borrador", suspendReason: "", suspendedFromStatus: "", resumedAt: new Date().toISOString() });
@@ -2218,6 +2218,7 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
       </div>
       {zoom && <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4" onClick={(e) => { e.stopPropagation(); setZoom(null); }}><img src={zoom.url} alt={zoom.cat} className="max-h-[90vh] max-w-full rounded-lg" /><button className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white"><X className="h-5 w-5" /></button></div>}
       {noSignOpen && <ReasonDialog onClose={() => setNoSignOpen(false)} onConfirm={(reason) => { onUpdate(order.id, { status: "Aprobada", noSignReason: reason }); setNoSignOpen(false); }} />}
+      {suspendOpen && <ReasonDialog title="Suspender orden" description="Registrá el motivo ajeno al trabajo (clima, acceso, espera de repuestos, decisión del cliente, etc.). La orden queda pausada hasta que la reanudes." placeholder="Ej. Cliente reprogramó la visita; sin acceso a planta; a la espera de un repuesto" confirmLabel="Suspender" confirmClass="bg-rose-600" onClose={() => setSuspendOpen(false)} onConfirm={suspend} />}
     </div>
   );
 }
@@ -2355,7 +2356,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [rate, setRate] = useState(normalizedRate(initial.rate)); const [laborHours, setLaborHours] = useState(initial.laborHours || ""); const [laborBillable, setLaborBillable] = useState(initial.laborBillable ?? true);
   const technicians = 1 + assignedTechs.length;
   const [materials, setMaterials] = useState(initial.materials || []); const [location, setLocation] = useState(initial.location || null); const [geoMsg, setGeoMsg] = useState("");
-  const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || (initial.clientId ? clients.find((c) => c.id === initial.clientId)?.site || "" : defaultSite?.name || ""));
+  const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || "");
   const [siteCode, setSiteCode] = useState(initial.siteCode || (initial.clientId ? "" : defaultSite?.code || ""));
   const [signatureUrl, setSignatureUrl] = useState(initial.signatureUrl || null); const [signedBy, setSignedBy] = useState(initial.signedBy || "");
   const [technicianSignatureUrl, setTechnicianSignatureUrl] = useState(initial.technicianSignatureUrl || null);
@@ -2451,7 +2452,8 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   }, [me.id, currentOrderId, step, clientMode, clientId, newClient, siteLabel, siteCode, contact, tech, assignedTechs, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location]);
   const save = async (status, { stayOpen = false, technicalOverride = technical } = {}) => {
     setSaving(true);
-    const resolvedSite = siteLabel.trim() || client.site || "";
+    const selectedPlant = clientMode === "existing" ? clientSites(client).find((s) => s.code === siteCode) : null;
+    const resolvedSite = [selectedPlant?.name, siteLabel.trim()].filter(Boolean).join(" · ") || client.site || "";
     const savedLocation = location ? { ...location, label: resolvedSite } : null;
     const completionStamp = new Date().toISOString();
     const timelineHours = technicalOverride.startedAt ? round2(timelineWorkMs(technicalOverride, Date.now()) / 3600000) : automaticLaborHours;
@@ -2485,15 +2487,14 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         <div key={step} className="motion-step space-y-4">
         {step === 0 && (<>
         <Section title="Cliente y sitio">
-          <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => { setClientMode("existing"); const selected = clients.find((c) => c.id === clientId); const first = clientSites(selected)[0]; setSiteLabel(first?.name || ""); setSiteCode(first?.code || ""); setContact(selected?.contactName || ""); setLocation(null); }}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => { setClientMode("new"); setSiteLabel(newClient.site || ""); setSiteCode(""); setLocation(null); }}>Cliente nuevo</Toggle></div>
-          {clientMode === "existing" ? (<select value={clientId} onChange={(e) => { const nextId = e.target.value; const selected = clients.find((c) => c.id === nextId); const first = clientSites(selected)[0]; setClientId(nextId); setSiteLabel(first?.name || ""); setSiteCode(first?.code || ""); setContact(selected?.contactName || ""); setLocation(null); }} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name}{clientSites(c).length ? ` — ${clientSites(c).map((s) => s.name).join(" / ")}` : ""}</option>)}</select>) : (<input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className={`u-input ${errCls(!newClient.name)}`} />)}
+          <div className="mb-2 flex gap-2"><Toggle active={clientMode === "existing"} onClick={() => { setClientMode("existing"); const selected = clients.find((c) => c.id === clientId); const first = clientSites(selected)[0]; setSiteLabel(""); setSiteCode(first?.code || ""); setContact(selected?.contactName || ""); setLocation(null); }}>Directorio</Toggle><Toggle active={clientMode === "new"} onClick={() => { setClientMode("new"); setSiteLabel(newClient.site || ""); setSiteCode(""); setLocation(null); }}>Cliente nuevo</Toggle></div>
+          {clientMode === "existing" ? (<select value={clientId} onChange={(e) => { const nextId = e.target.value; const selected = clients.find((c) => c.id === nextId); const first = clientSites(selected)[0]; setClientId(nextId); setSiteLabel(""); setSiteCode(first?.code || ""); setContact(selected?.contactName || ""); setLocation(null); }} className="u-input">{clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ""}{c.name}{clientSites(c).length ? ` — ${clientSites(c).map((s) => s.name).join(" / ")}` : ""}</option>)}</select>) : (<input value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} placeholder="Nombre del cliente" className={`u-input ${errCls(!newClient.name)}`} />)}
           {clientMode === "existing" && clientSites(clients.find((c) => c.id === clientId)).length > 1 && (
-            <L label="Planta" help="Este cliente tiene varias plantas cargadas — elegí en cuál se realiza esta intervención."><select value={siteCode} onChange={(e) => { const chosen = clientSites(clients.find((c) => c.id === clientId)).find((s) => s.code === e.target.value); setSiteLabel(chosen?.name || ""); setSiteCode(chosen?.code || ""); setLocation((current) => current ? { ...current, label: chosen?.name || "" } : current); }} className="u-input mt-1">{clientSites(clients.find((c) => c.id === clientId)).map((s) => <option key={s.code || s.name} value={s.code}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select></L>
+            <L label="Planta" help="Este cliente tiene varias plantas cargadas — elegí en cuál se realiza esta intervención."><select value={siteCode} onChange={(e) => { const chosen = clientSites(clients.find((c) => c.id === clientId)).find((s) => s.code === e.target.value); setSiteCode(chosen?.code || ""); setLocation((current) => current ? { ...current, label: chosen?.name || "" } : current); }} className="u-input mt-1">{clientSites(clients.find((c) => c.id === clientId)).map((s) => <option key={s.code || s.name} value={s.code}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select></L>
           )}
           <div className="mt-2"><ReqLabel>Sitio de intervención</ReqLabel></div>
-          <input list="known-client-sites" value={siteLabel} onChange={(e) => { const value = e.target.value; setSiteLabel(value); setSiteCode(""); if (clientMode === "new") setNewClient((current) => ({ ...current, site: value })); setLocation((current) => current ? { ...current, label: value } : current); }} placeholder="Buscar un sitio o escribir una etiqueta" className={`u-input mt-1 ${errCls(!siteLabel.trim())}`} />
-          <datalist id="known-client-sites">{clients.flatMap((c) => clientSites(c).map((s) => <option key={`${c.id}-${s.code || s.name}`} value={s.name} label={c.name} />))}</datalist>
-          <p className="mt-1 text-[11px] text-slate-400">Ej.: Planta Venado Tuerto · Línea 2 · Tablero principal</p>
+          <input value={siteLabel} onChange={(e) => { const value = e.target.value; setSiteLabel(value); if (clientMode === "new") setNewClient((current) => ({ ...current, site: value })); setLocation((current) => current ? { ...current, label: value } : current); }} placeholder="Escribí el sector o la etapa del proceso" className={`u-input mt-1 ${errCls(!siteLabel.trim())}`} />
+          <p className="mt-1 text-[11px] text-slate-400">Ej.: Deschalado, Secado, Desgranado, Clasificación, etc.</p>
           <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Persona de contacto (opcional)" className="u-input mt-2" />
           <input list="new-order-techs" value={tech} onChange={(e) => setTech(e.target.value)} placeholder="Técnico responsable" className="u-input mt-2" />
           <datalist id="new-order-techs">{fieldTechs.map((u) => <option key={u.id} value={u.name} />)}</datalist>
