@@ -483,6 +483,9 @@ const requireProjectWrite = (req, res, next) => isMonitor(req.user.role) ? res.s
 const normName = (name) => String(name || "").trim().toLowerCase();
 const orderAssignedNames = (order) => [order?.tech, ...(Array.isArray(order?.assignedTechs) ? order.assignedTechs : [])].map(normName).filter(Boolean);
 const orderVisibleToUser = (user, order) => user.role !== "tecnico" || orderAssignedNames(order).includes(normName(user.name));
+// Código corto de tipo de servicio que se incorpora al folio de la OT (ej. OT-VTU-COR-2026-014)
+// para poder identificar de un vistazo qué clase de trabajo es, sin abrir la orden.
+const SERVICE_TYPE_CODES = { "Instalación": "INS", "Automatización": "AUT", "Mantenimiento preventivo": "PRE", "Mantenimiento correctivo": "COR", "Garantía": "GAR", "Emergencia": "EMG" };
 const TECH_ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Suspendida"]);
 const ORDER_STATUSES = new Set(["Borrador", "En proceso de ejecución", "Completada", "Aprobada", "Facturada", "Suspendida"]);
 const orderBusinessErrors = (order) => {
@@ -1647,8 +1650,12 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
         .find((x) => (x.name || "").trim().toLowerCase() === String(o.client || "").trim().toLowerCase());
       code = (cl && cl.code) ? cl.code : "GEN";
     }
-    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id LIKE $1", [`OT-${code}-${year}-%`])).rows[0].c + 1;
-    o.id = `OT-${code}-${year}-${String(n).padStart(3, "0")}`;
+    const typeCode = SERVICE_TYPE_CODES[o.service] || "GEN";
+    // El correlativo se mantiene por sitio + año (como antes de sumar el código de tipo), para no
+    // generar saltos de numeración según qué tipos de servicio se hayan cargado. La expresión regular
+    // reconoce tanto folios viejos (sin código de tipo) como los nuevos, para no reiniciar el conteo.
+    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id ~ $1", [`^OT-${code}-([A-Z]{2,4}-)?${year}-`])).rows[0].c + 1;
+    o.id = `OT-${code}-${typeCode}-${year}-${String(n).padStart(3, "0")}`;
   }
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.

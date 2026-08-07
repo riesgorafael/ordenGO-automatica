@@ -2317,6 +2317,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
   const [form, setForm] = useState(() => ({ ...order, rate: normalizedRate(order.rate), laborCost: wholeMoney(order.laborCost), technical: { ...(order.technical || {}) }, materials: (order.materials || []).map(hydrateMaterial) }));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const set = (patch) => setForm((current) => ({ ...current, ...patch }));
   const availableBudgets = budgets.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage) && (!form.client || budget.client === form.client || budget.clientId === clients.find((client) => client.name === form.client)?.id));
   const selectBudget = (budgetId) => {
@@ -2333,6 +2334,24 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
   };
   const removeMaterial = (index) => setForm((current) => ({ ...current, materials: current.materials.filter((_, materialIndex) => materialIndex !== index) }));
   const addMaterial = () => setForm((current) => ({ ...current, materials: [...current.materials, { name: "", qty: 1, price: 0, cost: 0, billable: true }] }));
+  // Permite a un administrador sumar o corregir evidencia fotográfica de una orden ya cargada,
+  // por si el técnico de campo se olvidó de alguna foto o subió una que no corresponde.
+  const addEditPhoto = async (file, cat) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      if (!file.type.startsWith("image/")) {
+        if (file.size > MAX_DOCUMENT_BYTES) { setSaveError("El archivo supera los 5 MB permitidos."); return; }
+        const url = await fileToDataUrl(file);
+        setForm((current) => ({ ...current, photos: [...(current.photos || []), { url, name: file.name, mime: file.type, cat, ts: new Date().toISOString(), kind: "document" }] }));
+      } else {
+        const { report, thumb } = await fileToImages(file);
+        setForm((current) => ({ ...current, photos: [...(current.photos || []), { url: report, preview: thumb, cat, ts: new Date().toISOString(), kind: "image" }] }));
+      }
+    } catch { setSaveError("No se pudo adjuntar el archivo."); }
+    finally { setPhotoBusy(false); }
+  };
+  const removeEditPhoto = (index) => setForm((current) => ({ ...current, photos: (current.photos || []).filter((_, photoIndex) => photoIndex !== index) }));
   const save = async () => {
     setSaveError("");
     if (!form.client?.trim() || !form.site?.trim()) return;
@@ -2353,6 +2372,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
       laborHours: adjustedLaborHours, technicians: Number(form.technicians) || 1, rate: normalizedRate(form.rate),
       laborCost: wholeMoney(form.laborCost), laborBillable: form.laborBillable !== false,
       materials: form.materials.map((material) => ({ ...material, name: material.name?.trim() || "", qty: material.unit === "u" ? Math.max(1, Math.round(Number(material.qty) || 1)) : (Number(material.qty) || 0), price: wholeMoney(material.price), cost: wholeMoney(material.cost), billable: material.billable !== false })),
+      photos: form.photos || [],
     };
     await onSave(patch); setSaving(false);
   };
@@ -2370,6 +2390,17 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
           <section><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Cliente y servicio</h3><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Cliente *"><input list="edit-order-clients" value={form.client || ""} onChange={(event) => { const client = clients.find((item) => item.name === event.target.value); set({ client: event.target.value, ...(client ? { site: clientSites(client)[0]?.name || form.site, contact: client.contactName || form.contact } : {}) }); }} className="u-input" /><datalist id="edit-order-clients">{clients.map((client) => <option key={client.id} value={client.name} />)}</datalist></L><L label="Sitio *">{(() => { const matchedSites = clientSites(clients.find((item) => item.name === form.client)); return matchedSites.length > 1 ? (<select value={form.site || ""} onChange={(event) => set({ site: event.target.value })} className="u-input">{matchedSites.map((s) => <option key={s.code || s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select>) : (<input value={form.site || ""} onChange={(event) => set({ site: event.target.value })} className="u-input" />); })()}</L><L label="Contacto"><input value={form.contact || ""} onChange={(event) => set({ contact: event.target.value })} className="u-input" /></L><L label="Técnico de campo"><input list="edit-order-techs" value={form.tech || ""} onChange={(event) => set({ tech: event.target.value })} className="u-input" /><datalist id="edit-order-techs">{fieldTechs.map((user) => <option key={user.id} value={user.name} />)}</datalist></L><L label="Tipo de servicio"><select value={form.service || SERVICE_TYPES[0]} onChange={(event) => set({ service: event.target.value })} className="u-input">{SERVICE_TYPES.map((service) => <option key={service}>{service}</option>)}</select></L><L label="Fecha"><input type="date" value={form.date || ""} onChange={(event) => set({ date: event.target.value })} className="u-input" /></L><L label="Estado"><select value={form.status || O_STATUS[0]} onChange={(event) => set({ status: event.target.value })} className="u-input">{O_STATUS.map((status) => <option key={status}>{status}</option>)}</select></L><L label="Clasificación"><input value={form.category || ""} onChange={(event) => set({ category: event.target.value })} className="u-input" /></L></div></section>
 
           <section><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Trabajo realizado</h3><div className="space-y-2"><input value={form.equipo || ""} onChange={(event) => set({ equipo: event.target.value })} placeholder="Equipo o sistema intervenido" className="u-input" /><textarea value={form.sintoma || ""} onChange={(event) => set({ sintoma: event.target.value })} rows={2} placeholder="Síntoma o falla reportada" className="u-input resize-none" /><textarea value={form.solucion || ""} onChange={(event) => set({ solucion: event.target.value })} rows={3} placeholder="Intervención y solución" className="u-input resize-none" /></div></section>
+
+          <section>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Fotos de evidencia</h3>
+              {photoBusy && <span className="inline-flex items-center gap-1 text-[11px] text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Procesando…</span>}
+            </div>
+            <p className="mb-2 text-[11px] text-slate-500">Corregí acá la evidencia de la orden si al técnico se le pasó una foto o subió una que no corresponde.</p>
+            {(form.photos || []).length > 0 && <div className="mb-2 flex flex-wrap gap-2">{form.photos.map((p, index) => (<div key={index} className="relative">{p.kind === "document" ? <div title={p.name} className="grid h-16 w-16 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" />}<span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span><button type="button" onClick={() => removeEditPhoto(index)} aria-label="Quitar foto" className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200 hover:bg-rose-50"><X className="h-3 w-3 text-slate-500 hover:text-rose-500" /></button></div>))}</div>}
+            <div className="grid grid-cols-3 gap-2"><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addEditPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" onPick={addEditPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addEditPhoto} /></div>
+            <p className="mt-1 text-[11px] text-slate-400">Foto, PDF, Excel o CSV · máx. 5 MB por archivo</p>
+          </section>
 
           <section><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Ficha técnica</h3><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="TAG"><input value={form.technical.assetTag || ""} onChange={(event) => setTechnical("assetTag", event.target.value)} className="u-input" /></L><L label="Fabricante"><input value={form.technical.manufacturer || ""} onChange={(event) => setTechnical("manufacturer", event.target.value)} className="u-input" /></L><L label="Modelo"><input value={form.technical.model || ""} onChange={(event) => setTechnical("model", event.target.value)} className="u-input" /></L><L label="N° de serie"><input value={form.technical.serial || ""} onChange={(event) => setTechnical("serial", event.target.value)} className="u-input" /></L></div><div className="mt-2 space-y-2"><textarea value={form.technical.diagnosis || ""} onChange={(event) => setTechnical("diagnosis", event.target.value)} rows={2} placeholder="Diagnóstico" className="u-input resize-none" /><textarea value={form.technical.rootCause || ""} onChange={(event) => setTechnical("rootCause", event.target.value)} rows={2} placeholder="Causa raíz" className="u-input resize-none" /><textarea value={form.technical.testsPerformed || ""} onChange={(event) => setTechnical("testsPerformed", event.target.value)} rows={2} placeholder="Pruebas realizadas" className="u-input resize-none" /><textarea value={form.technical.testResult || ""} onChange={(event) => setTechnical("testResult", event.target.value)} rows={2} placeholder="Resultado de pruebas" className="u-input resize-none" /><textarea value={form.technical.recommendations || ""} onChange={(event) => setTechnical("recommendations", event.target.value)} rows={2} placeholder="Recomendaciones" className="u-input resize-none" /><textarea value={form.technical.pendingActions || ""} onChange={(event) => setTechnical("pendingActions", event.target.value)} rows={2} placeholder="Acciones pendientes" className="u-input resize-none" /><textarea value={form.technical.internalNotes || ""} onChange={(event) => setTechnical("internalNotes", event.target.value)} rows={2} placeholder="Notas internas" className="u-input resize-none" /></div></section>
 
