@@ -1597,8 +1597,8 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt"];
-const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt"];
 const sanitizeAssignedTechs = (value) => Array.isArray(value) ? [...new Set(value.map((name) => String(name || "").trim()).filter(Boolean))].slice(0, 8) : [];
 
 app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
@@ -1713,7 +1713,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
   } else if (req.user.role === "admin" && patch.technical?.timelineAdjustmentReason && patch.technical.timelineAdjustmentReason !== prev.technical?.timelineAdjustmentReason) {
     merged.activity = [...(prev.activity || []), { type: "timeline", text: `Corrigió la cronología: ${patch.technical.timelineAdjustmentReason}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (patch.status && patch.status !== prev.status) {
-    const statusText = patch.status === "Suspendida" && patch.suspendReason ? `Suspendió la orden. Motivo: ${patch.suspendReason}` : prev.status === "Suspendida" && patch.status !== "Suspendida" ? `Reanudó la orden (estado: ${patch.status})` : `Cambió el estado a ${patch.status}`;
+    const statusText = patch.status === "Suspendida" && patch.suspendReason ? `Suspendió la orden. Motivo: ${patch.suspendReason}` : prev.status === "Suspendida" && patch.status !== "Suspendida" ? `Reanudó la orden (estado: ${patch.status})` : prev.status === "Completada" && patch.reopenReason ? `Reabrió la orden. Motivo: ${patch.reopenReason}` : `Cambió el estado a ${patch.status}`;
     merged.activity = [...(prev.activity || []), { type: "status", text: statusText, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (req.user.role === "admin" && Object.keys(patch).length) {
     merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];

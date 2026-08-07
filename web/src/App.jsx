@@ -2302,6 +2302,7 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
       {zoom && <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4" onClick={(e) => { e.stopPropagation(); setZoom(null); }}><img src={zoom.url} alt={zoom.cat} className="max-h-[90vh] max-w-full rounded-lg" /><button className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white"><X className="h-5 w-5" /></button></div>}
       {noSignOpen && <ReasonDialog onClose={() => setNoSignOpen(false)} onConfirm={(reason) => { onUpdate(order.id, { status: "Aprobada", noSignReason: reason }); setNoSignOpen(false); }} />}
       {suspendOpen && <ReasonDialog title="Suspender orden" description="Registrá el motivo ajeno al trabajo (clima, acceso, espera de repuestos, decisión del cliente, etc.). La orden queda pausada hasta que la reanudes." placeholder="Ej. Cliente reprogramó la visita; sin acceso a planta; a la espera de un repuesto" confirmLabel="Suspender" confirmClass="bg-rose-600" onClose={() => setSuspendOpen(false)} onConfirm={suspend} />}
+      {reopenOpen && <ReasonDialog title="Reabrir orden" description="Registrá el motivo (fotos faltantes, corregir evidencia, etc.). La orden vuelve a 'En proceso de ejecución' y podrás retomarla con el botón 'Retomar y finalizar trabajo' para agregar imágenes u otros datos antes de completarla de nuevo." placeholder="Ej. Faltaban fotos del estado final del tablero" confirmLabel="Reabrir" confirmClass="bg-sky-600" onClose={() => setReopenOpen(false)} onConfirm={reopen} />}
     </div>
   );
 }
