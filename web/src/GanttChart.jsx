@@ -15,6 +15,41 @@ import { exportGanttToPdf } from "./ganttPdf";
 // gantt-task-react espera fechas como Date y una forma de tarea propia; mapeamos desde
 // nuestro modelo (gantt_tasks.data) a ese formato en el borde del componente, sin tocar
 // la forma que viaja al servidor.
+// Encabezado de la tabla lateral en español (el original de la librería trae "Name/From/To"
+// fijos en inglés — no depende del prop "locale", que solo traduce nombres de mes/día).
+function GanttTaskListHeader({ headerHeight, rowWidth, fontFamily, fontSize }) {
+  return (
+    <div className="flex items-center border-b border-slate-200 bg-slate-50" style={{ height: headerHeight, fontFamily, fontSize }}>
+      <div className="truncate px-3 font-semibold text-slate-500" style={{ width: rowWidth }}>Tarea</div>
+      <div className="truncate px-2 font-semibold text-slate-500" style={{ width: rowWidth }}>Inicio</div>
+      <div className="truncate px-2 font-semibold text-slate-500" style={{ width: rowWidth }}>Fin</div>
+    </div>
+  );
+}
+
+// Tabla lateral en español, con fechas cortas (el formato por defecto de la librería es muy
+// verboso: "martes, 1 de septiembre de 2026") y jerarquía marcada con sangría + negrita en
+// las tareas resumen, para que se note de un vistazo qué agrupa a qué.
+function GanttTaskListTable({ rowHeight, rowWidth, fontFamily, fontSize, tasks, selectedTaskId, setSelectedTask }) {
+  const depthOf = (task) => { let d = 0, current = task; while (current.project) { const parent = tasks.find((t) => t.id === current.project); if (!parent) break; d++; current = parent; } return d; };
+  const shortDate = (date) => date.toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" });
+  return (
+    <div style={{ fontFamily, fontSize }}>
+      {tasks.map((task, index) => {
+        const depth = depthOf(task);
+        const isSummary = task.type === "project";
+        return (
+          <div key={task.id} onClick={() => setSelectedTask(task.id)} className={`flex cursor-pointer items-center border-b border-slate-100 ${task.id === selectedTaskId ? "bg-brand-50" : index % 2 ? "bg-slate-50/60" : "bg-white"} hover:bg-brand-50/60`} style={{ height: rowHeight }}>
+            <div className={`truncate px-3 ${isSummary ? "font-semibold text-slate-800" : "text-slate-600"}`} style={{ width: rowWidth, paddingLeft: `${12 + depth * 14}px` }} title={task.name}>{task.name}</div>
+            <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: rowWidth }}>{shortDate(task.start)}</div>
+            <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: rowWidth }}>{shortDate(task.end)}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function toGanttTaskShape(task, byId) {
   return {
     id: task.id,
@@ -125,10 +160,13 @@ export default function GanttChart({ projectId, projectName, toast }) {
           <Gantt
             tasks={ganttTasks}
             viewMode={viewMode}
+            locale="es-AR"
             onDateChange={handleDateChange}
             onProgressChange={handleProgressChange}
             onClick={() => {}}
-            listCellWidth="220px"
+            TaskListHeader={GanttTaskListHeader}
+            TaskListTable={GanttTaskListTable}
+            listCellWidth="180px"
             columnWidth={viewMode === ViewMode.Month ? 300 : viewMode === ViewMode.Week ? 250 : 65}
           />
         )}
