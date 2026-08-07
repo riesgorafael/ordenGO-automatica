@@ -371,8 +371,10 @@ export default function App() {
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
-  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
-  const adminMenuRef = useRef(null);
+  const [utilMenuOpen, setUtilMenuOpen] = useState(false);
+  const utilMenuRef = useRef(null);
+  const [bizMenuOpen, setBizMenuOpen] = useState(false);
+  const bizMenuRef = useRef(null);
   // La fila de pestañas de escritorio puede desbordar en ventanas angostas; la barra de scroll
   // nativa queda oculta a propósito (estética), así que sin esto no habría ninguna señal visual
   // de que hay más pestañas para el costado — se podrían perder de vista sin que nadie lo note.
@@ -437,7 +439,7 @@ export default function App() {
       setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0); setMaterialListCreateSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
       setProjectEditor(null); setAccessProj(null); setDupProj(null); setWhiteboardProjectFilter("");
-      setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setAdminMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
+      setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setUtilMenuOpen(false); setBizMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
     }
     setModule(nextModule);
   };
@@ -452,13 +454,21 @@ export default function App() {
     return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
   }, [notifOpen]);
   useEffect(() => {
-    if (!adminMenuOpen) return;
-    const closeOutside = (event) => { if (adminMenuRef.current && !adminMenuRef.current.contains(event.target)) setAdminMenuOpen(false); };
-    const closeWithKeyboard = (event) => { if (event.key === "Escape") setAdminMenuOpen(false); };
+    if (!utilMenuOpen) return;
+    const closeOutside = (event) => { if (utilMenuRef.current && !utilMenuRef.current.contains(event.target)) setUtilMenuOpen(false); };
+    const closeWithKeyboard = (event) => { if (event.key === "Escape") setUtilMenuOpen(false); };
     document.addEventListener("pointerdown", closeOutside);
     document.addEventListener("keydown", closeWithKeyboard);
     return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
-  }, [adminMenuOpen]);
+  }, [utilMenuOpen]);
+  useEffect(() => {
+    if (!bizMenuOpen) return;
+    const closeOutside = (event) => { if (bizMenuRef.current && !bizMenuRef.current.contains(event.target)) setBizMenuOpen(false); };
+    const closeWithKeyboard = (event) => { if (event.key === "Escape") setBizMenuOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeWithKeyboard);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeWithKeyboard); };
+  }, [bizMenuOpen]);
   useEffect(() => {
     if (!finishedMenuOpen) return;
     const closeOutside = (event) => { if (finishedMenuRef.current && !finishedMenuRef.current.contains(event.target)) setFinishedMenuOpen(false); };
@@ -927,11 +937,14 @@ export default function App() {
   }, []);
   const mobileMoreActive = mobileExtraTabs.some((t) => t.id === activeModule);
   const mobileMoreBadge = mobileExtraTabs.reduce((sum, t) => sum + (t.badge || 0), 0);
-  // En escritorio, "Utilidades" se pliega en un único menú desplegable
-  // para que la barra no desborde el ancho disponible con muchas pestañas.
-  const adminGroupTabs = modTabs.filter((tab) => tab.group === "Utilidades");
-  const adminGroupActive = adminGroupTabs.some((tab) => tab.id === activeModule);
-  const adminGroupBadge = adminGroupTabs.reduce((sum, tab) => sum + (tab.badge || 0), 0);
+  // En escritorio, "Utilidades" y "Administración" se pliegan cada una en su propio
+  // menú desplegable para que la barra no desborde el ancho disponible con muchas pestañas.
+  const utilGroupTabs = modTabs.filter((tab) => tab.group === "Utilidades");
+  const utilGroupActive = utilGroupTabs.some((tab) => tab.id === activeModule);
+  const utilGroupBadge = utilGroupTabs.reduce((sum, tab) => sum + (tab.badge || 0), 0);
+  const bizGroupTabs = modTabs.filter((tab) => tab.group === "Administración");
+  const bizGroupActive = bizGroupTabs.some((tab) => tab.id === activeModule);
+  const bizGroupBadge = bizGroupTabs.reduce((sum, tab) => sum + (tab.badge || 0), 0);
 
   return (
     <div className={`min-h-screen bg-slate-100 text-slate-800 ${tvMode ? "tv-display" : ""}`} style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -979,7 +992,7 @@ export default function App() {
             <div ref={setNavTabsRef} onScroll={updateNavScroll} className="nav-tabs-scroll min-w-0 overflow-x-auto">
               <nav className="flex gap-0.5 pb-1">
                 {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
-                  if (group === "Utilidades") return null;
+                  if (group === "Utilidades" || group === "Administración") return null;
                   const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
                   return (
                     <React.Fragment key={id}>
@@ -992,19 +1005,41 @@ export default function App() {
             </div>
             {navScroll.right && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8" style={{ background: "linear-gradient(to left, #2E2E2D, transparent)" }} />}
           </div>
-          {adminGroupTabs.length > 0 && (
+          {bizGroupTabs.length > 0 && (
             <>
               <span aria-hidden="true" className="my-2 w-px shrink-0 bg-slate-700" />
-              <div ref={adminMenuRef} className="relative shrink-0 py-1">
-                <button onClick={() => setAdminMenuOpen((v) => !v)} aria-expanded={adminMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${adminGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
-                  <Settings2 className="h-4 w-4" /> Utilidades
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${adminMenuOpen ? "rotate-180" : ""}`} />
-                  {adminGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{adminGroupBadge}</span>}
+              <div ref={bizMenuRef} className="relative shrink-0 py-1">
+                <button onClick={() => setBizMenuOpen((v) => !v)} aria-expanded={bizMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${bizGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
+                  <Briefcase className="h-4 w-4" /> Administración
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${bizMenuOpen ? "rotate-180" : ""}`} />
+                  {bizGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{bizGroupBadge}</span>}
                 </button>
-                {adminMenuOpen && (
+                {bizMenuOpen && (
                   <div role="menu" className="motion-popover absolute right-0 top-full z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1.5 text-slate-800 shadow-lg">
-                    {adminGroupTabs.map((tab) => (
-                      <button key={tab.id} role="menuitem" onClick={() => { navigateModule(tab.id); setAdminMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${activeModule === tab.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
+                    {bizGroupTabs.map((tab) => (
+                      <button key={tab.id} role="menuitem" onClick={() => { navigateModule(tab.id); setBizMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${activeModule === tab.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
+                        <tab.icon className="h-4 w-4 shrink-0" /> {tab.label}
+                        {tab.badge > 0 && <span className="ml-auto grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{tab.badge}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          {utilGroupTabs.length > 0 && (
+            <>
+              <span aria-hidden="true" className="my-2 w-px shrink-0 bg-slate-700" />
+              <div ref={utilMenuRef} className="relative shrink-0 py-1">
+                <button onClick={() => setUtilMenuOpen((v) => !v)} aria-expanded={utilMenuOpen} aria-haspopup="menu" className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${utilGroupActive ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
+                  <Settings2 className="h-4 w-4" /> Utilidades
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${utilMenuOpen ? "rotate-180" : ""}`} />
+                  {utilGroupBadge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{utilGroupBadge}</span>}
+                </button>
+                {utilMenuOpen && (
+                  <div role="menu" className="motion-popover absolute right-0 top-full z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1.5 text-slate-800 shadow-lg">
+                    {utilGroupTabs.map((tab) => (
+                      <button key={tab.id} role="menuitem" onClick={() => { navigateModule(tab.id); setUtilMenuOpen(false); }} className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm ${activeModule === tab.id ? "bg-brand-50 font-medium text-brand-700" : "text-slate-700 hover:bg-slate-50"}`}>
                         <tab.icon className="h-4 w-4 shrink-0" /> {tab.label}
                         {tab.badge > 0 && <span className="ml-auto grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{tab.badge}</span>}
                       </button>
