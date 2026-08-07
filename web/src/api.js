@@ -95,7 +95,9 @@ export const api = {
   commentTask: (id, text) => req("/tasks/" + id + "/comment", { method: "POST", body: JSON.stringify({ text }) }),
 
   ganttTasks: (projectId) => req(`/projects/${projectId}/gantt-tasks`),
+  createGanttTask: (projectId, task) => req(`/projects/${projectId}/gantt-tasks`, { method: "POST", body: JSON.stringify(task) }),
   updateGanttTask: (id, patch) => req(`/gantt-tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteGanttTask: (id) => req(`/gantt-tasks/${id}`, { method: "DELETE" }),
   // Multipart: no pasa por req() porque el archivo va como FormData, no JSON.
   importMpp: async (projectId, file) => {
     const form = new FormData();
