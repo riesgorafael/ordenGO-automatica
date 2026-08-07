@@ -937,7 +937,7 @@ export default function App() {
       {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online && offlineSyncFailed ? "bg-rose-600" : online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{!online ? <WifiOff className="h-4 w-4" /> : syncingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}{!online ? `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.` : offlineSyncFailed ? <><span>{offlineCount} cambio(s) pendientes por un error.</span><button type="button" onClick={() => setOfflineRetry((value) => value + 1)} className="inline-flex items-center gap-1 rounded border border-white/40 px-2 py-1 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button></> : `Sincronizando ${offlineCount} cambio(s)…`}</div>}
       <main className={`mx-auto px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5 ${tvMode ? "max-w-none lg:px-7 lg:py-4" : "max-w-6xl"}`}>
         <div key={activeModule} className="motion-page">
-        {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} ger={isMgr} />}
+        {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} finances={finances} clients={clients} parts={parts} projects={projects} users={users} me={me} createSignal={budgetCreateSignal} onConsumeCreate={() => setBudgetCreateSignal(0)} onSave={saveBudget} onDelete={deleteBudget} onDuplicate={duplicateBudget} onConvert={convertBudget} onCreateOrder={createOrderFromBudget} onInvoice={saveFinance} />}
         {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
@@ -2034,10 +2034,12 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
 const Empty = ({ text }) => <div className="grid h-[200px] place-items-center text-center text-xs text-slate-400">{text}</div>;
 
 /* ===================================== INICIO: MI DÍA ===================================== */
-function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById, onOpenTask, onOpenOrder, onGoToPurchaseOrders, ger }) {
+function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets = [], userById, onOpenTask, onOpenOrder, onGoToPurchaseOrders, onGoToBudgets, ger }) {
   const myTasks = tasks.filter((t) => t.assignee === me.id && t.status !== "Hecho")
     .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
-  const myOrders = orders.filter((o) => (o.tech === me.name || o.assignedTechs?.includes(me.name)) && ["Borrador", "En progreso", "En proceso de ejecución"].includes(o.status));
+  // Incluye "Suspendida": si no, una orden pausada desaparece por completo de la vista del técnico
+  // hasta que alguien la reabra, dando la falsa sensación de que no tiene nada pendiente con ella.
+  const myOrders = orders.filter((o) => (o.tech === me.name || o.assignedTechs?.includes(me.name)) && ["Borrador", "En progreso", "En proceso de ejecución", "Suspendida"].includes(o.status));
   const overdue = myTasks.filter(isOverdue).length;
   const dueSoon = myTasks.filter((t) => !isOverdue(t) && isDueSoon(t));
   const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
@@ -2048,7 +2050,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
   const unpaidPOs = ger ? purchaseOrders.filter((po) => { if (po.stage === "Cancelada") return false; const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); return !payable || payable.paymentStatus === "pending"; }) : [];
   // La gerencia necesita ver qué órdenes están en curso en todo el equipo, no solo las propias
   // (que suelen estar vacías para un admin que no hace trabajo de campo).
-  const teamActiveOrders = ger ? orders.filter((o) => ["Borrador", "En progreso", "En proceso de ejecución"].includes(o.status) && !myOrders.some((m) => m.id === o.id)) : [];
+  const teamActiveOrders = ger ? orders.filter((o) => ["Borrador", "En progreso", "En proceso de ejecución", "Suspendida"].includes(o.status) && !myOrders.some((m) => m.id === o.id)) : [];
+  const unsignedTeam = ger ? orders.filter((o) => o.status === "Completada" && !o.signatureUrl && !o.noSignReason) : [];
+  const budgetFollowUps = ger ? budgets.filter((budget) => !["Aprobado", "Facturado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr()) : [];
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold text-slate-900">Hola, {me.name.split(" ")[0]}</h2><p className="text-sm text-slate-500">Esto es lo que tienes pendiente hoy.</p></div>
@@ -2070,6 +2074,8 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
         {ger && <Metric label="Vencidas del equipo" value={teamOverdue.length} icon={AlertTriangle} tint="text-rose-600" />}
         {ger && <Metric label="OC sin pagar" value={unpaidPOs.length} icon={ShoppingCart} tint="text-amber-600" />}
         {ger && <Metric label="Órdenes activas del equipo" value={teamActiveOrders.length} icon={ClipboardList} tint="text-emerald-600" />}
+        {ger && <Metric label="Sin firma" value={unsignedTeam.length} icon={FileSignature} tint="text-rose-600" />}
+        {ger && <Metric label="Presupuestos a seguir" value={budgetFollowUps.length} icon={Briefcase} tint="text-sky-600" />}
       </div>
       {ger && teamOverdue.length > 0 && (
         <div className="motion-banner flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
@@ -2084,6 +2090,21 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
         <div className="motion-banner flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
           <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{unpaidPOs.length === 1 ? "Hay una orden de compra sin pagar" : `Hay ${unpaidPOs.length} órdenes de compra sin pagar`}: {unpaidPOs.slice(0, 4).map((po) => po.number || po.id).join(", ")}{unpaidPOs.length > 4 ? "…" : ""}.</span>
           {onGoToPurchaseOrders && <button onClick={onGoToPurchaseOrders} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver en Compras</button>}
+        </div>
+      )}
+      {ger && unsignedTeam.length > 0 && (
+        <div className="motion-banner flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+          <FileSignature className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <b className="block">{unsignedTeam.length === 1 ? "Hay una orden completada sin firma del cliente" : `Hay ${unsignedTeam.length} órdenes completadas sin firma del cliente`}</b>
+            <span className="text-xs text-rose-700">{unsignedTeam.slice(0, 4).map((o) => o.id).join(", ")}{unsignedTeam.length > 4 ? "…" : ""}.</span>
+          </div>
+        </div>
+      )}
+      {ger && budgetFollowUps.length > 0 && (
+        <div className="motion-banner flex flex-col items-start gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+          <span className="flex items-start gap-2"><Briefcase className="mt-0.5 h-4 w-4 shrink-0" />{budgetFollowUps.length === 1 ? "Hay un presupuesto con seguimiento vencido" : `Hay ${budgetFollowUps.length} presupuestos con seguimiento vencido`}: {budgetFollowUps.slice(0, 4).map((b) => b.number || b.id).join(", ")}{budgetFollowUps.length > 4 ? "…" : ""}.</span>
+          {onGoToBudgets && <button onClick={onGoToBudgets} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver en Presupuestos</button>}
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -2142,6 +2163,32 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
                     <Chip className="ml-auto bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due}</span>}<span>· {userById(t.assignee)?.name || "Sin asignar"}</span></div>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        )}
+        {ger && (
+          <Panel title="Sin firma">
+            <div className="space-y-2">
+              {unsignedTeam.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Todas las completadas tienen conformidad del cliente</div>}
+              {unsignedTeam.slice(0, 8).map((o) => (
+                <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
+                  <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
+                  <div className="mt-0.5 text-[11px] text-slate-400">{o.site} · {o.service} · {o.tech || "Sin técnico"}</div>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        )}
+        {ger && (
+          <Panel title="Presupuestos a seguir">
+            <div className="space-y-2">
+              {budgetFollowUps.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin seguimientos vencidos</div>}
+              {budgetFollowUps.slice(0, 8).map((b) => (
+                <button key={b.id} onClick={onGoToBudgets} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
+                  <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{b.number || b.id}</span><span className="truncate text-sm text-slate-700">{b.title || b.client}</span></div>
+                  <div className="mt-0.5 text-[11px] text-slate-400">{b.client}{b.stage ? ` · ${b.stage}` : ""} · Seguimiento: {b.nextFollowUp}</div>
                 </button>
               ))}
             </div>
