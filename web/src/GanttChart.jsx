@@ -257,6 +257,14 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
   const [importing, setImporting] = useState(false);
   const [viewMode, setViewMode] = useState(ViewMode.Week);
   const [error, setError] = useState("");
+  // Mismo corte que el breakpoint "sm" de Tailwind (640px), para deshabilitar Día/Mes en celular.
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 639px)");
+    const onChange = (e) => setIsMobile(e.matches);
+    mql.addEventListener?.("change", onChange);
+    return () => mql.removeEventListener?.("change", onChange);
+  }, []);
   // undefined = modal cerrado; "new" = creando; cualquier otro string = id de la tarea a editar.
   const [editingTaskId, setEditingTaskId] = useState(undefined);
   const [selectedForConversion, setSelectedForConversion] = useState(() => new Set());
@@ -415,9 +423,14 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
           <p className="text-[11px] text-slate-500">{tasks.length} tarea(s) · {projectName}</p>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
-          {[["Día", ViewMode.Day], ["Semana", ViewMode.Week], ["Mes", ViewMode.Month]].map(([label, mode]) => (
-            <button key={label} onClick={() => setViewMode(mode)} className={`rounded-md px-2 py-1.5 font-medium sm:px-2.5 ${viewMode === mode ? "bg-brand-500 text-white" : "text-slate-600"}`}>{label}</button>
-          ))}
+          {[["Día", ViewMode.Day], ["Semana", ViewMode.Week], ["Mes", ViewMode.Month]].map(([label, mode]) => {
+            // "Día" y "Mes" quedan deshabilitados en celular: con columnas tan angostas esas
+            // escalas son casi ilegibles ahí; "Semana" es la que realmente sirve en esa pantalla.
+            const disabledOnMobile = isMobile && mode !== ViewMode.Week;
+            return (
+              <button key={label} onClick={() => setViewMode(mode)} disabled={disabledOnMobile} title={disabledOnMobile ? "Solo disponible en pantallas más grandes" : undefined} className={`rounded-md px-2 py-1.5 font-medium sm:px-2.5 ${viewMode === mode ? "bg-brand-500 text-white" : disabledOnMobile ? "text-slate-300" : "text-slate-600"} disabled:cursor-not-allowed`}>{label}</button>
+            );
+          })}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
