@@ -44,7 +44,7 @@ function drawLogo(doc, M, y) {
   return h;
 }
 
-function drawServiceSummaryPage(doc, order, valued = false) {
+function drawServiceSummaryPage(doc, order, valued = false, project = null) {
   const W = 210, M = 15, technical = order.technical || {}, t = totals(order);
   drawLogo(doc, M, 12);
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
@@ -65,7 +65,7 @@ function drawServiceSummaryPage(doc, order, valued = false) {
   };
 
   heading("Cliente y servicio", 58);
-  field("Cliente", order.client, M, 66, 62); field("OT asociada", order.id, 110, 66, 52);
+  field("Cliente", order.client, M, 66, 62); field("Proyecto vinculado", project ? `${project.key} · ${project.name}` : "Sin proyecto", 110, 66, 52);
   field("Sitio", order.site, M, 73, 62); field("Presupuesto", order.quoteNumber, 110, 73, 52);
   field("Contacto", order.contact, M, 80, 62); field("Orden de compra", order.customerPO, 110, 80, 52);
   field("Servicio", order.service, M, 87, 62); field("Técnico", order.tech, 110, 87, 52);
@@ -115,7 +115,7 @@ function drawServiceSummaryPage(doc, order, valued = false) {
   doc.text(`Firma: ${formatStamp(order.technicianSignedAt || technical.completedAt || order.createdAt)}`, W - M - 36, signatureY + 14, { align: "center" });
 }
 
-export function buildOrderReceiptPDF(order, audience = "client") {
+export function buildOrderReceiptPDF(order, audience = "client", project = null) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   const internal = audience === "internal";
@@ -124,7 +124,7 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   const showSales = internal || valued;
   const technical = order.technical || {};
   let y = 16;
-  if (!internal) { drawServiceSummaryPage(doc, order, valued); doc.addPage(); }
+  if (!internal) { drawServiceSummaryPage(doc, order, valued, project); doc.addPage(); }
   const brk = (need = 8) => { if (y + need > 282) { doc.addPage(); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139); doc.text(`${order.id} - CONTINUACIÓN`, M, 14); doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17); y = 24; } };
 
   /* Encabezado con logo */
@@ -356,9 +356,9 @@ export function buildOrderReceiptPDF(order, audience = "client") {
   return doc;
 }
 
-export function clientOrderReportPDF(order) { buildOrderReceiptPDF(order, "client").save(`${order.id}_cliente.pdf`); }
-export function valuedClientReportPDF(order) { buildOrderReceiptPDF(order, "valued").save(`${order.id}_cliente_valorizado.pdf`); }
-export function internalOrderReportPDF(order) { buildOrderReceiptPDF(order, "internal").save(`${order.id}_interno.pdf`); }
+export function clientOrderReportPDF(order, project = null) { buildOrderReceiptPDF(order, "client", project).save(`${order.id}_cliente.pdf`); }
+export function valuedClientReportPDF(order, project = null) { buildOrderReceiptPDF(order, "valued", project).save(`${order.id}_cliente_valorizado.pdf`); }
+export function internalOrderReportPDF(order, project = null) { buildOrderReceiptPDF(order, "internal", project).save(`${order.id}_interno.pdf`); }
 
 export function monthlyReportPDF(month, monthLabel, rows, sum) {
   const doc = new jsPDF("p", "mm", "a4");
