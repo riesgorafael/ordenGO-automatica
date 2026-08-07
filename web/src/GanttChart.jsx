@@ -140,24 +140,32 @@ function GanttTaskModal({ task, tasks, onClose, onSave, onDelete }) {
 // gantt-task-react espera fechas como Date y una forma de tarea propia; mapeamos desde
 // nuestro modelo (gantt_tasks.data) a ese formato en el borde del componente, sin tocar
 // la forma que viaja al servidor.
+// La librería mide el ancho real que ocupa esto en el DOM (no fuerza 3 columnas iguales), así
+// que en vez de repartir "rowWidth" por igual entre las 3 columnas (el bug: una fecha corta
+// quedaba con el mismo ancho que el nombre de la tarea, y el nombre se cortaba) se define un
+// ancho fijo bien distinto por columna: mucho más espacio para el nombre que para las fechas.
+const GANTT_NAME_COL_W = 260;
+const GANTT_DATE_COL_W = 84;
+
 // Encabezado de la tabla lateral en español (el original de la librería trae "Name/From/To"
 // fijos en inglés — no depende del prop "locale", que solo traduce nombres de mes/día).
-function GanttTaskListHeader({ headerHeight, rowWidth, fontFamily, fontSize }) {
+function GanttTaskListHeader({ headerHeight, fontFamily, fontSize }) {
   return (
     <div className="flex items-center border-b border-slate-200 bg-slate-50" style={{ height: headerHeight, fontFamily, fontSize }}>
-      <div className="truncate px-3 font-semibold text-slate-500" style={{ width: rowWidth }}>Tarea</div>
-      <div className="truncate px-2 font-semibold text-slate-500" style={{ width: rowWidth }}>Inicio</div>
-      <div className="truncate px-2 font-semibold text-slate-500" style={{ width: rowWidth }}>Fin</div>
+      <div className="truncate px-3 font-semibold text-slate-500" style={{ width: GANTT_NAME_COL_W }}>Tarea</div>
+      <div className="truncate px-2 font-semibold text-slate-500" style={{ width: GANTT_DATE_COL_W }}>Inicio</div>
+      <div className="truncate px-2 font-semibold text-slate-500" style={{ width: GANTT_DATE_COL_W }}>Fin</div>
     </div>
   );
 }
 
 // Tabla lateral en español, con fechas cortas (el formato por defecto de la librería es muy
 // verboso: "martes, 1 de septiembre de 2026") y jerarquía marcada con sangría + negrita en
-// las tareas resumen, para que se note de un vistazo qué agrupa a qué.
-function GanttTaskListTable({ rowHeight, rowWidth, fontFamily, fontSize, tasks, selectedTaskId, setSelectedTask, onEditTask }) {
+// las tareas resumen, para que se note de un vistazo qué agrupa a qué. El nombre completo queda
+// disponible como tooltip nativo (title) para los casos que ni con más espacio entran en una línea.
+function GanttTaskListTable({ rowHeight, fontFamily, fontSize, tasks, selectedTaskId, setSelectedTask, onEditTask }) {
   const depthOf = (task) => { let d = 0, current = task; while (current.project) { const parent = tasks.find((t) => t.id === current.project); if (!parent) break; d++; current = parent; } return d; };
-  const shortDate = (date) => date.toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" });
+  const shortDate = (date) => date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" });
   return (
     <div style={{ fontFamily, fontSize }}>
       {tasks.map((task, index) => {
@@ -165,9 +173,9 @@ function GanttTaskListTable({ rowHeight, rowWidth, fontFamily, fontSize, tasks, 
         const isSummary = task.type === "project";
         return (
           <div key={task.id} onClick={() => { setSelectedTask(task.id); onEditTask?.(task.id); }} className={`flex cursor-pointer items-center border-b border-slate-100 ${task.id === selectedTaskId ? "bg-brand-50" : index % 2 ? "bg-slate-50/60" : "bg-white"} hover:bg-brand-50/60`} style={{ height: rowHeight }}>
-            <div className={`truncate px-3 ${isSummary ? "font-semibold text-slate-800" : "text-slate-600"}`} style={{ width: rowWidth, paddingLeft: `${12 + depth * 14}px` }} title={task.name}>{task.name}</div>
-            <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: rowWidth }}>{shortDate(task.start)}</div>
-            <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: rowWidth }}>{shortDate(task.end)}</div>
+            <div className={`truncate px-3 ${isSummary ? "font-semibold text-slate-800" : "text-slate-600"}`} style={{ width: GANTT_NAME_COL_W, paddingLeft: `${12 + depth * 14}px` }} title={task.name}>{task.name}</div>
+            <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: GANTT_DATE_COL_W }} title={shortDate(task.start)}>{shortDate(task.start)}</div>
+            <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: GANTT_DATE_COL_W }} title={shortDate(task.end)}>{shortDate(task.end)}</div>
           </div>
         );
       })}
