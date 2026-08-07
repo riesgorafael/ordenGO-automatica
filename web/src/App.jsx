@@ -1167,8 +1167,11 @@ export default function App() {
         )}
       </nav>
 
-      {/* Botón de acción flotante (móvil) */}
-      {!isMonitor && (activeModule === "orders" || activeModule === "projects" || activeModule === "budgets" || activeModule === "finances" || activeModule === "purchaseOrders" || activeModule === "materialLists") && (
+      {/* Botón de acción flotante (móvil). En la pestaña Gantt se oculta: ese botón siempre creaba
+          una tarea del tablero Kanban, no una tarea del Gantt, y en pantallas chicas quedaba
+          literalmente encima de los propios botones de la barra de herramientas del Gantt
+          (que ya tiene su "Nueva tarea" correcta ahí mismo). */}
+      {!isMonitor && (activeModule === "orders" || (activeModule === "projects" && activeProjectView !== "gantt") || activeModule === "budgets" || activeModule === "finances" || activeModule === "purchaseOrders" || activeModule === "materialLists") && (
         <button onClick={() => { if (activeModule === "orders") { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); } else if (activeModule === "budgets") setBudgetCreateSignal((value) => value + 1); else if (activeModule === "finances") setFinanceCreateSignal((value) => value + 1); else if (activeModule === "purchaseOrders") setPurchaseOrderCreateSignal((value) => value + 1); else if (activeModule === "materialLists") setMaterialListCreateSignal((value) => value + 1); else setEditing(null); }} className="mobile-fab fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-400 sm:hidden" aria-label={activeModule === "orders" ? "Nueva orden" : activeModule === "budgets" ? "Nuevo presupuesto" : activeModule === "finances" ? "Nuevo movimiento" : activeModule === "purchaseOrders" ? "Nueva orden de compra" : activeModule === "materialLists" ? "Nuevo listado de materiales" : "Nueva tarea"}>
           <Plus className="h-7 w-7" />
         </button>

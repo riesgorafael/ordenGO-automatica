@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gantt, ViewMode } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
-import { Upload, Download, Loader2, AlertTriangle, Plus, Trash2, X } from "lucide-react";
+import { Upload, Download, Loader2, AlertTriangle, Plus, Trash2, X, CheckSquare } from "lucide-react";
 import { api } from "./api";
 import { exportGanttToPdf } from "./ganttPdf";
 
@@ -251,7 +251,7 @@ function toGanttTaskShape(task, byId) {
   };
 }
 
-export default function GanttChart({ projectId, projectName, toast }) {
+export default function GanttChart({ projectId, projectName, users = [], toast, onConvertToTask }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -259,6 +259,10 @@ export default function GanttChart({ projectId, projectName, toast }) {
   const [error, setError] = useState("");
   // undefined = modal cerrado; "new" = creando; cualquier otro string = id de la tarea a editar.
   const [editingTaskId, setEditingTaskId] = useState(undefined);
+  const [selectedForConversion, setSelectedForConversion] = useState(() => new Set());
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const toggleSelectForConversion = (id) => setSelectedForConversion((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const fileInputRef = useRef(null);
   const containerRef = useRef(null);
   const panRef = useRef(null); // { pointerId, startX, scrollLeft, moved }
@@ -294,10 +298,16 @@ export default function GanttChart({ projectId, projectName, toast }) {
     setPanning(false);
   };
   // La librería instancia TaskListTable con un set fijo de props (no admite props extra propias),
-  // así que para poder abrir el modal de edición al hacer click en una fila envolvemos el
-  // componente una sola vez (useMemo con deps vacías) y le inyectamos el handler por clausura.
+  // así que para poder abrir el modal de edición y manejar la selección al hacer click en una fila
+  // envolvemos el componente una sola vez (useMemo con deps vacías) y accedemos al estado "en vivo"
+  // a través de referencias — así el wrapper no se recrea en cada render (rompería el layout de la
+  // librería) pero igual siempre ve el valor más reciente, no una copia vieja del primer render.
+  const selectedForConversionRef = useRef(selectedForConversion);
+  selectedForConversionRef.current = selectedForConversion;
+  const toggleSelectForConversionRef = useRef(toggleSelectForConversion);
+  toggleSelectForConversionRef.current = toggleSelectForConversion;
   const TaskListTableWithEdit = useMemo(() => {
-    return (props) => <GanttTaskListTable {...props} onEditTask={(id) => setEditingTaskId(id)} />;
+    return (props) => <GanttTaskListTable {...props} onEditTask={(id) => setEditingTaskId(id)} selectedForConversion={selectedForConversionRef.current} onToggleSelect={(id) => toggleSelectForConversionRef.current(id)} />;
   }, []);
 
   const load = async () => {
@@ -359,12 +369,31 @@ export default function GanttChart({ projectId, projectName, toast }) {
     await load(); // recarga: el servidor puede haber reasignado el padre de las tareas hijas
   };
 
+  // Convierte las tareas del Gantt seleccionadas en tareas reales del tablero Kanban de Proyectos.
+  // Cada una queda marcada con "linkedTaskId" para no poder convertirla dos veces por error.
+  const handleConvert = async ({ assignee, priority }) => {
+    if (!onConvertToTask) return;
+    setConverting(true);
+    try {
+      const selected = tasks.filter((t) => selectedForConversion.has(t.id) && !t.linkedTaskId);
+      for (const ganttTask of selected) {
+        const created = await onConvertToTask(ganttTask, { assignee, priority });
+        await api.updateGanttTask(ganttTask.id, { linkedTaskId: created.id });
+        setTasks((current) => current.map((t) => (t.id === ganttTask.id ? { ...t, linkedTaskId: created.id } : t)));
+      }
+      toast?.(`${selected.length} tarea(s) creada(s) en el tablero de Proyectos`, "success");
+      setSelectedForConversion(new Set());
+    } finally { setConverting(false); }
+  };
+
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const ganttTasks = tasks.map((t) => toGanttTaskShape(t, byId));
   const editingTask = editingTaskId && editingTaskId !== "new" ? tasks.find((t) => t.id === editingTaskId) : null;
 
   return (
     <div className="space-y-3">
+      {/* Fila 1: título + selector de escala. Fila 2: acciones — separadas a propósito para que
+          en pantallas angostas no todo se apile en una sola columna gigante de botones. */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto min-w-0">
           <h3 className="text-sm font-semibold text-slate-900">Cronograma (Gantt)</h3>
@@ -372,18 +401,25 @@ export default function GanttChart({ projectId, projectName, toast }) {
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
           {[["Día", ViewMode.Day], ["Semana", ViewMode.Week], ["Mes", ViewMode.Month]].map(([label, mode]) => (
-            <button key={label} onClick={() => setViewMode(mode)} className={`rounded-md px-2.5 py-1.5 font-medium ${viewMode === mode ? "bg-brand-500 text-white" : "text-slate-600"}`}>{label}</button>
+            <button key={label} onClick={() => setViewMode(mode)} className={`rounded-md px-2 py-1.5 font-medium sm:px-2.5 ${viewMode === mode ? "bg-brand-500 text-white" : "text-slate-600"}`}>{label}</button>
           ))}
         </div>
-        <button onClick={() => fileInputRef.current?.click()} disabled={importing} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-          {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Importar XML de MS Project
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {selectedForConversion.size > 0 && (
+          <button onClick={() => setConvertOpen(true)} title="Convertir en tarea(s) de proyecto" className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 sm:px-3 sm:text-sm">
+            <CheckSquare className="h-4 w-4" /> Convertir ({selectedForConversion.size})
+          </button>
+        )}
+        <button onClick={() => fileInputRef.current?.click()} disabled={importing} title="Importar XML de MS Project" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:px-3 sm:text-sm">
+          {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} <span className="hidden sm:inline">Importar XML</span>
         </button>
         <input ref={fileInputRef} type="file" accept=".xml" className="hidden" onChange={(e) => handleImport(e.target.files?.[0])} />
-        <button onClick={() => setEditingTaskId("new")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
-          <Plus className="h-4 w-4" /> Nueva tarea
+        <button onClick={() => setEditingTaskId("new")} title="Nueva tarea" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 sm:px-3 sm:text-sm">
+          <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Nueva tarea</span>
         </button>
-        <button onClick={() => exportGanttToPdf(tasks, { projectName })} disabled={!tasks.length} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">
-          <Download className="h-4 w-4" /> Exportar PDF
+        <button onClick={() => exportGanttToPdf(tasks, { projectName })} disabled={!tasks.length} title="Exportar PDF" className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-2.5 py-2 text-xs font-medium text-white hover:bg-brand-400 disabled:opacity-50 sm:px-3 sm:text-sm">
+          <Download className="h-4 w-4" /> <span className="hidden sm:inline">Exportar PDF</span>
         </button>
       </div>
 
@@ -427,6 +463,15 @@ export default function GanttChart({ projectId, projectName, toast }) {
           onClose={() => setEditingTaskId(undefined)}
           onSave={handleModalSave}
           onDelete={handleModalDelete}
+        />
+      )}
+
+      {convertOpen && (
+        <GanttConvertModal
+          tasks={tasks.filter((t) => selectedForConversion.has(t.id))}
+          users={users}
+          onClose={() => setConvertOpen(false)}
+          onConfirm={handleConvert}
         />
       )}
     </div>
