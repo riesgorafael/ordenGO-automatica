@@ -27,10 +27,12 @@ function truncateToWidth(doc, text, maxWidth) {
 const PAGE_W = 297, PAGE_H = 210; // A4 apaisado
 const MARGIN = 10;
 const ROW_H = 6.2;
-const AXIS_MONTH_H = 5;   // franja superior con el nombre del mes
-const AXIS_TICK_H = 5;    // franja con los ticks de día/semana
-const TABLE_HEAD_Y = 22;  // debajo del logo/título
-const CHART_TOP = TABLE_HEAD_Y + AXIS_MONTH_H + AXIS_TICK_H;
+// Una sola altura de encabezado para los dos lados (tabla y gráfico): antes la tabla usaba una
+// franja de 4.5mm y el gráfico una de 10mm (mes + día), así que las filas arrancaban donde
+// terminaba el encabezado del gráfico, dejando un hueco en blanco debajo del de la tabla.
+const HEADER_TOP = 13;    // debajo del logo/título
+const HEADER_H = 9;       // alto único: acomoda mes+día del lado del gráfico y el rótulo de columna del lado de la tabla
+const CHART_TOP = HEADER_TOP + HEADER_H; // primera fila de datos, igual en tabla y gráfico
 
 // Columnas de la tabla izquierda (mm).
 const COL = { id: 9, name: 56, duration: 15, start: 16, end: 16 };
@@ -121,45 +123,46 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
 
   const drawHeader = (pageIndex) => {
     let logoW = 0;
-    try { const h = 9; doc.addImage(LOGO, "PNG", MARGIN, 6, h / LOGO_RATIO, h); logoW = h / LOGO_RATIO + 3; } catch {}
+    try { const h = 6.5; doc.addImage(LOGO, "PNG", MARGIN, 5.5, h / LOGO_RATIO, h); logoW = h / LOGO_RATIO + 3; } catch {} // cabe entre el borde y HEADER_TOP sin pisar la franja gris
     doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 23, 42);
     doc.text(`CRONOGRAMA · ${projectName.toUpperCase()}`, PAGE_W / 2, 10, { align: "center" });
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
     doc.text(`Generado ${new Date().toLocaleDateString("es-AR")}`, PAGE_W - MARGIN, 7, { align: "right" });
 
-    // Encabezado de columnas de la tabla.
+    // Fondo del encabezado: una sola franja (tabla + gráfico), del mismo alto en toda su extensión.
     doc.setFillColor(241, 245, 249);
-    doc.rect(MARGIN, TABLE_HEAD_Y - 4.5, LABEL_W, 4.5, "F");
+    doc.rect(MARGIN, HEADER_TOP, PAGE_W - MARGIN * 2, HEADER_H, "F");
+
+    // Encabezado de columnas de la tabla, alineado abajo de esa franja.
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(71, 85, 105);
     let cx = MARGIN;
     [["Id", COL.id], ["Nombre de tarea", COL.name], ["Duración", COL.duration], ["Comienzo", COL.start], ["Fin", COL.end]].forEach(([label, w]) => {
-      doc.text(label, cx + 1, TABLE_HEAD_Y - 1.3);
+      doc.text(label, cx + 1, HEADER_TOP + HEADER_H - 1.5);
       cx += w;
     });
 
-    // Eje de tiempo: franja de mes arriba, ticks de día/semana debajo (o solo mes si la escala es mensual).
-    doc.setFillColor(241, 245, 249);
-    doc.rect(MARGIN + LABEL_W, TABLE_HEAD_Y - 4.5, chartW, 4.5, "F");
+    // Eje de tiempo: franja de mes arriba, ticks de día/semana debajo (o solo mes, centrado, si la escala es mensual).
     doc.setDrawColor(203, 213, 225);
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(51, 65, 85);
+    const monthLabelY = scale.unit === "month" ? HEADER_TOP + HEADER_H / 2 + 1.5 : HEADER_TOP + 4;
     monthBands.forEach((band) => {
       const x1 = xForDate(band.start), x2 = xForDate(band.end);
-      doc.text(band.label, (x1 + x2) / 2, TABLE_HEAD_Y - AXIS_TICK_H - 1.2, { align: "center" });
-      doc.line(x1, TABLE_HEAD_Y - AXIS_MONTH_H - AXIS_TICK_H, x1, PAGE_H - MARGIN);
+      doc.text(band.label, (x1 + x2) / 2, monthLabelY, { align: "center" });
+      doc.line(x1, HEADER_TOP, x1, PAGE_H - MARGIN);
     });
     if (scale.unit !== "month") {
       doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(148, 163, 184);
       ticks.forEach((tick) => {
         const x = xForDate(tick);
-        doc.text(String(tick.getDate()), x, TABLE_HEAD_Y - 1.3, { align: "center" });
+        doc.text(String(tick.getDate()), x, HEADER_TOP + HEADER_H - 1.5, { align: "center" });
         doc.setDrawColor(226, 232, 240);
         doc.line(x, CHART_TOP, x, PAGE_H - MARGIN);
       });
     }
     doc.setDrawColor(148, 163, 184);
-    doc.line(MARGIN, TABLE_HEAD_Y, PAGE_W - MARGIN, TABLE_HEAD_Y);
-    doc.line(MARGIN, TABLE_HEAD_Y - 4.5, PAGE_W - MARGIN, TABLE_HEAD_Y - 4.5);
-    doc.line(MARGIN + LABEL_W, 6, MARGIN + LABEL_W, PAGE_H - MARGIN);
+    doc.line(MARGIN, HEADER_TOP, PAGE_W - MARGIN, HEADER_TOP);
+    doc.line(MARGIN, CHART_TOP, PAGE_W - MARGIN, CHART_TOP);
+    doc.line(MARGIN + LABEL_W, HEADER_TOP, MARGIN + LABEL_W, PAGE_H - MARGIN);
 
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
     doc.text(`Página ${pageIndex + 1} de ${pageCount}`, PAGE_W / 2, PAGE_H - 4, { align: "center" });
