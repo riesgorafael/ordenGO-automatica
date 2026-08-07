@@ -252,6 +252,38 @@ async function initDb() {
     if (renamed) console.log(`→ ${renamed} folio(s) de OT actualizados con el código de tipo de servicio.`);
   }
 
+  // Ajuste pedido tras revisar el resultado de la migración anterior: se saca el código de tipo de
+  // servicio del folio (no convencía), el año pasa a 2 dígitos, y si la orden tiene un presupuesto
+  // vinculado se agrega su número como referencia directa. Reconoce cualquier formato previo
+  // (con o sin código de tipo, año de 2 o 4 dígitos) para no reiniciar la numeración.
+  const orderFolioShortYearMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='order_folio_short_year_v1'");
+  if (orderFolioShortYearMigration.rowCount === 0) {
+    const idPattern = /^OT-([A-Z0-9]+)-(?:[A-Z]{2,4}-)?(?:20)?(\d{2})-(\d+)$/;
+    const orderRows = await pool.query("SELECT id,data FROM orders");
+    let renamed = 0;
+    for (const row of orderRows.rows) {
+      const match = idPattern.exec(row.id);
+      if (!match) continue;
+      const [, siteCode, year2, seq] = match;
+      const budgetSuffix = row.data.budgetId ? String(row.data.quoteNumber || row.data.budgetNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+      const newId = `OT-${siteCode}-${year2}-${seq}${budgetSuffix ? `-${budgetSuffix}` : ""}`;
+      if (newId === row.id) continue;
+      const clash = await pool.query("SELECT 1 FROM orders WHERE id=$1", [newId]);
+      if (clash.rowCount > 0) continue; // por seguridad, nunca pisa un folio que ya exista
+      await pool.query("UPDATE orders SET id=$1, data=jsonb_set(data,'{id}',to_jsonb($1::text)), updated_at=now() WHERE id=$2", [newId, row.id]);
+      const oldExpenseId = `EXP-ORDER-${row.id}`;
+      const newExpenseId = `EXP-ORDER-${newId}`;
+      const expenseRow = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [oldExpenseId])).rows[0];
+      if (expenseRow) {
+        const updatedExpense = { ...expenseRow.data, id: newExpenseId, sourceOrderId: newId };
+        await pool.query("UPDATE financial_movements SET id=$1, data=$2, updated_at=now() WHERE id=$3", [newExpenseId, updatedExpense, oldExpenseId]);
+      }
+      renamed++;
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('order_folio_short_year_v1',$1)", [{ renamed }]);
+    if (renamed) console.log(`→ ${renamed} folio(s) de OT actualizados a año corto y referencia de presupuesto.`);
+  }
+
   // Completa órdenes históricas que habían quedado con materiales en cero.
   const materialPriceMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='order_inventory_prices_v1'");
   if (materialPriceMigration.rowCount === 0) {
@@ -1673,7 +1705,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   o.technicians = Math.max(1, Math.round(Number(o.technicians) || 1));
   o.materials = await materialsFromInventory(o.materials);
   if (!o.id) {
-    const year = new Date().getFullYear();
+    const year2 = String(new Date().getFullYear()).slice(-2);
     // Un cliente puede tener varias plantas, cada una con su propio código de numeración.
     // Si la orden indica de qué planta se trata (siteCode), ese código manda sobre el del cliente.
     let code = String(o.siteCode || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
@@ -1682,12 +1714,14 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
         .find((x) => (x.name || "").trim().toLowerCase() === String(o.client || "").trim().toLowerCase());
       code = (cl && cl.code) ? cl.code : "GEN";
     }
-    const typeCode = SERVICE_TYPE_CODES[o.service] || "GEN";
-    // El correlativo se mantiene por sitio + año (como antes de sumar el código de tipo), para no
-    // generar saltos de numeración según qué tipos de servicio se hayan cargado. La expresión regular
-    // reconoce tanto folios viejos (sin código de tipo) como los nuevos, para no reiniciar el conteo.
-    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id ~ $1", [`^OT-${code}-([A-Z]{2,4}-)?${year}-`])).rows[0].c + 1;
-    o.id = `OT-${code}-${typeCode}-${year}-${String(n).padStart(3, "0")}`;
+    // El correlativo se mantiene por sitio + año. La expresión regular reconoce cualquier formato
+    // histórico de folio (con año de 2 o 4 dígitos, con o sin código de tipo) para no reiniciar
+    // ni pisar la numeración ya usada.
+    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id ~ $1", [`^OT-${code}-([A-Z]{2,4}-)?(20)?${year2}-`])).rows[0].c + 1;
+    // Si la orden queda vinculada a un presupuesto aprobado/facturado, el folio incorpora su número
+    // como referencia directa (ej. OT-VTU-26-001-026367), para poder rastrearla sin abrirla.
+    const budgetSuffix = o.budgetId ? String(o.quoteNumber || o.budgetNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+    o.id = `OT-${code}-${year2}-${String(n).padStart(3, "0")}${budgetSuffix ? `-${budgetSuffix}` : ""}`;
   }
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
