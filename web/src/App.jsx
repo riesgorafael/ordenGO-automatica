@@ -8,7 +8,7 @@ import {
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
   ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
-  Undo2, Redo2,
+  Undo2, Redo2, ClipboardPaste, ScanLine, Mic,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -599,6 +599,18 @@ export default function App() {
   const saveAccess = async (id, allowedUsers) => {
     try { const p = await api.updateProject(id, { allowedUsers }); setProjects((x) => x.map((y) => (y.id === id ? p : y))); setAccessProj(null); toast("Accesos actualizados", "success"); } catch (e) { err(e); }
   };
+  // Vista inversa de los accesos por proyecto: desde la ficha del empleado se elige a qué
+  // proyectos queda asociado, actualizando el allowedUsers de cada proyecto afectado.
+  const saveUserProjects = async (userId, projectIds) => {
+    const selected = new Set(projectIds);
+    const toUpdate = projects.filter((p) => selected.has(p.id) !== (p.allowedUsers || []).includes(userId));
+    if (!toUpdate.length) return;
+    try {
+      const updated = await Promise.all(toUpdate.map((p) => api.updateProject(p.id, { allowedUsers: selected.has(p.id) ? [...new Set([...(p.allowedUsers || []), userId])] : (p.allowedUsers || []).filter((id) => id !== userId) })));
+      setProjects((current) => current.map((p) => updated.find((u) => u.id === p.id) || p));
+      toast("Proyectos actualizados", "success");
+    } catch (e) { err(e); }
+  };
   const doDuplicate = async (id, opts) => {
     try { const { project, tasks: newTasks } = await api.duplicateProject(id, opts); setProjects((x) => [...x, project]); setTasks((x) => [...newTasks, ...x]); setDupProj(null); setPProj(project.id); toast(`Proyecto duplicado (${newTasks.length} tareas)`, "success"); } catch (e) { err(e); }
   };
@@ -955,7 +967,7 @@ export default function App() {
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onErr={err} />}
-        {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onErr={err} />}
+        {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} projects={projects} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onSaveUserProjects={saveUserProjects} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
         {!tvMode && <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
@@ -2340,6 +2352,76 @@ function ReasonDialog({ onClose, onConfirm, title = "Aprobar sin firma", descrip
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600"><AlertTriangle className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></div></div><L label="Motivo"><textarea autoFocus rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} className="u-input resize-none" /></L><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!reason.trim()} onClick={() => onConfirm(reason.trim())} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${confirmClass}`}>{confirmLabel}</button></div></div></div>;
 }
 
+/* ===================================== DICTADO POR VOZ ===================================== */
+function MicButton({ value, onChange, className = "" }) {
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+  const Recognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  useEffect(() => () => recognitionRef.current?.stop?.(), []);
+  if (!Recognition) return null;
+  const toggle = () => {
+    if (listening) { recognitionRef.current?.stop?.(); return; }
+    const recognition = new Recognition();
+    recognition.lang = "es-AR";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const text = Array.from(event.results).map((r) => r[0].transcript).join(" ").trim();
+      if (text) onChange(value?.trim() ? `${value.trim()} ${text}` : text);
+    };
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+    recognitionRef.current = recognition;
+    try { recognition.start(); setListening(true); } catch {}
+  };
+  return (
+    <button type="button" onClick={toggle} title={listening ? "Detener dictado" : "Dictar por voz"} aria-label={listening ? "Detener dictado" : "Dictar por voz"}
+      className={`grid h-10 w-11 shrink-0 place-items-center rounded-lg border ${listening ? "border-rose-300 bg-rose-50 text-rose-600 animate-pulse" : "border-slate-200 text-slate-500 hover:bg-slate-50"} ${className}`}>
+      <Mic className="h-4 w-4" />
+    </button>
+  );
+}
+
+/* ===================================== ESCÁNER DE CÓDIGO (TAG DE ACTIVO) ===================================== */
+function BarcodeScannerDialog({ onClose, onDetect }) {
+  const videoRef = useRef(null);
+  const [error, setError] = useState("");
+  const supported = typeof window !== "undefined" && "BarcodeDetector" in window;
+  useEffect(() => {
+    if (!supported) { setError("Tu navegador no soporta el escaneo de códigos. Ingresá el dato manualmente."); return; }
+    let stream = null, raf = null, stopped = false;
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+        const detector = new window.BarcodeDetector({ formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "codabar"] });
+        const tick = async () => {
+          if (stopped || !videoRef.current) return;
+          try { const codes = await detector.detect(videoRef.current); if (codes.length) { onDetect(codes[0].rawValue); return; } } catch {}
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch { setError("No se pudo acceder a la cámara. Revisá los permisos del navegador."); }
+    })();
+    return () => { stopped = true; if (raf) cancelAnimationFrame(raf); stream?.getTracks().forEach((t) => t.stop()); };
+  }, [supported]);
+  const mouseDownOnBackdrop = useRef(false);
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/70 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 p-4"><h2 className="text-lg font-semibold text-slate-900">Escanear código</h2><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="relative bg-black" style={{ aspectRatio: "3/4" }}>
+          {!error && <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />}
+          {!error && <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-white/70" />}
+          {error && <div className="flex h-full items-center justify-center p-6 text-center text-sm text-white/90">{error}</div>}
+        </div>
+        <p className="p-4 text-xs text-slate-500">Apuntá al código QR o de barras del equipo. Se detecta automáticamente.</p>
+      </div>
+    </div>
+  );
+}
+
 /* ===================================== ÓRDENES: NUEVA ===================================== */
 function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
   const fieldTechs = users.filter((u) => u.active && ["admin", "gerente", "tecnico"].includes(u.role));
@@ -2381,6 +2463,12 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [linkedBudgetId] = useState(initial.budgetId || ""); const [linkedBudgetNumber] = useState(initial.budgetNumber || initial.quoteNumber || ""); const [linkedProjectId] = useState(initial.projectId || "");
   const [technical, setTechnical] = useState(() => ({ ...EMPTY_TECHNICAL, ...(initial.technical || {}), reportedAt: initial.technical?.reportedAt || new Date().toISOString() }));
   const setTechnicalField = (field, value) => setTechnical((current) => ({ ...current, [field]: value }));
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const assetHistory = useMemo(() => {
+    const tag = (technical.assetTag || "").trim().toLowerCase();
+    if (!tag) return [];
+    return knownOrders.filter((o) => o.id !== currentOrderId && (o.technical?.assetTag || "").trim().toLowerCase() === tag).sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 5);
+  }, [technical.assetTag, knownOrders, currentOrderId]);
   const [signerRoleChoice, setSignerRoleChoice] = useState(() => SIGNER_ROLES.includes(initial.technical?.signerRole) ? initial.technical.signerRole : (initial.technical?.signerRole ? "Otro" : ""));
   const [photos, setPhotos] = useState(initial.photos || []); const [analyzing, setAnalyzing] = useState(false);
   const [rate, setRate] = useState(normalizedRate(initial.rate)); const [laborHours, setLaborHours] = useState(initial.laborHours || ""); const [laborBillable, setLaborBillable] = useState(initial.laborBillable ?? true);
@@ -2546,7 +2634,21 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         <Section title="Identificación del activo">
           <ReqLabel>Equipo / sistema intervenido</ReqLabel>
           <input value={equipo} onChange={(e) => setEquipo(e.target.value)} placeholder="Ej. Tablero principal, línea 2" className={`u-input mt-1 ${errCls(!(equipo || technical.assetTag))}`} />
-          <div className="mt-2 grid grid-cols-2 gap-2"><L label="TAG del activo"><input value={technical.assetTag} onChange={(e) => setTechnicalField("assetTag", e.target.value)} placeholder="Ej. VFD-L2-03" className="u-input" /></L><L label="Fabricante"><input value={technical.manufacturer} onChange={(e) => setTechnicalField("manufacturer", e.target.value)} className="u-input" /></L><L label="Modelo"><input value={technical.model} onChange={(e) => setTechnicalField("model", e.target.value)} className="u-input" /></L><L label="N° de serie"><input value={technical.serial} onChange={(e) => setTechnicalField("serial", e.target.value)} className="u-input" /></L></div>
+          <div className="mt-2 grid grid-cols-2 gap-2"><L label="TAG del activo"><div className="flex gap-1.5"><input value={technical.assetTag} onChange={(e) => setTechnicalField("assetTag", e.target.value)} placeholder="Ej. VFD-L2-03" className="u-input" /><button type="button" onClick={() => setScannerOpen(true)} title="Escanear código del equipo" aria-label="Escanear código del equipo" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L><L label="Fabricante"><input value={technical.manufacturer} onChange={(e) => setTechnicalField("manufacturer", e.target.value)} className="u-input" /></L><L label="Modelo"><input value={technical.model} onChange={(e) => setTechnicalField("model", e.target.value)} className="u-input" /></L><L label="N° de serie"><input value={technical.serial} onChange={(e) => setTechnicalField("serial", e.target.value)} className="u-input" /></L></div>
+          {assetHistory.length > 0 && (
+            <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3">
+              <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-sky-800"><ClipboardList className="h-3.5 w-3.5" /> Historial de este activo ({assetHistory.length})</h4>
+              <div className="space-y-1.5">
+                {assetHistory.map((o) => (
+                  <div key={o.id} className="rounded-md bg-white p-2 text-xs text-slate-600 ring-1 ring-sky-100">
+                    <div className="flex items-center justify-between gap-2"><span className="font-mono font-medium text-slate-700">{o.id}</span><span className="text-slate-400">{o.date}</span></div>
+                    {o.sintoma && <p className="mt-0.5 truncate"><b>Síntoma:</b> {o.sintoma}</p>}
+                    {o.solucion && <p className="mt-0.5 truncate"><b>Solución:</b> {o.solucion}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Section>
         </>)}
         {step === 1 && (
@@ -2559,9 +2661,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           {photos.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{photos.map((p, i) => (<div key={i} className="relative">{p.kind === "document" ? <div title={p.name} className="grid h-14 w-14 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" />}<span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span><button onClick={() => setPhotos((x) => x.filter((_, j) => j !== i))} className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200"><X className="h-3 w-3 text-slate-500" /></button></div>))}</div>}
           {category && <div className="mt-2"><Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{category}</Chip></div>}
           <ReqLabel>Síntoma</ReqLabel>
-          <input value={sintoma} onChange={(e) => setSintoma(e.target.value)} placeholder={profile.symptom} className={`u-input mt-1 ${errCls(!sintoma.trim())}`} />
+          <div className="mt-1 flex gap-1.5"><input value={sintoma} onChange={(e) => setSintoma(e.target.value)} placeholder={profile.symptom} className={`u-input ${errCls(!sintoma.trim())}`} /><MicButton value={sintoma} onChange={setSintoma} /></div>
           <div className="mt-3"><ReqLabel>Diagnóstico</ReqLabel></div>
-          <textarea value={technical.diagnosis} onChange={(e) => setTechnicalField("diagnosis", e.target.value)} rows={3} placeholder={profile.diagnosis} className={`u-input mt-1 resize-none ${errCls(!technical.diagnosis?.trim())}`} />
+          <div className="mt-1 flex gap-1.5"><textarea value={technical.diagnosis} onChange={(e) => setTechnicalField("diagnosis", e.target.value)} rows={3} placeholder={profile.diagnosis} className={`u-input resize-none ${errCls(!technical.diagnosis?.trim())}`} /><MicButton value={technical.diagnosis} onChange={(text) => setTechnicalField("diagnosis", text)} /></div>
           {profile.rootCause && <textarea value={technical.rootCause} onChange={(e) => setTechnicalField("rootCause", e.target.value)} rows={2} placeholder="Causa raíz probable o confirmada" className="u-input mt-2 resize-none" />}
           {profile.installation && <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3"><h4 className="text-xs font-semibold text-sky-800">Preparación de la instalación</h4><textarea value={technical.installationScope} onChange={(e) => setTechnicalField("installationScope", e.target.value)} rows={2} placeholder="Alcance, puntos de conexión y entregables" className="u-input mt-2 resize-none bg-white" /><textarea value={technical.requiredDocuments} onChange={(e) => setTechnicalField("requiredDocuments", e.target.value)} rows={2} placeholder="Planos, permisos y documentación disponible" className="u-input mt-2 resize-none bg-white" /></div>}
           {profile.preventive && <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3"><h4 className="text-xs font-semibold text-sky-800">Inspección preventiva</h4><textarea value={technical.preventiveChecklist} onChange={(e) => setTechnicalField("preventiveChecklist", e.target.value)} rows={3} placeholder="Ítems inspeccionados y estado inicial" className="u-input mt-2 resize-none bg-white" /><textarea value={technical.wearFindings} onChange={(e) => setTechnicalField("wearFindings", e.target.value)} rows={2} placeholder="Desgaste, anomalías o riesgo de falla" className="u-input mt-2 resize-none bg-white" /></div>}
@@ -2572,7 +2674,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         {step === 2 && (<>
         <Section title="Intervención realizada">
           <ReqLabel>Procedimiento, trabajo realizado y solución aplicada</ReqLabel>
-          <textarea value={solucion} onChange={(e) => setSolucion(e.target.value)} rows={4} placeholder="Describe el trabajo realizado y la solución aplicada" className={`u-input mt-1 resize-none ${errCls(!solucion)}`} />
+          <div className="mt-1 flex gap-1.5"><textarea value={solucion} onChange={(e) => setSolucion(e.target.value)} rows={4} placeholder="Describe el trabajo realizado y la solución aplicada" className={`u-input resize-none ${errCls(!solucion)}`} /><MicButton value={solucion} onChange={setSolucion} /></div>
           {profile.automation && <><div className="mt-3 grid grid-cols-2 gap-2"><L label="Dispositivo"><input value={technical.deviceType} onChange={(e) => setTechnicalField("deviceType", e.target.value)} placeholder="PLC, HMI, VFD…" className="u-input" /></L><L label="Firmware"><input value={technical.firmware} onChange={(e) => setTechnicalField("firmware", e.target.value)} className="u-input" /></L><L label="Versión de programa"><input value={technical.programVersion} onChange={(e) => setTechnicalField("programVersion", e.target.value)} className="u-input" /></L><L label="Referencia de respaldo"><input value={technical.backupRef} onChange={(e) => setTechnicalField("backupRef", e.target.value)} className="u-input" /></L></div><textarea value={technical.ioVerified} onChange={(e) => setTechnicalField("ioVerified", e.target.value)} rows={2} placeholder="Entradas, salidas y señales verificadas" className="u-input mt-2 resize-none" /><textarea value={technical.alarmsVerified} onChange={(e) => setTechnicalField("alarmsVerified", e.target.value)} rows={2} placeholder="Alarmas e interlocks verificados" className="u-input mt-2 resize-none" /><textarea value={technical.setpointChanges} onChange={(e) => setTechnicalField("setpointChanges", e.target.value)} rows={2} placeholder="Setpoints o parámetros modificados: valor anterior → valor nuevo" className="u-input mt-2 resize-none" /></>}
           {profile.installation && <><textarea value={technical.mountingWiring} onChange={(e) => setTechnicalField("mountingWiring", e.target.value)} rows={2} placeholder="Montaje, conexionado y verificaciones eléctricas" className="u-input mt-2 resize-none" /><textarea value={technical.commissioning} onChange={(e) => setTechnicalField("commissioning", e.target.value)} rows={2} placeholder="Puesta en marcha y criterios de aceptación" className="u-input mt-2 resize-none" /><input value={technical.trainingProvided} onChange={(e) => setTechnicalField("trainingProvided", e.target.value)} placeholder="Capacitación entregada y asistentes" className="u-input mt-2" /></>}
           {profile.preventive && <textarea value={technical.cleaningAdjustments} onChange={(e) => setTechnicalField("cleaningAdjustments", e.target.value)} rows={3} placeholder="Limpieza, lubricación, ajustes y elementos reemplazados" className="u-input mt-2 resize-none" />}
@@ -2593,7 +2695,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         </>)}
         {step === 3 && (<>
         <Section title="Verificación y estado final"><div className="grid grid-cols-2 gap-2"><L label="Finalización (desde cronología)"><div className="u-input flex items-center bg-slate-50 font-medium text-slate-700">{technical.completedAt ? new Date(technical.completedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "Pendiente de finalizar intervención"}</div></L><L label="Estado del activo"><select value={technical.finalCondition} onChange={(e) => setTechnicalField("finalCondition", e.target.value)} className="u-input"><option>Operativo</option><option>Operativo con restricciones</option><option>Fuera de servicio</option><option>Pendiente de repuesto</option></select></L></div><textarea value={technical.measurementsBefore} onChange={(e) => setTechnicalField("measurementsBefore", e.target.value)} rows={2} placeholder="Mediciones y parámetros antes de intervenir" className="u-input mt-2 resize-none" /><textarea value={technical.measurementsAfter} onChange={(e) => setTechnicalField("measurementsAfter", e.target.value)} rows={2} placeholder="Mediciones y parámetros finales" className="u-input mt-2 resize-none" /><textarea value={technical.testsPerformed} onChange={(e) => setTechnicalField("testsPerformed", e.target.value)} rows={2} placeholder="Pruebas funcionales realizadas" className="u-input mt-2 resize-none" /><textarea value={technical.testResult} onChange={(e) => setTechnicalField("testResult", e.target.value)} rows={2} placeholder="Resultados y criterios de aceptación" className="u-input mt-2 resize-none" /></Section>
-        <Section title="Recomendaciones y pendientes"><ReqLabel>Recomendación técnica</ReqLabel><textarea value={technical.recommendations} onChange={(e) => setTechnicalField("recommendations", e.target.value)} rows={3} placeholder="Recomendación técnica concreta para el cliente" className={`u-input mt-1 resize-none ${errCls(!technical.recommendations?.trim())}`} /><textarea value={technical.pendingActions} onChange={(e) => setTechnicalField("pendingActions", e.target.value)} rows={2} placeholder="Acción pendiente, responsable y fecha comprometida" className="u-input mt-2 resize-none" /><p className="mt-1 text-[11px] text-slate-400">Describe la acción; la prioridad se gestiona únicamente en la información interna.</p><L label={profile.preventive ? "Próximo mantenimiento sugerido" : "Fecha sugerida de seguimiento"}><input type="date" min={todayStr()} value={technical.followUpDate} onChange={(e) => setTechnicalField("followUpDate", e.target.value)} onBlur={(e) => { if (e.target.value && e.target.value < todayStr()) setTechnicalField("followUpDate", ""); }} className="u-input" /></L></Section>
+        <Section title="Recomendaciones y pendientes"><ReqLabel>Recomendación técnica</ReqLabel><div className="mt-1 flex gap-1.5"><textarea value={technical.recommendations} onChange={(e) => setTechnicalField("recommendations", e.target.value)} rows={3} placeholder="Recomendación técnica concreta para el cliente" className={`u-input resize-none ${errCls(!technical.recommendations?.trim())}`} /><MicButton value={technical.recommendations} onChange={(text) => setTechnicalField("recommendations", text)} /></div><textarea value={technical.pendingActions} onChange={(e) => setTechnicalField("pendingActions", e.target.value)} rows={2} placeholder="Acción pendiente, responsable y fecha comprometida" className="u-input mt-2 resize-none" /><p className="mt-1 text-[11px] text-slate-400">Describe la acción; la prioridad se gestiona únicamente en la información interna.</p><L label={profile.preventive ? "Próximo mantenimiento sugerido" : "Fecha sugerida de seguimiento"}><input type="date" min={todayStr()} value={technical.followUpDate} onChange={(e) => setTechnicalField("followUpDate", e.target.value)} onBlur={(e) => { if (e.target.value && e.target.value < todayStr()) setTechnicalField("followUpDate", ""); }} className="u-input" /></L></Section>
         {ger && profile.warranty && <Section title="Gestión de garantía"><L label="Cobertura y vigencia"><input value={technical.warranty} onChange={(e) => setTechnicalField("warranty", e.target.value)} placeholder="Alcance de cobertura, fecha de vencimiento o exclusiones" className="u-input" /></L></Section>}
         {showInternal && <Section title="Información interna"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Recurrencia"><select value={technical.recurrence} onChange={(e) => setTechnicalField("recurrence", e.target.value)} className="u-input"><option value="">Seleccionar</option><option>Primera intervención</option><option>Recurrente</option><option>Seguimiento programado</option></select></L><L label="Próxima acción interna"><select value={technical.internalDisposition} onChange={(e) => setTechnicalField("internalDisposition", e.target.value)} className="u-input"><option value="">Sin acción definida</option><option>Seguimiento técnico</option><option>Cotizar mejora o repuesto</option><option>Esperar repuesto</option><option>Escalar a ingeniería</option><option>Cerrar sin seguimiento</option></select></L><L label="Responsable interno"><input value={technical.internalOwner} onChange={(e) => setTechnicalField("internalOwner", e.target.value)} placeholder="Persona responsable del seguimiento" className="u-input" /></L></div><textarea value={technical.internalNotes} onChange={(e) => setTechnicalField("internalNotes", e.target.value)} rows={3} placeholder="Notas privadas, riesgos comerciales o próximos pasos internos" className="u-input mt-2 resize-none" /></Section>}
         <Section title="Firma del técnico responsable"><p className="mb-2 text-xs text-slate-500">Confirma la ejecución y la información técnica registrada en esta orden.</p><SignaturePad onChange={setTechnicianSignatureUrl} /><div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Técnico: <b>{tech || me.name}</b></div></Section>
@@ -2603,6 +2705,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         </div>
       </main>
       <div ref={bottomBarRef} className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-4"><div className="mx-auto max-w-lg">{stepAttempted && stepMissing.length > 0 && <div className="mb-2 flex items-start gap-1.5 text-[11px] font-medium text-rose-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Completa antes de continuar: {stepMissing.join(", ")}.</div>}{step === 3 && chronologyErrors.length > 0 && <div className="mb-2 flex items-start gap-1.5 text-[11px] text-rose-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Corrige la cronología antes de completar la orden.</div>}{step === 3 && canSave && !technicianSignatureUrl && <div className="mb-2 flex items-start gap-1.5 text-[11px] font-medium text-rose-600"><FileSignature className="mt-0.5 h-3.5 w-3.5 shrink-0" /> La firma del técnico es obligatoria para completar.</div>}{step === 3 && canSave && !signatureUrl && !noSignReason.trim() && <div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-600"><FileSignature className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Para la conformidad del cliente, capta la firma o indica un motivo.</div>}{step === 3 && canSave && !!signatureUrl && (!signedBy.trim() || !technical.signerRole?.trim()) && <div className="mb-2 flex items-start gap-1.5 text-[11px] font-medium text-rose-600"><FileSignature className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Completá el nombre y el cargo/área de quien firma para poder completar la orden.</div>}{step === 3 && canSave && !technical.recommendations?.trim() && <div className="mb-2 flex items-start gap-1.5 text-[11px] font-medium text-rose-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> La recomendación técnica es obligatoria para completar la orden.</div>}{step === 3 && canSave && (!sintoma.trim() || !technical.diagnosis?.trim() || photos.length === 0 || !solucion.trim()) && <div className="mb-2 flex items-start gap-1.5 text-[11px] font-medium text-rose-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Falta completar en pasos anteriores: {[!sintoma.trim() && "síntoma", !technical.diagnosis?.trim() && "diagnóstico", photos.length === 0 && "foto de evidencia", !solucion.trim() && "solución aplicada"].filter(Boolean).join(", ")}.</div>}<div className="grid grid-cols-[auto_1fr_auto] gap-2">{step > 0 ? <button onClick={() => setStep((value) => value - 1)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Atrás</button> : <button disabled={saving || !canStartOrder} onClick={() => { if (!location) captureLocation(); save("En proceso de ejecución"); }} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 disabled:opacity-50">Iniciar orden</button>}<div />{step < steps.length - 1 ? <button onClick={() => { if (!stepReady) { setStepAttempted(true); return; } setStep((value) => value + 1); }} className={`inline-flex items-center gap-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white ${stepReady ? "bg-brand-500" : "bg-slate-300"}`}>Continuar <ChevronRight className="h-4 w-4" /></button> : <button onClick={() => { if (!canComplete) { setStepAttempted(true); return; } save("Completada"); }} disabled={saving} className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 ${canComplete ? "bg-brand-500" : "bg-slate-300"}`}>{saving && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />} Completar orden</button>}</div></div></div>
+      {scannerOpen && <BarcodeScannerDialog onClose={() => setScannerOpen(false)} onDetect={(value) => { setTechnicalField("assetTag", value); setScannerOpen(false); }} />}
     </div>
   );
 }
@@ -3363,6 +3466,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === "z") { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
       else if ((event.ctrlKey || event.metaKey) && key === "y") { event.preventDefault(); redo(); }
+      else if ((event.ctrlKey || event.metaKey) && key === "c") { event.preventDefault(); copyCanvas(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -3454,27 +3558,78 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     setConfirmClear(false);
   };
   const toggleFullscreen = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else boardRef.current?.requestFullscreen?.(); };
-  const loadImage = (file) => {
-    if (!file) return;
+  const drawImageOntoCanvas = (img) => {
     const canvas = canvasRef.current, wrap = canvasWrapRef.current;
     if (!canvas || !wrap) return;
+    pushHistory();
+    const ctx = canvas.getContext("2d");
+    const { clientWidth: w, clientHeight: h } = wrap;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, w, h);
+    const scale = Math.min(w / img.width, h / img.height);
+    const drawW = img.width * scale, drawH = img.height * scale;
+    ctx.drawImage(img, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
+  };
+  const loadImage = (file) => {
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
-      img.onload = () => {
-        pushHistory();
-        const ctx = canvas.getContext("2d");
-        const { clientWidth: w, clientHeight: h } = wrap;
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(0, 0, w, h);
-        const scale = Math.min(w / img.width, h / img.height);
-        const drawW = img.width * scale, drawH = img.height * scale;
-        ctx.drawImage(img, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
-      };
+      img.onload = () => drawImageOntoCanvas(img);
       img.src = String(reader.result || "");
     };
     reader.readAsDataURL(file);
   };
+  const [clipboardMsg, setClipboardMsg] = useState("");
+  const flashClipboardMsg = (message) => { setClipboardMsg(message); setTimeout(() => setClipboardMsg(""), 3000); };
+  const copyCanvas = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    try {
+      if (!navigator.clipboard?.write || typeof window.ClipboardItem === "undefined") throw new Error("unsupported");
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("blob");
+      await navigator.clipboard.write([new window.ClipboardItem({ "image/png": blob })]);
+      flashClipboardMsg("Dibujo copiado al portapapeles.");
+    } catch {
+      flashClipboardMsg("No se pudo copiar: tu navegador no lo permite.");
+    }
+  };
+  const pasteImageFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { const img = new Image(); img.onload = () => drawImageOntoCanvas(img); img.src = String(reader.result || ""); };
+    reader.readAsDataURL(file);
+  };
+  const pasteFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.read) throw new Error("unsupported");
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith("image/"));
+        if (!type) continue;
+        pasteImageFile(await item.getType(type));
+        return;
+      }
+      flashClipboardMsg("El portapapeles no tiene una imagen.");
+    } catch {
+      flashClipboardMsg("No se pudo pegar: revisá los permisos del portapapeles.");
+    }
+  };
+  useEffect(() => {
+    const onPaste = (event) => {
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const items = event.clipboardData?.items;
+      if (!items) return;
+      const imageItem = Array.from(items).find((item) => item.type.startsWith("image/"));
+      if (!imageItem) return;
+      event.preventDefault();
+      pasteImageFile(imageItem.getAsFile());
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
   const handleSave = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -3514,6 +3669,13 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
             <Redo2 className="h-5 w-5" />
           </button>
           <div className="h-9 w-px shrink-0 bg-slate-200" />
+          <button onClick={copyCanvas} title="Copiar dibujo (Ctrl+C)" className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            <Copy className="h-5 w-5" /> Copiar
+          </button>
+          <button onClick={pasteFromClipboard} title="Pegar imagen (Ctrl+V)" className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            <ClipboardPaste className="h-5 w-5" /> Pegar
+          </button>
+          <div className="h-9 w-px shrink-0 bg-slate-200" />
           <button onClick={() => setTool("erase")} aria-pressed={tool === "erase"} className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 px-3.5 text-sm font-medium ${tool === "erase" ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-600"}`}>
             <Eraser className="h-5 w-5" /> Borrador
           </button>
@@ -3528,6 +3690,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
             {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
           </button>
         </div>
+        {clipboardMsg && <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">{clipboardMsg}</div>}
         <div ref={canvasWrapRef} className={`relative w-full bg-white ${isFullscreen ? "h-[calc(100vh-4.5rem)]" : "h-[calc(100vh-20rem)] min-h-[380px]"}`}>
           <canvas ref={canvasRef}
             onPointerDown={startDraw} onPointerMove={draw} onPointerUp={endDraw} onPointerLeave={endDraw} onPointerCancel={endDraw}
@@ -3581,11 +3744,12 @@ function SettingsModule({ branding, onSaveBranding }) {
   </div>;
 }
 
-function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
+function Team({ users, tasks, orders, projects = [], me, onAdd, onPatch, onRemove, onSaveUserProjects, onErr }) {
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "", screenName: "" });
   const [passwordUser, setPasswordUser] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [tvScreenUser, setTvScreenUser] = useState(null);
+  const [userProjectsFor, setUserProjectsFor] = useState(null);
   const add = async () => { if (!nf.name.trim() || !nf.email.trim() || nf.password.length < 8) return; try { await onAdd({ ...nf }); setNf({ name: "", role: "tecnico", email: "", password: "", screenName: "" }); } catch (e) { onErr(e); } };
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
   return <>
@@ -3594,11 +3758,12 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
         <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}</div></div>
+            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}{u.role === "tecnico_oficina" && ` · ${projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)`}</div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select title="Define los módulos, datos y acciones que puede utilizar este usuario." value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
               {isViewer && <button onClick={() => setTvScreenUser(u)} title="Configurar pantalla TV" aria-label={`Configurar pantalla TV de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Maximize2 className="h-4 w-4" /></button>}
+              {u.role === "tecnico_oficina" && <button onClick={() => setUserProjectsFor(u)} title="Asociar a proyectos" aria-label={`Asociar proyectos a ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Folder className="h-4 w-4" /></button>}
               <button onClick={() => setPasswordUser(u)} title="Restablecer contraseña" aria-label={`Restablecer contraseña de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><KeyRound className="h-4 w-4" /></button>
               <button onClick={() => setPendingDelete(u)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
             </div>
@@ -3612,7 +3777,35 @@ function Team({ users, tasks, orders, me, onAdd, onPatch, onRemove, onErr }) {
     {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { await wrap(onPatch)(passwordUser.id, { password }); setPasswordUser(null); }} />}
     {pendingDelete && <ConfirmDialog title="Eliminar empleado" message={`Se eliminará el acceso de “${pendingDelete.name}”. Sus órdenes y tareas históricas no se borrarán.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
     {tvScreenUser && <TvScreenDialog user={tvScreenUser} onClose={() => setTvScreenUser(null)} onSave={async (patch) => { await wrap(onPatch)(tvScreenUser.id, patch); setTvScreenUser(null); }} />}
+    {userProjectsFor && <UserProjectsDialog user={userProjectsFor} projects={projects} onClose={() => setUserProjectsFor(null)} onSave={async (ids) => { await wrap(onSaveUserProjects)(userProjectsFor.id, ids); setUserProjectsFor(null); }} />}
   </>;
+}
+
+function UserProjectsDialog({ user, projects, onClose, onSave }) {
+  const [sel, setSel] = useState(new Set(projects.filter((p) => (p.allowedUsers || []).includes(user.id)).map((p) => p.id)));
+  const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const mouseDownOnBackdrop = useRef(false);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Proyectos asociados</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <p className="mb-3 text-sm text-slate-500">{user.name}. Marcá los proyectos a los que este técnico de oficina tiene acceso.</p>
+        <div className="space-y-1.5">
+          {projects.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">No hay proyectos cargados.</div>}
+          {projects.map((p) => (
+            <label key={p.id} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 p-2.5 hover:bg-slate-50">
+              <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} className="h-4 w-4" />
+              <div className="min-w-0 flex-1"><div className="text-sm font-medium text-slate-800"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}</div></div>
+            </label>
+          ))}
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button onClick={() => onSave([...sel])} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400">Guardar</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function TvScreenDialog({ user, onClose, onSave }) {
