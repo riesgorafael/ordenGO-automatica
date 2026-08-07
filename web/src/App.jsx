@@ -386,7 +386,12 @@ export default function App() {
     navTabsObserverRef.current = null;
     if (!el) return;
     updateNavScroll();
-    if (typeof ResizeObserver !== "undefined") { navTabsObserverRef.current = new ResizeObserver(updateNavScroll); navTabsObserverRef.current.observe(el); }
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(updateNavScroll);
+      observer.observe(el); // ancho disponible (se achica/agranda la ventana)
+      const inner = el.querySelector("nav"); if (inner) observer.observe(inner); // ancho del contenido (cambian las pestañas o sus badges)
+      navTabsObserverRef.current = observer;
+    }
   };
   useEffect(() => {
     window.addEventListener("resize", updateNavScroll);
@@ -556,7 +561,9 @@ export default function App() {
   const tvSettings = me?.settings || {};
   useEffect(() => {
     if (me?.role !== "monitor_oficina" || !tvSettings.tvModeEnabled) return;
-    const projectIds = projects.map((project) => project.id);
+    // Un proyecto finalizado (active === false) no debe seguir rotando en la cartelera del
+    // Monitor Oficina: ni se muestra ni cuenta para la animación de avance automático.
+    const projectIds = projects.filter((project) => project.active !== false).map((project) => project.id);
     setModule("projects"); setPTab("board"); setPQ(""); setPMine(false); setPStale(false);
     setPProj((current) => projectIds.includes(current) ? current : (projectIds[0] || "all"));
     if (!tvSettings.tvCycleEnabled || projectIds.length < 2) return;
@@ -568,7 +575,7 @@ export default function App() {
       });
     }, Math.max(10, Number(tvSettings.tvCycleSeconds) || 30) * 1000);
     return () => window.clearInterval(interval);
-  }, [me?.role, tvSettings.tvModeEnabled, tvSettings.tvCycleEnabled, tvSettings.tvCycleSeconds, projects.map((project) => project.id).join("|")]);
+  }, [me?.role, tvSettings.tvModeEnabled, tvSettings.tvCycleEnabled, tvSettings.tvCycleSeconds, projects.map((project) => `${project.id}:${project.active !== false}`).join("|")]);
 
   // Evita que la pantalla del televisor se suspenda mientras esté en modo TV.
   // El Wake Lock del navegador se libera solo si la pestaña pierde visibilidad; lo reactivamos al volver.
@@ -926,19 +933,23 @@ export default function App() {
           </div>
         </div>
         <div className={`mx-auto flex max-w-6xl items-stretch gap-1 px-2 ${tvMode ? "hidden" : "hidden sm:flex"}`}>
-          <div className="nav-tabs-scroll min-w-0 flex-1 overflow-x-auto">
-            <nav className="flex gap-0.5 pb-1">
-              {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
-                if (group === "Utilidades") return null;
-                const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
-                return (
-                  <React.Fragment key={id}>
-                    {divider}
-                    <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
-                  </React.Fragment>
-                );
-              })}
-            </nav>
+          <div className="relative min-w-0 flex-1">
+            {navScroll.left && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8" style={{ background: "linear-gradient(to right, #2E2E2D, transparent)" }} />}
+            <div ref={setNavTabsRef} onScroll={updateNavScroll} className="nav-tabs-scroll min-w-0 overflow-x-auto">
+              <nav className="flex gap-0.5 pb-1">
+                {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
+                  if (group === "Utilidades") return null;
+                  const divider = group && group !== modTabs[index - 1]?.group && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-slate-700" />;
+                  return (
+                    <React.Fragment key={id}>
+                      {divider}
+                      <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
+                    </React.Fragment>
+                  );
+                })}
+              </nav>
+            </div>
+            {navScroll.right && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8" style={{ background: "linear-gradient(to left, #2E2E2D, transparent)" }} />}
           </div>
           {adminGroupTabs.length > 0 && (
             <>
