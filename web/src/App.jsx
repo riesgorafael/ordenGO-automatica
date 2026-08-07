@@ -2046,6 +2046,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
   // Cuenta cualquier OC activa sin pago confirmado, no solo las que ya llegaron a "Recibida"
   // (recién ahí existe una cuenta por pagar formal en Finanzas) — así avisa desde que se confirma la compra.
   const unpaidPOs = ger ? purchaseOrders.filter((po) => { if (po.stage === "Cancelada") return false; const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); return !payable || payable.paymentStatus === "pending"; }) : [];
+  // La gerencia necesita ver qué órdenes están en curso en todo el equipo, no solo las propias
+  // (que suelen estar vacías para un admin que no hace trabajo de campo).
+  const teamActiveOrders = ger ? orders.filter((o) => ["Borrador", "En progreso", "En proceso de ejecución"].includes(o.status) && !myOrders.some((m) => m.id === o.id)) : [];
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold text-slate-900">Hola, {me.name.split(" ")[0]}</h2><p className="text-sm text-slate-500">Esto es lo que tienes pendiente hoy.</p></div>
@@ -2066,6 +2069,7 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
         {ger && <Metric label="Por facturar" value={pend.length} icon={FileText} tint="text-amber-600" />}
         {ger && <Metric label="Vencidas del equipo" value={teamOverdue.length} icon={AlertTriangle} tint="text-rose-600" />}
         {ger && <Metric label="OC sin pagar" value={unpaidPOs.length} icon={ShoppingCart} tint="text-amber-600" />}
+        {ger && <Metric label="Órdenes activas del equipo" value={teamActiveOrders.length} icon={ClipboardList} tint="text-emerald-600" />}
       </div>
       {ger && teamOverdue.length > 0 && (
         <div className="motion-banner flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
@@ -2113,6 +2117,19 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
             ))}
           </div>
         </Panel>
+        {ger && (
+          <Panel title="Órdenes activas del equipo">
+            <div className="space-y-2">
+              {teamActiveOrders.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin órdenes activas fuera de las tuyas</div>}
+              {teamActiveOrders.slice(0, 8).map((o) => (
+                <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
+                  <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
+                  <div className="mt-0.5 text-[11px] text-slate-400">{o.site} · {o.service} · {o.tech || "Sin técnico"}</div>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        )}
         {ger && (
           <Panel title="Vencidas del equipo">
             <div className="space-y-2">
