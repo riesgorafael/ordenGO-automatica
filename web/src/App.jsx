@@ -2387,7 +2387,7 @@ function MicButton({ value, onChange, className = "" }) {
   return (
     <span className="relative shrink-0 self-start">
       <button type="button" onClick={toggle} title={status === "listening" ? "Detener dictado" : "Dictar por voz"} aria-label={status === "listening" ? "Detener dictado" : "Dictar por voz"}
-        className={`relative grid h-10 w-11 place-items-center overflow-hidden rounded-lg border transition-colors ${status === "listening" ? "border-rose-600 bg-rose-500 text-white" : status === "error" ? "border-amber-300 bg-amber-50 text-amber-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"} ${className}`}>
+        className={`relative grid h-11 w-11 place-items-center overflow-hidden rounded-lg border transition-colors ${status === "listening" ? "border-rose-600 bg-rose-500 text-white" : status === "error" ? "border-amber-300 bg-amber-50 text-amber-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"} ${className}`}>
         {status === "listening" && <span className="absolute inset-0 animate-ping rounded-lg bg-rose-400" />}
         <Mic className="relative h-4 w-4" />
       </button>
