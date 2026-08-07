@@ -312,7 +312,7 @@ const useReducedMotion = () => {
 const Bar = (props) => <RechartsBar {...props} isAnimationActive={!useReducedMotion()} animationDuration={550} animationEasing="ease-out" />;
 const Pie = (props) => <RechartsPie {...props} isAnimationActive={!useReducedMotion()} animationDuration={550} animationEasing="ease-out" />;
 
-const Chip = ({ children, className = "" }) => (<span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
+const Chip = ({ children, className = "", ...rest }) => (<span {...rest} className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
 const Box = ({ children, className = "" }) => (<div className={`motion-card rounded-xl border border-slate-200 bg-white ${className}`}>{children}</div>);
 const Panel = ({ title, children }) => (<div className="motion-card h-full rounded-xl border border-slate-200 bg-white p-4"><h3 className="mb-3 text-sm font-semibold leading-5 text-slate-900 sm:min-h-10">{title}</h3>{children}</div>);
 const HelpHint = ({ text }) => <span tabIndex={0} aria-label={text} className="group/hint relative inline-flex cursor-help align-middle outline-none"><CircleHelp className="h-3.5 w-3.5 text-slate-400 transition-colors group-hover/hint:text-brand-600 group-focus-visible/hint:text-brand-600" /><span role="tooltip" className="pointer-events-none invisible absolute bottom-[calc(100%+0.4rem)] right-0 z-[80] w-64 rounded-lg bg-slate-900 px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white opacity-0 shadow-xl transition-opacity group-hover/hint:visible group-hover/hint:opacity-100 group-focus-visible/hint:visible group-focus-visible/hint:opacity-100">{text}</span></span>;
@@ -2126,6 +2126,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
                 <Chip className={O_STYLE[o.status]}>{o.status}</Chip>
                 {o._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente de sincronizar</Chip>}
                 {o.category && <Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{o.category}</Chip>}
+                {(o.quoteNumber || o.budgetNumber) && <Chip title="Presupuesto vinculado" className="bg-sky-50 text-sky-700 ring-sky-600/20"><FileText className="h-3 w-3" />{o.quoteNumber || o.budgetNumber}</Chip>}
                 <span className="ml-auto text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{compactDuration((Number(o.laborHours) || 0) * 3600000)}</span>}</span>
               </div>
               <div className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-800"><Building2 className="h-3.5 w-3.5 text-slate-400" />{o.client}</div>
@@ -2225,6 +2226,11 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
   const [suspendOpen, setSuspendOpen] = useState(false);
   const suspend = (reason) => { onUpdate(order.id, { status: "Suspendida", suspendReason: reason, suspendedFromStatus: order.status, suspendedAt: new Date().toISOString() }); setSuspendOpen(false); };
   const resume = () => onUpdate(order.id, { status: order.suspendedFromStatus || "Borrador", suspendReason: "", suspendedFromStatus: "", resumedAt: new Date().toISOString() });
+  // Reabrir una orden Completada la devuelve a "En proceso de ejecución" para poder retomarla desde
+  // el asistente (botón "Retomar y finalizar trabajo") y agregar fotos u otra evidencia faltante.
+  const canReopen = order.status === "Completada";
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const reopen = (reason) => { onUpdate(order.id, { status: "En proceso de ejecución", reopenReason: reason, reopenedAt: new Date().toISOString() }); setReopenOpen(false); };
   const [rate, setRate] = useState(normalizedRate(order.rate));
   const [mats, setMats] = useState((order.materials || []).map((material) => ({ ...material, price: wholeMoney(material.price), cost: wholeMoney(material.cost) })));
   const [laborBillable, setLaborBillable] = useState(order.laborBillable);
@@ -2276,6 +2282,7 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
           <section className="flex flex-wrap gap-2 pt-1">
             {onEdit && <button onClick={() => onEdit(order)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Pencil className="h-4 w-4" /> Editar orden</button>}
             {isSuspended ? <button onClick={resume} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"><Play className="h-4 w-4" /> Reanudar orden</button> : canSuspend && <button onClick={() => setSuspendOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"><AlertTriangle className="h-4 w-4" /> Suspender orden</button>}
+            {canReopen && <button onClick={() => setReopenOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100"><RefreshCw className="h-4 w-4" /> Reabrir orden</button>}
             {canAdvance && <button disabled={needSign || needTechnicianSign} onClick={() => onAdvance(order.id, next)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Marcar {next}</button>}
             {needTechnicianSign && <span className="self-center text-xs font-medium text-amber-600">Guarda la firma técnica para completar.</span>}
             {needSign && <button onClick={() => setNoSignOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
