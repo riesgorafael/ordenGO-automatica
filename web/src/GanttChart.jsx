@@ -147,11 +147,14 @@ function GanttTaskModal({ task, tasks, onClose, onSave, onDelete }) {
 const GANTT_NAME_COL_W = 260;
 const GANTT_DATE_COL_W = 84;
 
+const GANTT_CHECK_COL_W = 26;
+
 // Encabezado de la tabla lateral en español (el original de la librería trae "Name/From/To"
 // fijos en inglés — no depende del prop "locale", que solo traduce nombres de mes/día).
 function GanttTaskListHeader({ headerHeight, fontFamily, fontSize }) {
   return (
     <div className="flex items-center border-b border-slate-200 bg-slate-50" style={{ height: headerHeight, fontFamily, fontSize }}>
+      <div style={{ width: GANTT_CHECK_COL_W }} />
       <div className="truncate px-3 font-semibold text-slate-500" style={{ width: GANTT_NAME_COL_W }}>Tarea</div>
       <div className="truncate px-2 font-semibold text-slate-500" style={{ width: GANTT_DATE_COL_W }}>Inicio</div>
       <div className="truncate px-2 font-semibold text-slate-500" style={{ width: GANTT_DATE_COL_W }}>Fin</div>
@@ -163,7 +166,9 @@ function GanttTaskListHeader({ headerHeight, fontFamily, fontSize }) {
 // verboso: "martes, 1 de septiembre de 2026") y jerarquía marcada con sangría + negrita en
 // las tareas resumen, para que se note de un vistazo qué agrupa a qué. El nombre completo queda
 // disponible como tooltip nativo (title) para los casos que ni con más espacio entran en una línea.
-function GanttTaskListTable({ rowHeight, fontFamily, fontSize, tasks, selectedTaskId, setSelectedTask, onEditTask }) {
+// El checkbox de la izquierda es para elegir qué tareas convertir en tareas de proyecto (Kanban);
+// una tarea ya convertida (linkedTaskId) queda marcada con un check verde y no se puede reelegir.
+function GanttTaskListTable({ rowHeight, fontFamily, fontSize, tasks, selectedTaskId, setSelectedTask, onEditTask, selectedForConversion, onToggleSelect }) {
   const depthOf = (task) => { let d = 0, current = task; while (current.project) { const parent = tasks.find((t) => t.id === current.project); if (!parent) break; d++; current = parent; } return d; };
   const shortDate = (date) => date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" });
   return (
@@ -171,14 +176,58 @@ function GanttTaskListTable({ rowHeight, fontFamily, fontSize, tasks, selectedTa
       {tasks.map((task, index) => {
         const depth = depthOf(task);
         const isSummary = task.type === "project";
+        const converted = !!task.linkedTaskId;
         return (
           <div key={task.id} onClick={() => { setSelectedTask(task.id); onEditTask?.(task.id); }} className={`flex cursor-pointer items-center border-b border-slate-100 ${task.id === selectedTaskId ? "bg-brand-50" : index % 2 ? "bg-slate-50/60" : "bg-white"} hover:bg-brand-50/60`} style={{ height: rowHeight }}>
+            <div className="flex shrink-0 items-center justify-center" style={{ width: GANTT_CHECK_COL_W }} onClick={(e) => e.stopPropagation()}>
+              {converted
+                ? <span title="Ya convertida en tarea de proyecto" className="grid h-4 w-4 place-items-center rounded-full bg-emerald-100 text-emerald-600">✓</span>
+                : <input type="checkbox" checked={selectedForConversion?.has(task.id) || false} onChange={() => onToggleSelect?.(task.id)} />}
+            </div>
             <div className={`truncate px-3 ${isSummary ? "font-semibold text-slate-800" : "text-slate-600"}`} style={{ width: GANTT_NAME_COL_W, paddingLeft: `${12 + depth * 14}px` }} title={task.name}>{task.name}</div>
             <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: GANTT_DATE_COL_W }} title={shortDate(task.start)}>{shortDate(task.start)}</div>
             <div className="truncate px-2 text-[11px] text-slate-500" style={{ width: GANTT_DATE_COL_W }} title={shortDate(task.end)}>{shortDate(task.end)}</div>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const GANTT_PRIORITIES = ["Baja", "Media", "Alta", "Urgente"];
+
+function GanttConvertModal({ tasks, users, onClose, onConfirm }) {
+  const [assignee, setAssignee] = useState(users[0]?.id || "");
+  const [priority, setPriority] = useState("Media");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async () => {
+    setSaving(true); setError("");
+    try { await onConfirm({ assignee, priority }); onClose(); }
+    catch (e) { setError(e.message || "No se pudieron crear las tareas."); setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Convertir en tarea{tasks.length > 1 ? "s" : ""} de proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <p className="mb-3 text-xs text-slate-500">Se {tasks.length > 1 ? "crean" : "crea"} en el tablero Kanban de Proyectos, con vencimiento igual al fin planificado en el Gantt.</p>
+        <div className="mb-3 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
+          {tasks.map((t) => <div key={t.id} className="truncate text-xs text-slate-700">• {t.name} <span className="text-slate-400">({t.end})</span></div>)}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block"><span className="mb-1 block text-[11px] font-medium text-slate-500">Responsable</span>
+            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="u-input">{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+          </label>
+          <label className="block"><span className="mb-1 block text-[11px] font-medium text-slate-500">Prioridad</span>
+            <select value={priority} onChange={(e) => setPriority(e.target.value)} className="u-input">{GANTT_PRIORITIES.map((p) => <option key={p}>{p}</option>)}</select>
+          </label>
+        </div>
+        {error && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        <div className="mt-5 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button onClick={submit} disabled={saving || !assignee} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Crear {tasks.length} tarea{tasks.length > 1 ? "s" : ""}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -212,6 +261,38 @@ export default function GanttChart({ projectId, projectName, toast }) {
   const [editingTaskId, setEditingTaskId] = useState(undefined);
   const fileInputRef = useRef(null);
   const containerRef = useRef(null);
+  const panRef = useRef(null); // { pointerId, startX, scrollLeft, moved }
+  const [panning, setPanning] = useState(false);
+
+  // "Arrastrar para desplazar" (como un mapa): funciona igual con mouse y con el dedo en el
+  // celular porque Pointer Events unifica ambos. Se ignora si el arrastre empezó sobre una barra
+  // de tarea (esa ya tiene su propio arrastre para reprogramar fechas) o sobre un control de la
+  // tabla lateral (checkbox, fila clickeable, etc.).
+  const handlePanPointerDown = (event) => {
+    if (event.button !== undefined && event.button !== 0) return; // solo click izquierdo / touch
+    if (event.target.closest('[class*="barWrapper"], input, select, button, a, label')) return;
+    const el = containerRef.current;
+    if (!el) return;
+    panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, scrollLeft: el.scrollLeft, moved: false };
+    el.setPointerCapture?.(event.pointerId);
+  };
+  const handlePanPointerMove = (event) => {
+    const state = panRef.current;
+    const el = containerRef.current;
+    if (!state || !el || state.pointerId !== event.pointerId) return;
+    const dx = event.clientX - state.startX;
+    if (!state.moved && Math.abs(dx) < 4) return;
+    state.moved = true;
+    setPanning(true);
+    event.preventDefault();
+    el.scrollLeft = state.scrollLeft - dx;
+  };
+  const endPan = (event) => {
+    const state = panRef.current;
+    if (state && event) containerRef.current?.releasePointerCapture?.(event.pointerId);
+    panRef.current = null;
+    setPanning(false);
+  };
   // La librería instancia TaskListTable con un set fijo de props (no admite props extra propias),
   // así que para poder abrir el modal de edición al hacer click en una fila envolvemos el
   // componente una sola vez (useMemo con deps vacías) y le inyectamos el handler por clausura.
@@ -308,7 +389,15 @@ export default function GanttChart({ projectId, projectName, toast }) {
 
       {error && <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
 
-      <div ref={containerRef} className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <div
+        ref={containerRef}
+        className={`overflow-x-auto rounded-xl border border-slate-200 bg-white ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}
+        style={{ touchAction: "pan-y" }}
+        onPointerDown={handlePanPointerDown}
+        onPointerMove={handlePanPointerMove}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+      >
         {loading ? (
           <div className="grid h-64 place-items-center text-sm text-slate-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
         ) : ganttTasks.length === 0 ? (

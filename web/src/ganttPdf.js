@@ -9,6 +9,21 @@
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo";
 
+// Trunca de verdad con "…" hasta que entra en el ancho disponible — a diferencia de
+// splitTextToSize(...)[0], que envuelve por palabra y puede devolver una primera línea que
+// TODAVÍA excede el ancho (nombres largos sin espacios donde cortar). Cuando eso pasaba, el
+// texto de la columna siguiente se dibujaba encima y los glifos superpuestos se veían como
+// caracteres corruptos.
+function truncateToWidth(doc, text, maxWidth) {
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  let lo = 0, hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (doc.getTextWidth(text.slice(0, mid) + "…") <= maxWidth) lo = mid; else hi = mid - 1;
+  }
+  return lo > 0 ? text.slice(0, lo) + "…" : "…";
+}
+
 const PAGE_W = 297, PAGE_H = 210; // A4 apaisado
 const MARGIN = 10;
 const ROW_H = 6.2;
@@ -165,6 +180,15 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
       else if (localIndex % 2 === 1) { doc.setFillColor(250, 250, 251); doc.rect(MARGIN, y, PAGE_W - MARGIN * 2, ROW_H, "F"); }
     });
 
+    // Fin de semana sombreado, por encima de las bandas de fila pero por debajo de las barras:
+    // ayuda a ubicarse en el tiempo sin agregar más líneas ni color. Solo con detalle diario.
+    if (scale.unit === "day") {
+      doc.setFillColor(237, 241, 246);
+      for (let d = new Date(min); d <= max; d = addDays(d, 1)) {
+        if (d.getDay() === 0 || d.getDay() === 6) doc.rect(xForDate(d), CHART_TOP, dayW, pageTasks.length * ROW_H, "F");
+      }
+    }
+
     pageTasks.forEach((task, localIndex) => {
       const globalIndex = page * rowsPerPage + localIndex;
       const y = rowY(globalIndex);
@@ -173,10 +197,10 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
       // --- columnas de texto ---
       doc.setFont("helvetica", task.isSummary ? "bold" : "normal");
       doc.setFontSize(6.6); doc.setTextColor(51, 65, 85);
-      doc.text(wbsById.get(task.id) || "", MARGIN + 1, y + ROW_H - 1.7);
+      doc.text(truncateToWidth(doc, wbsById.get(task.id) || "", COL.id - 2), MARGIN + 1, y + ROW_H - 1.7);
       const nameX = MARGIN + COL.id + 1 + depth * INDENT_PER_LEVEL;
-      const nameLine = doc.splitTextToSize(task.name, COL.id + COL.name - 2 - depth * INDENT_PER_LEVEL)[0];
-      doc.text(nameLine, nameX, y + ROW_H - 1.7);
+      const nameMaxWidth = COL.name - 1 - depth * INDENT_PER_LEVEL - 2; // deja 2mm de aire antes de "Duración"
+      doc.text(truncateToWidth(doc, task.name, nameMaxWidth), nameX, y + ROW_H - 1.7);
       doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139);
       doc.text(`${task.durationDays ?? Math.max(1, daysBetween(task.start, task.end) + 1)} d`, MARGIN + COL.id + COL.name + 1, y + ROW_H - 1.7);
       doc.text(shortDate(task.start), MARGIN + COL.id + COL.name + COL.duration + 1, y + ROW_H - 1.7);
@@ -218,8 +242,11 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
     });
 
     // Dependencias: conector en escuadra (fin de la predecesora → inicio de la sucesora).
-    doc.setDrawColor(180, 190, 202);
-    doc.setLineWidth(0.15);
+    // Punteado y muy claro a propósito: con muchas dependencias este trazo puede volverse un
+    // enredo visual que compite con las barras; que quede en segundo plano, no protagonista.
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.1);
+    doc.setLineDashPattern([0.6, 0.5], 0);
     pageTasks.forEach((task, localIndex) => {
       const globalIndex = page * rowsPerPage + localIndex;
       (task.predecessors || []).forEach((dep) => {
@@ -237,6 +264,7 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
         doc.line(midX, y, x1, y);
       });
     });
+    doc.setLineDashPattern([], 0); // vuelve a trazo sólido antes de la próxima página (encabezado, grillas)
   }
 
   doc.save(fileName || `Gantt_${projectName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);

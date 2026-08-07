@@ -98,7 +98,7 @@ export function registerGanttRoutes(app, pool, { auth, requireRole }) {
     const patch = req.body || {};
     if (patch.start && patch.end && new Date(patch.end) < new Date(patch.start)) return res.status(400).json({ error: "La fecha de fin no puede ser anterior a la de inicio" });
     if (patch.parentId === req.params.id) return res.status(400).json({ error: "Una tarea no puede ser su propia tarea padre" });
-    const allowed = ["start", "end", "percentComplete", "name", "milestone", "isSummary", "parentId", "predecessors", "durationDays"];
+    const allowed = ["start", "end", "percentComplete", "name", "milestone", "isSummary", "parentId", "predecessors", "durationDays", "linkedTaskId"];
     const merged = { ...current.data };
     for (const key of allowed) if (key in patch) merged[key] = patch[key];
     if (patch.start || patch.end) merged.durationDays = Math.max(1, Math.round((new Date(merged.end) - new Date(merged.start)) / 86400000) + 1);

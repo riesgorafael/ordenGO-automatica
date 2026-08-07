@@ -664,6 +664,24 @@ export default function App() {
     const copy = { ...rest, project: targetProjectId, id: nextTaskId(targetProjectId), status: "Por hacer" };
     try { const saved = await api.saveTask(copy); setTasks((p) => [saved, ...p]); toast(`Tarea duplicada en ${projects.find((p) => p.id === targetProjectId)?.key || "el proyecto"}`, "success"); } catch (e) { err(e); }
   };
+  // Convierte una tarea del diagrama de Gantt en una tarea real de proyecto (tablero Kanban).
+  // Queda con vencimiento = fin planificado en el Gantt, y con "ganttTaskId" para trazabilidad;
+  // GanttChart.jsx marca la tarea de origen como convertida (linkedTaskId) para no duplicarla.
+  const convertGanttTaskToProjectTask = async (ganttTask, { assignee, priority }) => {
+    const draft = {
+      id: nextTaskId(ganttTask.projectId),
+      project: ganttTask.projectId,
+      title: ganttTask.name,
+      desc: `Generada desde el Gantt · ${ganttTask.durationDays ? `${ganttTask.durationDays} día(s) · ` : ""}${ganttTask.start} → ${ganttTask.end}`,
+      assignee, priority, status: "Por hacer", type: "Tarea",
+      due: ganttTask.end,
+      ganttTaskId: ganttTask.id,
+      createdAt: todayStr(),
+    };
+    const saved = await api.saveTask(draft);
+    setTasks((p) => [saved, ...p]);
+    return saved;
+  };
   const setTaskStatus = async (id, status) => {
     const t = tasks.find((x) => x.id === id); if (!t || t.status === status) return;
     if (!online) { queueOfflineOperation("task:update", { id, patch: { status } }); setOfflineCount(offlineQueueSize()); setTasks((p) => p.map((x) => x.id === id ? { ...x, status, _offline: true } : x)); return; }
@@ -1075,7 +1093,7 @@ export default function App() {
               const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} whiteboardNotes={whiteboardNotes} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
-              if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} toast={toast} />;
+              if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
               if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
               if (isMgr) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} />;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
