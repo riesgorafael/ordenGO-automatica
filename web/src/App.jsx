@@ -1660,7 +1660,10 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
   const pendingTotal = pending.reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
   const receivedTotal = purchaseOrders.filter((po) => po.stage === "Recibida").reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
   const payableCount = finances.filter((f) => f.sourcePurchaseOrderId && f.paymentStatus === "pending").length;
-  const unpaidPOs = purchaseOrders.filter((po) => finances.some((f) => f.sourcePurchaseOrderId === po.id && f.paymentStatus === "pending"));
+  // "Sin pagar" no depende de haber llegado a Recibida (recién ahí se genera la cuenta por pagar
+  // formal en Finanzas): cualquier OC activa que todavía no tenga el pago confirmado cuenta como
+  // pendiente, para poder anticiparse desde que se confirma la compra, no solo al recibirla.
+  const unpaidPOs = purchaseOrders.filter((po) => { if (po.stage === "Cancelada") return false; const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); return !payable || payable.paymentStatus === "pending"; });
   const unpaidTotal = unpaidPOs.reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
   const visible = purchaseOrders.filter((po) => { const stageMatches = stage === "Todos" || po.stage === stage; return stageMatches && (!query || `${po.number || po.id} ${po.supplierName} ${po.supplierInvoiceNumber || ""}`.toLowerCase().includes(query.toLowerCase())); });
   return <div className="space-y-4">
@@ -1673,8 +1676,8 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
     {poTab === "suppliers" ? <Suppliers suppliers={suppliers} purchaseOrders={purchaseOrders} onAdd={onAddSupplier} onPatch={onPatchSupplier} onRemove={onRemoveSupplier} onErr={onErr} /> : <>
       {unpaidPOs.length > 0 && (
         <div className="flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
-          <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{unpaidPOs.length} orden(es) de compra recibidas sin pagar · {money(unpaidTotal)}</span>
-          <button onClick={() => { setStage("Recibida"); setQuery(""); }} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver pendientes de pago</button>
+          <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{unpaidPOs.length} orden(es) de compra sin pagar · {money(unpaidTotal)}</span>
+          <button onClick={() => { setStage("Todos"); setQuery(""); }} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver pendientes de pago</button>
         </div>
       )}
       <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Pendiente de recibir" value={money(pendingTotal)} icon={Truck} tint="text-brand-600" description="Suma del total con IVA de las órdenes de compra en Borrador, Enviada o Confirmada." /><Metric label="Recibido (histórico)" value={money(receivedTotal)} icon={CheckCircle2} tint="text-emerald-600" description="Suma del total con IVA de las órdenes marcadas como Recibidas." /><Metric label="Cuentas por pagar de OC" value={payableCount} icon={AlertTriangle} tint={payableCount ? "text-amber-600" : "text-emerald-600"} description="Movimientos de Finanzas generados por órdenes de compra recibidas que siguen pendientes de pago." /><Metric label="Proveedores activos" value={suppliers.filter((s) => s.active !== false).length} icon={Building2} tint="text-slate-600" description="Cantidad de proveedores marcados como activos." /></div>
@@ -2040,7 +2043,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
   const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
   // La gerencia necesita anticiparse a las tareas vencidas de todo el equipo, no solo a las propias.
   const teamOverdue = ger ? tasks.filter((t) => isOverdue(t) && t.assignee !== me.id) : [];
-  const unpaidPOs = ger ? purchaseOrders.filter((po) => finances.some((f) => f.sourcePurchaseOrderId === po.id && f.paymentStatus === "pending")) : [];
+  // Cuenta cualquier OC activa sin pago confirmado, no solo las que ya llegaron a "Recibida"
+  // (recién ahí existe una cuenta por pagar formal en Finanzas) — así avisa desde que se confirma la compra.
+  const unpaidPOs = ger ? purchaseOrders.filter((po) => { if (po.stage === "Cancelada") return false; const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); return !payable || payable.paymentStatus === "pending"; }) : [];
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold text-slate-900">Hola, {me.name.split(" ")[0]}</h2><p className="text-sm text-slate-500">Esto es lo que tienes pendiente hoy.</p></div>
@@ -2073,7 +2078,7 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], userById
       )}
       {ger && unpaidPOs.length > 0 && (
         <div className="motion-banner flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
-          <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{unpaidPOs.length === 1 ? "Hay una orden de compra recibida sin pagar" : `Hay ${unpaidPOs.length} órdenes de compra recibidas sin pagar`}: {unpaidPOs.slice(0, 4).map((po) => po.number || po.id).join(", ")}{unpaidPOs.length > 4 ? "…" : ""}.</span>
+          <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{unpaidPOs.length === 1 ? "Hay una orden de compra sin pagar" : `Hay ${unpaidPOs.length} órdenes de compra sin pagar`}: {unpaidPOs.slice(0, 4).map((po) => po.number || po.id).join(", ")}{unpaidPOs.length > 4 ? "…" : ""}.</span>
           {onGoToPurchaseOrders && <button onClick={onGoToPurchaseOrders} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver en Compras</button>}
         </div>
       )}
