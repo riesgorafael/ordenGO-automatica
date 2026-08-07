@@ -3457,15 +3457,41 @@ function WhiteboardShareDialog({ note, users, me, onClose, onSave }) {
 function WhiteboardViewDialog({ note, projects, onClose }) {
   const project = projects.find((p) => p.id === note.projectId);
   const mouseDownOnBackdrop = useRef(false);
+  const [zoomed, setZoomed] = useState(false);
   useDialogOpenClass();
+  const isDrawing = note.type === "drawing";
+  const downloadImage = () => {
+    const a = document.createElement("a");
+    a.href = note.imageDataUrl;
+    a.download = `${(note.title || "dibujo").trim().replace(/[^\w\-]+/g, "_") || "dibujo"}.png`;
+    a.click();
+  };
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
-      <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{note.title || "Sin título"}</h2><p className="text-xs text-slate-500">Compartida por {note.createdByName}{project ? ` · ${project.key}` : ""}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-        {note.type === "drawing"
-          ? <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="w-full rounded-lg border border-slate-200" />
+      <div className={`mobile-dialog mobile-sheet-content w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl ${isDrawing ? "max-w-4xl" : "max-w-lg"}`} onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{note.title || "Sin título"}</h2><p className="text-xs text-slate-500">Compartida por {note.createdByName}{project ? ` · ${project.key}` : ""}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        {isDrawing
+          ? (<>
+              <button type="button" onClick={() => setZoomed(true)} title="Ampliar dibujo" aria-label="Ampliar dibujo" className="group relative block w-full cursor-zoom-in overflow-hidden rounded-lg border border-slate-200">
+                <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="w-full" />
+                <span className="absolute inset-0 hidden items-center justify-center bg-slate-900/0 transition group-hover:flex group-hover:bg-slate-900/10">
+                  <span className="grid h-10 w-10 place-items-center rounded-full bg-white/90 text-slate-700 shadow"><Maximize2 className="h-5 w-5" /></span>
+                </span>
+              </button>
+              <div className="mt-3 flex justify-end gap-2">
+                <button onClick={downloadImage} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Descargar</button>
+                <button onClick={() => setZoomed(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Maximize2 className="h-4 w-4" /> Ampliar</button>
+              </div>
+            </>)
           : <p className="whitespace-pre-wrap rounded-lg p-3 text-sm text-slate-700" style={{ background: note.color || WHITEBOARD_NOTE_COLORS[0] }}>{note.content || "Sin contenido"}</p>}
       </div>
+      {zoomed && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4" onClick={() => setZoomed(false)}>
+          <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="max-h-[95vh] max-w-[95vw] rounded-lg object-contain" onClick={(e) => e.stopPropagation()} />
+          <button onClick={() => setZoomed(false)} aria-label="Cerrar vista ampliada" className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-white/20 text-white hover:bg-white/30"><X className="h-5 w-5" /></button>
+          <button onClick={downloadImage} className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-lg bg-white/20 px-3 py-2 text-sm font-medium text-white hover:bg-white/30"><Download className="h-4 w-4" /> Descargar</button>
+        </div>
+      )}
     </div>
   );
 }
