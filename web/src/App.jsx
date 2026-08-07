@@ -1003,7 +1003,7 @@ export default function App() {
         </div>
       </main>
 
-      {oDetail && <OrderDetail ger={isMgr} users={users} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
+      {oDetail && <OrderDetail ger={isMgr} users={users} projects={projects} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
       {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
@@ -2207,7 +2207,7 @@ function MonthlyReport({ orders }) {
 }
 
 /* ===================================== ÓRDENES: DETALLE ===================================== */
-function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, onContinue, onEdit, me }) {
+function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, onContinue, onEdit, me }) {
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const assignedTechs = order.assignedTechs?.length ? order.assignedTechs : (order.tech ? [order.tech] : []);
@@ -2247,9 +2247,10 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
   const downloadReport = (audience) => {
     const errors = timelineErrors(order.technical, order.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : Date.now());
     if (errors.length) { alert(`No se puede generar un reporte con una cronología inconsistente:\n\n${errors.join("\n")}`); return; }
-    if (audience === "internal") internalOrderReportPDF(order);
-    else if (audience === "valued") valuedClientReportPDF(order);
-    else clientOrderReportPDF(order);
+    const project = projects.find((item) => item.id === order.projectId) || null;
+    if (audience === "internal") internalOrderReportPDF(order, project);
+    else if (audience === "valued") valuedClientReportPDF(order, project);
+    else clientOrderReportPDF(order, project);
   };
   const [zoom, setZoom] = useState(null);
   const mouseDownOnBackdrop = useRef(false);
@@ -2279,22 +2280,43 @@ function OrderDetail({ ger, order, users = [], onClose, onUpdate, onAdvance, onE
           {order.technicianSignatureUrl ? (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del técnico responsable</h4><img src={order.technicianSignatureUrl} alt="Firma del técnico" className="h-20 rounded-lg border border-slate-200 bg-white" /><div className="mt-1 text-xs text-slate-500">Firmó: {order.technicianSignedBy || order.tech}{order.technicianSignedAt ? ` · ${new Date(order.technicianSignedAt).toLocaleString("es-AR")}` : ""}</div></section>) : closureReady && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del técnico responsable</h4><SignaturePad key={`technician-${order.id}`} onChange={setTechnicianSig} /><div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Técnico: <b>{order.tech || me?.name || "—"}</b></div><button disabled={!technicianSig} onClick={() => onUpdate(order.id, { technicianSignatureUrl: technicianSig, technicianSignedAt: new Date().toISOString(), technicianSignedBy: order.tech || me?.name || "Técnico responsable" })} className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">Guardar firma técnica</button></section>)}
           {order.signatureUrl && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Conformidad del cliente</h4>{order.signatureUrl !== "signed" ? <img src={order.signatureUrl} alt="firma" className="h-20 rounded-lg border border-slate-200 bg-white" /> : <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">Firmada</div>}{order.signedBy && <div className="mt-1 text-xs text-slate-500">Firmó: {order.signedBy} · {order.technical?.signerCompany || order.client}</div>}</section>)}
           {!order.signatureUrl && closureReady && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Firma del cliente</h4><SignaturePad key={order.id} onChange={setSig} /><input value={sigBy} onChange={(e) => setSigBy(e.target.value)} placeholder="Nombre de quien firma" className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /><select value={sigRoleChoice} onChange={(e) => { setSigRoleChoice(e.target.value); setSigRole(e.target.value === "Otro" ? "" : e.target.value); }} className="u-input mt-2"><option value="">Cargo / área</option>{SIGNER_ROLES.map((role) => <option key={role}>{role}</option>)}<option>Otro</option></select>{sigRoleChoice === "Otro" && <input value={sigRole} onChange={(e) => setSigRole(e.target.value)} placeholder="Especificar cargo / área" className="u-input mt-2" />}<div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Empresa: <b>{order.client}</b></div><button disabled={!sig} onClick={() => onUpdate(order.id, { signatureUrl: sig, signedAt: new Date().toISOString(), signedBy: sigBy, technical: { ...(order.technical || {}), signerRole: sigRole, signerCompany: order.client } })} className="mt-2 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Guardar firma</button></section>)}
-          <section className="flex flex-wrap gap-2 pt-1">
-            {onEdit && <button onClick={() => onEdit(order)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Pencil className="h-4 w-4" /> Editar orden</button>}
-            {isSuspended ? <button onClick={resume} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"><Play className="h-4 w-4" /> Reanudar orden</button> : canSuspend && <button onClick={() => setSuspendOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"><AlertTriangle className="h-4 w-4" /> Suspender orden</button>}
-            {canReopen && <button onClick={() => setReopenOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100"><RefreshCw className="h-4 w-4" /> Reabrir orden</button>}
-            {canAdvance && <button disabled={needSign || needTechnicianSign} onClick={() => onAdvance(order.id, next)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Marcar {next}</button>}
-            {needTechnicianSign && <span className="self-center text-xs font-medium text-amber-600">Guarda la firma técnica para completar.</span>}
-            {needSign && <button onClick={() => setNoSignOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
-            {next === "Aprobada" && !ger && <span className="self-center text-xs text-slate-400">La aprobación corresponde a Gerencia.</span>}
-            {next === "Facturada" && !ger && <span className="self-center text-xs text-slate-400">La facturación la realiza Gerencia.</span>}
-            {reportReady && <button title="Documento técnico para entregar al cliente, sin costos internos ni cronología administrativa." onClick={() => downloadReport("client")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Reporte para cliente</button>}
-            {ger && reportReady && <button title="Constancia para el cliente que incorpora los importes facturables, sin revelar costos internos ni margen." onClick={() => downloadReport("valued")} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"><DollarSign className="h-4 w-4" /> Constancia valorizada</button>}
-            {ger && reportReady && <button title="Informe administrativo completo con cronología, costos internos, márgenes y datos de gestión." onClick={() => downloadReport("internal")} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><FileText className="h-4 w-4" /> Informe interno</button>}
-            {ger && onExport && <button onClick={() => onExport(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Exportar</button>}
-            {ger && onDuplicate && <button onClick={() => onDuplicate(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
-            {ger && onCreateTask && <button onClick={() => onCreateTask(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Link2 className="h-4 w-4" /> Crear tarea</button>}
-            {ger && onDelete && <button onClick={() => onDelete(order.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Eliminar</button>}
+          <section className="space-y-3 pt-1">
+            {/* Flujo de la orden: qué hacer con ella ahora mismo */}
+            <div className="flex flex-wrap items-center gap-2">
+              {onEdit && <button onClick={() => onEdit(order)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Pencil className="h-4 w-4" /> Editar orden</button>}
+              {canAdvance && <button disabled={needSign || needTechnicianSign} onClick={() => onAdvance(order.id, next)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Marcar {next}</button>}
+              {needSign && <button onClick={() => setNoSignOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Aprobar sin firma</button>}
+              {isSuspended ? <button onClick={resume} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"><Play className="h-4 w-4" /> Reanudar orden</button> : canSuspend && <button onClick={() => setSuspendOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"><AlertTriangle className="h-4 w-4" /> Suspender orden</button>}
+              {canReopen && <button onClick={() => setReopenOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100"><RefreshCw className="h-4 w-4" /> Reabrir orden</button>}
+              {needTechnicianSign && <span className="self-center text-xs font-medium text-amber-600">Guarda la firma técnica para completar.</span>}
+              {next === "Aprobada" && !ger && <span className="self-center text-xs text-slate-400">La aprobación corresponde a Gerencia.</span>}
+              {next === "Facturada" && !ger && <span className="self-center text-xs text-slate-400">La facturación la realiza Gerencia.</span>}
+            </div>
+
+            {/* Reportes y documentos descargables */}
+            {reportReady && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                <button title="Documento técnico para entregar al cliente, sin costos internos ni cronología administrativa." onClick={() => downloadReport("client")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Reporte para cliente</button>
+                {ger && <button title="Constancia para el cliente que incorpora los importes facturables, sin revelar costos internos ni margen." onClick={() => downloadReport("valued")} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"><DollarSign className="h-4 w-4" /> Constancia valorizada</button>}
+                {ger && <button title="Informe administrativo completo con cronología, costos internos, márgenes y datos de gestión." onClick={() => downloadReport("internal")} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><FileText className="h-4 w-4" /> Informe interno</button>}
+              </div>
+            )}
+
+            {/* Utilidades: exportar, duplicar, vincular con proyectos */}
+            {ger && (onExport || onDuplicate || onCreateTask) && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                {onExport && <button onClick={() => onExport(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> Exportar</button>}
+                {onDuplicate && <button onClick={() => onDuplicate(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
+                {onCreateTask && <button onClick={() => onCreateTask(order)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Link2 className="h-4 w-4" /> Crear tarea</button>}
+              </div>
+            )}
+
+            {/* Zona de riesgo: separada del resto para no confundirla con una acción cualquiera */}
+            {ger && onDelete && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-rose-100 pt-3">
+                <button onClick={() => onDelete(order.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Eliminar orden</button>
+              </div>
+            )}
           </section>
           {onComment && <section className="border-t border-slate-100 pt-4"><ActivitySection entity={order} onSend={(text) => onComment(order.id, text)} /></section>}
         </div>
