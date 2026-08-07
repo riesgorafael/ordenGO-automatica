@@ -1950,6 +1950,8 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
   const overdue = myTasks.filter(isOverdue).length;
   const dueSoon = myTasks.filter((t) => !isOverdue(t) && isDueSoon(t));
   const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
+  // La gerencia necesita anticiparse a las tareas vencidas de todo el equipo, no solo a las propias.
+  const teamOverdue = ger ? tasks.filter((t) => isOverdue(t) && t.assignee !== me.id) : [];
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold text-slate-900">Hola, {me.name.split(" ")[0]}</h2><p className="text-sm text-slate-500">Esto es lo que tienes pendiente hoy.</p></div>
@@ -1968,7 +1970,17 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
         <Metric label="Por vencer (2 días)" value={dueSoon.length} icon={Clock} tint="text-amber-600" />
         <Metric label="Mis órdenes activas" value={myOrders.length} icon={ClipboardList} tint="text-emerald-600" />
         {ger && <Metric label="Por facturar" value={pend.length} icon={FileText} tint="text-amber-600" />}
+        {ger && <Metric label="Vencidas del equipo" value={teamOverdue.length} icon={AlertTriangle} tint="text-rose-600" />}
       </div>
+      {ger && teamOverdue.length > 0 && (
+        <div className="motion-banner flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <b className="block">{teamOverdue.length === 1 ? "Hay una tarea vencida del equipo" : `Hay ${teamOverdue.length} tareas vencidas del equipo`}</b>
+            <span className="text-xs text-rose-700">Asignadas a otras personas: {teamOverdue.slice(0, 4).map((t) => `${t.title} (${userById(t.assignee)?.name?.split(" ")[0] || "sin asignar"})`).join(", ")}{teamOverdue.length > 4 ? "…" : ""}.</span>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel title="Mis tareas">
           <div className="space-y-2">
@@ -2000,6 +2012,23 @@ function MiDia({ me, tasks, orders, userById, onOpenTask, onOpenOrder, ger }) {
             ))}
           </div>
         </Panel>
+        {ger && (
+          <Panel title="Vencidas del equipo">
+            <div className="space-y-2">
+              {teamOverdue.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin tareas vencidas fuera de las tuyas</div>}
+              {teamOverdue.slice(0, 8).map((t) => (
+                <button key={t.id} onClick={() => onOpenTask(t)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
+                  <div className="flex items-center gap-2">
+                    <Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip>
+                    <span className="truncate text-sm font-medium text-slate-800">{t.title}</span>
+                    <Chip className="ml-auto bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due}</span>}<span>· {userById(t.assignee)?.name || "Sin asignar"}</span></div>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        )}
       </div>
     </div>
   );
@@ -2080,7 +2109,7 @@ function MonthlyReport({ orders }) {
   const chart = rows.slice(0, 8).map((r) => ({ name: r.client.length > 14 ? r.client.slice(0, 13) + "…" : r.client, value: Math.round(r.total), fill: "#F18700" }));
   const exportCSV = () => {
     const head = ["Cliente", "Órdenes", "Horas-técnico", "Mano de obra (USD)", "Materiales (USD)", "Total (USD)", "Facturado (USD)", "Por facturar (USD)"];
-    const lines = rows.map((r) => [r.client, r.count, r.hours, r.labor.toFixed(2), r.mats.toFixed(2), r.total.toFixed(2), r.facturado.toFixed(2), r.pendiente.toFixed(2)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    const lines = rows.map((r) => [r.client, r.count, round2(r.hours), r.labor.toFixed(2), r.mats.toFixed(2), r.total.toFixed(2), r.facturado.toFixed(2), r.pendiente.toFixed(2)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
     downloadFile(`reporte_${month}.csv`, [head.join(","), ...lines].join("\n"));
   };
   return (
@@ -2110,7 +2139,7 @@ function MonthlyReport({ orders }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <Building2 className="h-4 w-4 text-slate-400" />
                   <span className="text-sm font-semibold text-slate-800">{r.client}</span>
-                  <span className="text-xs text-slate-400">{r.count} orden(es) · {r.hours} h-técnico</span>
+                  <span className="text-xs text-slate-400">{r.count} orden(es) · {round2(r.hours)} h-técnico</span>
                   <span className="ml-auto text-sm font-semibold text-slate-900">{money(r.total)}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">

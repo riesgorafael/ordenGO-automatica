@@ -398,7 +398,7 @@ export function monthlyReportPDF(month, monthLabel, rows, sum) {
     const nm = doc.splitTextToSize(String(r.client), 56);
     doc.text(nm[0] + (nm.length > 1 ? "…" : ""), M, y);
     doc.text(String(r.count), M + 74, y, { align: "right" });
-    doc.text(String(r.hours), M + 92, y, { align: "right" });
+    doc.text(String(Math.round((Number(r.hours) || 0) * 100) / 100), M + 92, y, { align: "right" });
     doc.text(money(r.labor), M + 120, y, { align: "right" });
     doc.text(money(r.mats), M + 150, y, { align: "right" });
     doc.text(money(r.total), M + 180, y, { align: "right" });
