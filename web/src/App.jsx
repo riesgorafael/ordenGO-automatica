@@ -205,6 +205,21 @@ const localMonthKey = (date = new Date()) => localDateKey(date).slice(0, 7);
 const todayStr = () => localDateKey();
 const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const addCalendarDays = (date, days) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
+// Días laborables entre dos fechas (inclusive): lunes a viernes cuentan como día completo,
+// sábado cuenta medio día (solo mediodía) y domingo no cuenta.
+const businessDaysBetween = (startStr, endStr) => {
+  if (!startStr || !endStr) return 0;
+  const start = new Date(`${startStr}T00:00:00`);
+  const end = new Date(`${endStr}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
+  let total = 0;
+  for (let cursor = new Date(start); cursor <= end; cursor = addCalendarDays(cursor, 1)) {
+    const day = cursor.getDay(); // 0 domingo, 6 sábado
+    if (day === 0) continue;
+    total += day === 6 ? 0.5 : 1;
+  }
+  return total;
+};
 const startOfCalendarWeek = (date) => addCalendarDays(date, -((date.getDay() + 6) % 7));
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
 // Vence en los próximos N días (por defecto 2), sin contar las que ya están vencidas.
@@ -940,7 +955,7 @@ export default function App() {
                 </button>
               )}
               {activeProjectView !== "reports" && (<>
-                <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <div className="relative w-full min-w-0 sm:min-w-[200px] sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input value={pQ} onChange={(e) => setPQ(e.target.value)} placeholder="Buscar tarea…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
                 {!isMonitor && (isMgr || activeProjectView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
                 {activeProjectView === "board" && <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>}
@@ -1380,6 +1395,11 @@ function BudgetEditor({ budget, clients, parts, me, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const setItem = (index, patch) => setForm((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) }));
+  useEffect(() => {
+    if (!form.plannedStart || !form.plannedEnd) return;
+    const computed = businessDaysBetween(form.plannedStart, form.plannedEnd);
+    if (computed !== form.durationDays) set("durationDays", computed);
+  }, [form.plannedStart, form.plannedEnd]);
   const saleRate = (costValue, marginValue = form.targetMargin) => { const costRate = Number(costValue) || 0; const target = Math.min(100, Math.max(0, Number(marginValue) || 0)); return Math.round((target >= 100 ? costRate : costRate / (1 - target / 100)) * 100) / 100; };
   const changeLaborRole = (index, roleName) => { const role = LABOR_ROLES.find((item) => item.name === roleName); if (role) setItem(index, { description: role.name, unit: "h", unitCost: role.cost, unitPrice: saleRate(role.cost) }); };
   const changeItemType = (index, type) => { if (LABOR_TYPES.includes(type)) { const role = LABOR_ROLES.find((item) => item.name === DEFAULT_ROLE_BY_TYPE[type]) || LABOR_ROLES[0]; setItem(index, { type, description: role.name, unit: "h", unitCost: role.cost, unitPrice: saleRate(role.cost) }); } else setItem(index, { type }); };
@@ -3272,6 +3292,9 @@ const WHITEBOARD_COLORS = ["#111827", "#DC2626", "#2563EB", "#16A34A", "#F18700"
 const WHITEBOARD_WIDTHS = [{ label: "Fino", value: 4 }, { label: "Medio", value: 10 }, { label: "Grueso", value: 20 }];
 const WHITEBOARD_ERASER_WIDTH = 44;
 const WHITEBOARD_MAX_HISTORY = 30;
+// Resolución máxima del lienzo (px del lado más largo) al incorporar una imagen cargada o pegada,
+// para que fotos y capturas de alta resolución no se guarden pixeladas dentro de una caja de edición chica.
+const WHITEBOARD_MAX_CANVAS_DIM = 2400;
 const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5E7EB"];
 
 /* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
@@ -3487,26 +3510,41 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const sizeCanvas = (preserveExisting) => {
+  const scaleRef = useRef(typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
+  const sizeCanvas = (preserveExisting, forcedScale) => {
     const canvas = canvasRef.current;
     const wrap = canvasWrapRef.current;
     if (!canvas || !wrap) return;
     const { clientWidth, clientHeight } = wrap;
     if (!clientWidth || !clientHeight) return;
-    const ratio = window.devicePixelRatio || 1;
+    const desired = forcedScale || scaleRef.current || (window.devicePixelRatio || 1);
+    // Se limita el total de píxeles del lienzo (no solo la relación con el CSS) para no generar
+    // bitmaps gigantes en pantalla completa después de haber cargado una foto de alta resolución.
+    const scale = Math.max(1, Math.min(desired, WHITEBOARD_MAX_CANVAS_DIM / clientWidth, WHITEBOARD_MAX_CANVAS_DIM / clientHeight));
+    scaleRef.current = scale;
     let snapshot = null;
     if (preserveExisting && canvas.width > 0 && canvas.height > 0) { try { snapshot = canvas.toDataURL(); } catch { snapshot = null; } }
-    canvas.width = Math.round(clientWidth * ratio);
-    canvas.height = Math.round(clientHeight * ratio);
+    canvas.width = Math.round(clientWidth * scale);
+    canvas.height = Math.round(clientHeight * scale);
     canvas.style.width = `${clientWidth}px`;
     canvas.style.height = `${clientHeight}px`;
     const ctx = canvas.getContext("2d");
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, clientWidth, clientHeight);
     if (snapshot) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, clientWidth, clientHeight); img.src = snapshot; }
+  };
+  // Si la imagen a incorporar tiene más resolución nativa que la que ofrece hoy el lienzo,
+  // se sube la escala de trabajo antes de dibujarla para no perder nitidez al guardarla.
+  const ensureResolutionFor = (img) => {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const { clientWidth: w, clientHeight: h } = wrap;
+    if (!w || !h) return;
+    const neededScale = Math.max(img.width / w, img.height / h);
+    if (neededScale > scaleRef.current) { scaleRef.current = neededScale; sizeCanvas(true); }
   };
 
   useEffect(() => {
@@ -3517,6 +3555,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
       img.onload = () => {
         const canvas = canvasRef.current, wrap = canvasWrapRef.current;
         if (!canvas || !wrap) return;
+        ensureResolutionFor(img);
         const ctx = canvas.getContext("2d");
         const { clientWidth: w, clientHeight: h } = wrap;
         const scale = Math.min(w / img.width, h / img.height);
@@ -3577,6 +3616,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     const canvas = canvasRef.current, wrap = canvasWrapRef.current;
     if (!canvas || !wrap) return;
     pushHistory();
+    ensureResolutionFor(img);
     const ctx = canvas.getContext("2d");
     const { clientWidth: w, clientHeight: h } = wrap;
     ctx.fillStyle = "#FFFFFF";
