@@ -1,90 +1,104 @@
-// Importación de cronogramas de MS Project (.mpp / .xml) al Gantt interno de OrdenGO.
+// Importación de cronogramas de MS Project al Gantt interno de OrdenGO.
 //
-// Dependencia: npm i mpxj multer
-//   - mpxj: puerto JS de la librería Java MPXJ. Lee .mpp binario, MS Project XML, .mpx, .planner.
-//   - multer: para recibir el archivo subido por multipart/form-data.
+// IMPORTANTE — cambio de enfoque: la primera versión de este archivo asumía un paquete npm
+// llamado "mpxj" para leer el binario .mpp directamente. Ese paquete no existe en el registro
+// de npm (fue un error mío, no verificado) y rompió el build. Este archivo parsea en cambio el
+// formato **MS Project XML** (Archivo > Guardar como > XML dentro de MS Project), que es un
+// esquema de Microsoft documentado y estable desde Project 2003 — no requiere ninguna librería
+// de terceros dudosa, solo un parser XML genérico y real: xml2js.
 //
-// Nota: la API exacta de métodos de "mpxj" puede variar levemente entre versiones (es un puerto
-// automático del árbol de clases Java). Antes de integrar, confirmar los nombres de método contra
-// los tipos (.d.ts) de la versión instalada — la estructura de este archivo (leer → recorrer tareas
-// → mapear campos → resolver jerarquía/dependencias → guardar) es estable independientemente de eso.
+// El soporte de .mpp binario directo (sin pasar por XML) requeriría la librería Java MPXJ real
+// corriendo como proceso aparte (con un JRE en la imagen Docker) — es un cambio de infraestructura
+// más grande que dejo pendiente hasta que se confirme que hace falta.
 
-import { readProject } from "mpxj";
+import { parseStringPromise } from "xml2js";
 
-/**
- * Convierte un Date de MPXJ (o null) a "YYYY-MM-DD".
- */
-function toDateKey(date) {
-  if (!date) return null;
-  const d = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * Mapea el tipo de relación de predecesora de MS Project (0-3) a nuestro código legible.
- * MS Project: 0=FF, 1=FS, 2=SF, 3=SS (según la enumeración RelationType de MPXJ).
- */
 const RELATION_TYPE_MAP = { 0: "FF", 1: "FS", 2: "SF", 3: "SS" };
 
+// xml2js devuelve todo como arrays de strings (por el modo por defecto); estos helpers
+// leen el primer valor de un campo y lo tipan.
+const first = (node, key) => (node?.[key] ? node[key][0] : undefined);
+const text = (node, key) => { const v = first(node, key); return typeof v === "string" ? v : undefined; };
+const num = (node, key) => { const v = text(node, key); return v !== undefined ? Number(v) : undefined; };
+const bool = (node, key) => text(node, key) === "1" || text(node, key) === "true";
+
 /**
- * Lee un buffer de archivo .mpp/.xml y devuelve una lista plana de tareas normalizadas,
- * en el mismo orden en que aparecen en el archivo (orden de esquema/outline de MS Project).
+ * MS Project XML representa la duración como un ISO 8601 duration (ej. "PT40H0M0S" = 40 horas).
+ * La convertimos a días asumiendo jornadas de 8 horas, que es la convención estándar de Project.
  */
-export async function parseProjectFile(buffer, filename) {
-  const project = await readProject(buffer, { filename }); // mpxj detecta el formato por contenido/extensión
+function durationToDays(iso) {
+  if (!iso) return null;
+  const match = /P(?:(\d+)D)?T?(?:(\d+)H)?/.exec(iso);
+  if (!match) return null;
+  const days = Number(match[1] || 0), hours = Number(match[2] || 0);
+  return Math.round((days + hours / 8) * 10) / 10;
+}
 
-  const rawTasks = project.getTasks().toArray(); // ajustar según la API real: puede ser project.tasks.all()
-  const idByUid = new Map(); // uid de MS Project -> id interno "GT-<proj>-<n>"
-
-  // Primera pasada: generar IDs internos estables y guardar el mapeo.
-  rawTasks.forEach((task, index) => {
-    if (task.getUniqueID() === 0) return; // la tarea 0 es la "raíz" implícita del proyecto, se descarta
-    idByUid.set(task.getUniqueID(), `T${index}`);
-  });
-
-  const tasks = rawTasks
-    .filter((task) => task.getUniqueID() !== 0)
-    .map((task) => {
-      const uid = task.getUniqueID();
-      const parentTask = task.getParentTask();
-      const predecessors = (task.getPredecessors() || []).map((relation) => ({
-        taskId: idByUid.get(relation.getTargetTask().getUniqueID()) || null,
-        type: RELATION_TYPE_MAP[relation.getType()?.getValue?.() ?? relation.getType()] || "FS",
-        lagDays: relation.getLag() ? Math.round(relation.getLag().getDuration()) : 0,
-      })).filter((relation) => relation.taskId);
-
-      return {
-        id: idByUid.get(uid),
-        sourceUid: uid,
-        parentId: parentTask && parentTask.getUniqueID() !== 0 ? idByUid.get(parentTask.getUniqueID()) : null,
-        wbs: task.getWBS() || "",
-        name: (task.getName() || "Tarea sin nombre").trim(),
-        start: toDateKey(task.getStart()),
-        end: toDateKey(task.getFinish()),
-        durationDays: task.getDuration() ? Math.round(task.getDuration().getDuration()) : null,
-        percentComplete: Number(task.getPercentageComplete()) || 0,
-        milestone: !!task.getMilestone(),
-        isSummary: !!task.getSummary(),
-        predecessors,
-      };
-    })
-    // Las tareas resumen (isSummary) no tienen fechas propias fiables en algunos archivos:
-    // se recalculan más abajo a partir de sus hijas para no perder consistencia visual en el Gantt.
-    .filter((task) => task.start && task.end || task.isSummary);
-
-  return recomputeSummaryDates(tasks);
+function toDateKey(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
 /**
- * Las tareas resumen (grupos) deben cubrir el rango de fechas de sus hijas. Si el archivo
- * original no trae fechas confiables para el resumen, las derivamos — evita barras de Gantt
- * "resumen" que no engloban visualmente a sus tareas hijas.
+ * Parsea un buffer de MS Project XML y devuelve una lista plana de tareas normalizadas.
+ */
+export async function parseProjectFile(buffer, filename) {
+  if (!/\.xml$/i.test(filename)) {
+    throw new Error("Por ahora solo se admite el formato XML de MS Project. En MS Project: Archivo > Guardar como > tipo 'XML de Project'.");
+  }
+  const xml = await parseStringPromise(buffer.toString("utf-8"), { explicitArray: true, ignoreAttrs: true });
+  const root = xml.Project;
+  if (!root) throw new Error("El archivo no tiene el formato esperado de XML de MS Project (falta el nodo <Project>).");
+
+  const rawTasks = (root.Tasks?.[0]?.Task || []).filter((task) => text(task, "UID") !== "0");
+  const idByUid = new Map();
+  rawTasks.forEach((task, index) => idByUid.set(text(task, "UID"), `T${index}`));
+
+  const tasks = rawTasks.map((task) => {
+    const uid = text(task, "UID");
+    const outlineLevel = num(task, "OutlineLevel") || 1;
+    const predecessors = (task.PredecessorLink || []).map((link) => ({
+      taskId: idByUid.get(text(link, "PredecessorUID")) || null,
+      type: RELATION_TYPE_MAP[num(link, "Type") ?? 1] || "FS",
+      lagDays: num(link, "LinkLag") ? Math.round(num(link, "LinkLag") / (num(link, "LagFormat") === 7 ? 480 : 1)) : 0,
+    })).filter((relation) => relation.taskId);
+
+    return {
+      id: idByUid.get(uid),
+      sourceUid: uid,
+      outlineLevel,
+      wbs: text(task, "WBS") || "",
+      name: (text(task, "Name") || "Tarea sin nombre").trim(),
+      start: toDateKey(text(task, "Start")),
+      end: toDateKey(text(task, "Finish")),
+      durationDays: durationToDays(text(task, "Duration")),
+      percentComplete: num(task, "PercentComplete") || 0,
+      milestone: bool(task, "Milestone"),
+      isSummary: bool(task, "Summary"),
+      predecessors,
+    };
+  });
+
+  // La jerarquía en MS Project XML es implícita por OutlineLevel (no trae parentId directo):
+  // el padre de una tarea es la tarea anterior en el archivo con OutlineLevel menor.
+  const withParents = tasks.map((task, index) => {
+    if (task.outlineLevel <= 1) return { ...task, parentId: null };
+    for (let i = index - 1; i >= 0; i--) {
+      if (tasks[i].outlineLevel < task.outlineLevel) return { ...task, parentId: tasks[i].id };
+    }
+    return { ...task, parentId: null };
+  });
+
+  return recomputeSummaryDates(withParents.filter((t) => (t.start && t.end) || t.isSummary));
+}
+
+/**
+ * Las tareas resumen deben cubrir el rango de fechas de sus hijas, por si el archivo original
+ * no trae fechas confiables para el resumen.
  */
 function recomputeSummaryDates(tasks) {
-  const byId = new Map(tasks.map((t) => [t.id, t]));
   const childrenOf = (id) => tasks.filter((t) => t.parentId === id);
-
   const resolve = (task) => {
     if (!task.isSummary) return task;
     const children = childrenOf(task.id).map(resolve);
@@ -93,21 +107,17 @@ function recomputeSummaryDates(tasks) {
     const ends = children.map((c) => c.end).filter(Boolean).sort();
     return { ...task, start: task.start || starts[0], end: task.end || ends[ends.length - 1] };
   };
-
   return tasks.map(resolve).filter((t) => t.start && t.end);
 }
 
 /**
  * Inserta (o reemplaza) las tareas de un proyecto en la tabla gantt_tasks.
- * Es idempotente por sourceUid: reimportar el mismo archivo actualiza en vez de duplicar.
+ * Es idempotente por archivo de origen: reimportar el mismo archivo actualiza en vez de duplicar.
  */
 export async function importTasksToProject(pool, projectId, tasks, sourceFilename) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Se borra la importación previa de este mismo origen para que una reimportación
-    // (ej. el cronograma se actualizó en MS Project) refleje exactamente el archivo nuevo,
-    // sin dejar tareas viejas huérfanas si alguna fue eliminada del archivo.
     await client.query(
       "DELETE FROM gantt_tasks WHERE project_id = $1 AND data->>'importedFrom' = $2",
       [projectId, sourceFilename]

@@ -8,10 +8,12 @@ import multer from "multer";
 import { parseProjectFile, importTasksToProject } from "./ganttImport.js";
 
 const upload = multer({
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB: un .mpp con miles de tareas puede pesar varios MB
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB: un XML con miles de tareas puede pesar varios MB
+  // Por ahora solo XML de MS Project (Archivo > Guardar como > XML). El .mpp binario requeriría
+  // la librería Java MPXJ corriendo aparte (con un JRE en la imagen); queda pendiente si hace falta.
   fileFilter: (req, file, cb) => {
-    const ok = /\.(mpp|xml|mpx)$/i.test(file.originalname);
-    cb(ok ? null : new Error("Formato no soportado: solo .mpp, .xml o .mpx"), ok);
+    const ok = /\.xml$/i.test(file.originalname);
+    cb(ok ? null : new Error("Por ahora solo se admite XML de MS Project (.xml)"), ok);
   },
 });
 

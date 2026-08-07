@@ -1,4 +1,6 @@
-// Diagrama de Gantt interactivo para un proyecto, con importación desde MS Project (.mpp/.xml/.mpx).
+// Diagrama de Gantt interactivo para un proyecto, con importación desde MS Project.
+// Por ahora se admite el formato XML de MS Project (Archivo > Guardar como > "XML de Project"),
+// no el binario .mpp directo — ver la nota en server/ganttImport.js.
 //
 // Dependencia adicional: npm i gantt-task-react
 // Esa librería trae su propio CSS: import "gantt-task-react/dist/index.css"; (ya incluido abajo).
@@ -102,9 +104,9 @@ export default function GanttChart({ projectId, projectName, toast }) {
           ))}
         </div>
         <button onClick={() => fileInputRef.current?.click()} disabled={importing} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-          {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Importar de MS Project
+          {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Importar XML de MS Project
         </button>
-        <input ref={fileInputRef} type="file" accept=".mpp,.xml,.mpx" className="hidden" onChange={(e) => handleImport(e.target.files?.[0])} />
+        <input ref={fileInputRef} type="file" accept=".xml" className="hidden" onChange={(e) => handleImport(e.target.files?.[0])} />
         <button onClick={() => exportGanttToPdf(tasks, { projectName })} disabled={!tasks.length} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">
           <Download className="h-4 w-4" /> Exportar PDF
         </button>
@@ -117,7 +119,7 @@ export default function GanttChart({ projectId, projectName, toast }) {
           <div className="grid h-64 place-items-center text-sm text-slate-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
         ) : ganttTasks.length === 0 ? (
           <div className="grid h-64 place-items-center px-4 text-center text-sm text-slate-400">
-            Sin cronograma todavía. Importá un archivo .mpp o .xml de MS Project para empezar.
+            Sin cronograma todavía. Importá un archivo XML de MS Project para empezar (Archivo &gt; Guardar como &gt; "XML de Project" dentro de MS Project).
           </div>
         ) : (
           <Gantt
