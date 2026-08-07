@@ -3807,14 +3807,25 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   const historyRef = useRef([]);
   const redoRef = useRef([]);
   const [historyTick, setHistoryTick] = useState(0);
-  const snapshotCanvas = () => { try { return canvasRef.current?.toDataURL() || null; } catch { return null; } };
-  const restoreSnapshot = (dataUrl) => {
+  // El historial guarda canvases (no dataURL + Image) para que copiar sea 100% síncrono. Antes,
+  // "sacar la foto" con toDataURL() y "pintarla de vuelta" con new Image()/onload eran pasos
+  // asíncronos: si dos redimensiones de ventana (o dos Ctrl+Z) ocurrían casi juntas, la segunda
+  // sacaba la foto ANTES de que la primera terminara de restaurar — capturaba un lienzo recién
+  // vaciado y el dibujo se perdía para siempre. Canvas-a-canvas no tiene ese hueco: no hay "carga".
+  const cloneCanvas = (source) => {
+    if (!source || !source.width || !source.height) return null;
+    const clone = document.createElement("canvas");
+    clone.width = source.width; clone.height = source.height;
+    clone.getContext("2d").drawImage(source, 0, 0);
+    return clone;
+  };
+  const snapshotCanvas = () => { try { return cloneCanvas(canvasRef.current); } catch { return null; } };
+  const restoreSnapshot = (snapshotEl) => {
     const canvas = canvasRef.current, wrap = canvasWrapRef.current;
-    if (!canvas || !wrap || !dataUrl) return;
+    if (!canvas || !wrap || !snapshotEl) return;
     const ctx = canvas.getContext("2d");
-    const img = new Image();
-    img.onload = () => { ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight); ctx.drawImage(img, 0, 0, wrap.clientWidth, wrap.clientHeight); };
-    img.src = dataUrl;
+    ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+    ctx.drawImage(snapshotEl, 0, 0, wrap.clientWidth, wrap.clientHeight);
   };
   const pushHistory = () => {
     const snap = snapshotCanvas();
@@ -3867,8 +3878,9 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     // bitmaps gigantes en pantalla completa después de haber cargado una foto de alta resolución.
     const scale = Math.max(1, Math.min(desired, WHITEBOARD_MAX_CANVAS_DIM / clientWidth, WHITEBOARD_MAX_CANVAS_DIM / clientHeight));
     scaleRef.current = scale;
-    let snapshot = null;
-    if (preserveExisting && canvas.width > 0 && canvas.height > 0) { try { snapshot = canvas.toDataURL(); } catch { snapshot = null; } }
+    // Clonar el canvas (no toDataURL + Image) es síncrono: no hay ventana de tiempo en la que
+    // otra redimensión pueda colarse y fotografiar un lienzo recién vaciado.
+    const snapshot = preserveExisting ? cloneCanvas(canvas) : null;
     canvas.width = Math.round(clientWidth * scale);
     canvas.height = Math.round(clientHeight * scale);
     canvas.style.width = `${clientWidth}px`;
@@ -3879,7 +3891,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     ctx.lineJoin = "round";
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, clientWidth, clientHeight);
-    if (snapshot) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, clientWidth, clientHeight); img.src = snapshot; }
+    if (snapshot) ctx.drawImage(snapshot, 0, 0, clientWidth, clientHeight);
   };
   // Si la imagen a incorporar tiene más resolución nativa que la que ofrece hoy el lienzo,
   // se sube la escala de trabajo antes de dibujarla para no perder nitidez al guardarla.
@@ -3909,11 +3921,15 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
       };
       img.src = note.imageDataUrl;
     }
-    const onResize = () => sizeCanvas(true);
+    // Debounce: arrastrar el borde de la ventana dispara decenas de eventos "resize" por segundo;
+    // ya no puede perder el dibujo (el copiado es síncrono), pero redimensionar en cada uno de
+    // esos eventos es trabajo de sobra — se espera a que la ventana se quede quieta un instante.
+    let resizeTimer = null;
+    const onResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => sizeCanvas(true), 120); };
     const onFullscreenChange = () => { setIsFullscreen(document.fullscreenElement === boardRef.current); sizeCanvas(true); };
     window.addEventListener("resize", onResize);
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => { window.removeEventListener("resize", onResize); document.removeEventListener("fullscreenchange", onFullscreenChange); };
+    return () => { clearTimeout(resizeTimer); window.removeEventListener("resize", onResize); document.removeEventListener("fullscreenchange", onFullscreenChange); };
   }, []);
 
   const pointFromEvent = (event) => {
