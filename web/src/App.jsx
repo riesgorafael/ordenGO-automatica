@@ -41,7 +41,11 @@ const applyBrandingTheme = (branding) => {
   document.title = `${branding.appName || DEFAULT_BRANDING.appName} · ${branding.subtitle || DEFAULT_BRANDING.subtitle}`;
 };
 const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#6366f1"];
-const money = (n) => `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Se pisa en cada render de <App> según branding.hideAdminModules, para que los montos se
+// enmascaren en toda la pantalla (Panel, Órdenes, Mi día, etc.) mientras el módulo Administración
+// esté oculto — sin tener que pasar la bandera como prop a cada componente que usa money().
+let HIDE_COSTS = false;
+const money = (n) => (HIDE_COSTS ? "***" : `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const wholeMoney = (value) => Math.max(0, Math.round(Number(value) || 0));
 // Los diálogos de confirmación viven dentro de cada módulo (no en el estado global de App),
 // así que usamos una clase en <body> para poder ocultar el botón flotante mientras alguno esté abierto,
@@ -355,6 +359,7 @@ export default function App() {
   const [materialLists, setMaterialLists] = useState([]);
   const [whiteboardNotes, setWhiteboardNotes] = useState([]);
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
+  HIDE_COSTS = !!branding.hideAdminModules;
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
   const [oDetail, setODetail] = useState(null);
@@ -4260,7 +4265,7 @@ function SettingsModule({ branding, onSaveBranding }) {
     </div>
     <Box className="overflow-hidden">
       <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-2"><EyeOff className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Ocultar módulos de Administración</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Oculta <b>Presupuestos</b>, <b>Compras</b> y <b>Finanzas</b> de la navegación para todos los usuarios (incluido vos). Útil para mostrar la aplicación a un cliente sin exponer datos comerciales sensibles. Volvé a activarlos cuando quieras recuperar el acceso.</p></div></div>
+        <div className="flex items-start gap-2"><EyeOff className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Ocultar módulos de Administración</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Oculta <b>Presupuestos</b>, <b>Compras</b> y <b>Finanzas</b> de la navegación, y reemplaza por <b>***</b> los montos en USD que se muestran en el resto de la app (Panel, Órdenes, Mi día, etc.) para todos los usuarios (incluido vos). Útil para mostrar la aplicación a un cliente sin exponer datos comerciales sensibles. Volvé a activarlo cuando quieras recuperar el acceso.</p></div></div>
         <button type="button" role="switch" aria-checked={form.hideAdminModules} onClick={() => set("hideAdminModules", !form.hideAdminModules)} className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${form.hideAdminModules ? "bg-brand-500" : "bg-slate-200"}`}><span className={`h-5 w-5 transform rounded-full bg-white shadow transition-transform ${form.hideAdminModules ? "translate-x-6" : "translate-x-1"}`} /></button>
       </div>
     </Box>
