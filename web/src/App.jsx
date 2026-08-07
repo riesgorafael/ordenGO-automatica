@@ -2353,32 +2353,47 @@ function ReasonDialog({ onClose, onConfirm, title = "Aprobar sin firma", descrip
 }
 
 /* ===================================== DICTADO POR VOZ ===================================== */
+const MIC_ERROR_MESSAGES = { "not-allowed": "Permiso de micrófono denegado", "service-not-allowed": "Permiso de micrófono denegado", "no-speech": "No se detectó voz, intentá de nuevo", "audio-capture": "No se encontró un micrófono", "network": "Sin conexión para el dictado" };
 function MicButton({ value, onChange, className = "" }) {
-  const [listening, setListening] = useState(false);
+  const [status, setStatus] = useState("idle"); // idle | listening | error
+  const [errorMsg, setErrorMsg] = useState("");
   const recognitionRef = useRef(null);
+  const errorTimerRef = useRef(null);
   const Recognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
-  useEffect(() => () => recognitionRef.current?.stop?.(), []);
+  useEffect(() => () => { recognitionRef.current?.stop?.(); clearTimeout(errorTimerRef.current); }, []);
   if (!Recognition) return null;
+  const showError = (msg) => {
+    setStatus("error"); setErrorMsg(msg);
+    clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(() => setStatus((current) => (current === "error" ? "idle" : current)), 4000);
+  };
   const toggle = () => {
-    if (listening) { recognitionRef.current?.stop?.(); return; }
-    const recognition = new Recognition();
+    if (status === "listening") { recognitionRef.current?.stop?.(); return; }
+    let recognition;
+    try { recognition = new Recognition(); } catch { showError("El dictado no está disponible en este navegador"); return; }
     recognition.lang = "es-AR";
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
+    recognition.onstart = () => setStatus("listening");
     recognition.onresult = (event) => {
       const text = Array.from(event.results).map((r) => r[0].transcript).join(" ").trim();
       if (text) onChange(value?.trim() ? `${value.trim()} ${text}` : text);
     };
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setStatus((current) => (current === "listening" ? "idle" : current));
+    recognition.onerror = (event) => showError(MIC_ERROR_MESSAGES[event.error] || "No se pudo escuchar, intentá de nuevo");
     recognitionRef.current = recognition;
-    try { recognition.start(); setListening(true); } catch {}
+    try { recognition.start(); } catch { showError("El micrófono ya está en uso"); }
   };
   return (
-    <button type="button" onClick={toggle} title={listening ? "Detener dictado" : "Dictar por voz"} aria-label={listening ? "Detener dictado" : "Dictar por voz"}
-      className={`grid h-10 w-11 shrink-0 place-items-center rounded-lg border ${listening ? "border-rose-300 bg-rose-50 text-rose-600 animate-pulse" : "border-slate-200 text-slate-500 hover:bg-slate-50"} ${className}`}>
-      <Mic className="h-4 w-4" />
-    </button>
+    <span className="relative shrink-0 self-start">
+      <button type="button" onClick={toggle} title={status === "listening" ? "Detener dictado" : "Dictar por voz"} aria-label={status === "listening" ? "Detener dictado" : "Dictar por voz"}
+        className={`relative grid h-10 w-11 place-items-center overflow-hidden rounded-lg border transition-colors ${status === "listening" ? "border-rose-600 bg-rose-500 text-white" : status === "error" ? "border-amber-300 bg-amber-50 text-amber-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"} ${className}`}>
+        {status === "listening" && <span className="absolute inset-0 animate-ping rounded-lg bg-rose-400" />}
+        <Mic className="relative h-4 w-4" />
+      </button>
+      {status === "listening" && <span className="absolute -bottom-5 right-0 z-10 flex items-center gap-1 whitespace-nowrap rounded bg-rose-600 px-1.5 py-0.5 text-[10px] font-medium text-white shadow"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> Escuchando…</span>}
+      {status === "error" && <span className="absolute -bottom-5 right-0 z-10 whitespace-nowrap rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium text-white shadow">{errorMsg}</span>}
+    </span>
   );
 }
 
