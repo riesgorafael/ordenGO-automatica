@@ -68,6 +68,12 @@ button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active
   box-shadow: 0 0 0 3px rgb(241 135 0 / 0.15);
 }
 
+/* Los inputs con `list` (datalist) son de texto libre, no selects: Chrome les
+   dibuja una flecha nativa que sugiere lo contrario, así que la ocultamos. */
+input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
 .mobile-dialog {
   max-height: min(94vh, 94dvh);
   overscroll-behavior: contain;
