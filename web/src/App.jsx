@@ -3776,9 +3776,12 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
             onPointerDown={startDraw} onPointerMove={draw} onPointerUp={endDraw} onPointerLeave={endDraw} onPointerCancel={endDraw}
             className="absolute inset-0 h-full w-full touch-none" />
         </div>
+        {/* El diálogo de confirmación va DENTRO de boardRef: es el elemento que entra en pantalla
+            completa, y la API de Fullscreen solo pinta su propio subárbol — si el diálogo quedara
+            afuera, se montaría pero sería invisible mientras el lienzo está maximizado. */}
+        {confirmClear && <ConfirmDialog title="Borrar todo el dibujo" message="Se va a borrar todo el dibujo actual. Esta acción no se puede deshacer." confirmLabel="Borrar todo" danger onClose={() => setConfirmClear(false)} onConfirm={clearBoard} />}
       </div>
       <div className="grid grid-cols-2 gap-2"><button onClick={onCancel} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving} onClick={handleSave} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar dibujo</button></div>
-      {confirmClear && <ConfirmDialog title="Borrar todo el dibujo" message="Se va a borrar todo el dibujo actual. Esta acción no se puede deshacer." confirmLabel="Borrar todo" danger onClose={() => setConfirmClear(false)} onConfirm={clearBoard} />}
     </div>
   );
 }
