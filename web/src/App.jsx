@@ -2189,10 +2189,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             ))}
           </div>
         </Panel>
-        {ger && (
+        {ger && teamActiveOrders.length > 0 && (
           <Panel title="Órdenes activas del equipo">
             <div className="space-y-2">
-              {teamActiveOrders.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin órdenes activas fuera de las tuyas</div>}
               {teamActiveOrders.slice(0, 8).map((o) => (
                 <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
                   <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
@@ -2202,10 +2201,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             </div>
           </Panel>
         )}
-        {ger && (
+        {ger && teamOverdue.length > 0 && (
           <Panel title="Vencidas del equipo">
             <div className="space-y-2">
-              {teamOverdue.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin tareas vencidas fuera de las tuyas</div>}
               {teamOverdue.slice(0, 8).map((t) => (
                 <button key={t.id} onClick={() => onOpenTask(t)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
                   <div className="flex items-center gap-2">
@@ -2219,10 +2217,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             </div>
           </Panel>
         )}
-        {ger && (
+        {ger && unsignedTeam.length > 0 && (
           <Panel title="Sin firma">
             <div className="space-y-2">
-              {unsignedTeam.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Todas las completadas tienen conformidad del cliente</div>}
               {unsignedTeam.slice(0, 8).map((o) => (
                 <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
                   <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
@@ -2232,10 +2229,9 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             </div>
           </Panel>
         )}
-        {ger && (
+        {ger && budgetFollowUps.length > 0 && (
           <Panel title="Presupuestos a seguir">
             <div className="space-y-2">
-              {budgetFollowUps.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin seguimientos vencidos</div>}
               {budgetFollowUps.slice(0, 8).map((b) => (
                 <button key={b.id} onClick={onGoToBudgets} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
                   <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{b.number || b.id}</span><span className="truncate text-sm text-slate-700">{b.title || b.client}</span></div>
