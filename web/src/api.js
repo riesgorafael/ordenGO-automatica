@@ -93,4 +93,19 @@ export const api = {
   readAllNotifications: () => req("/notifications/read-all", { method: "POST" }),
   commentOrder: (id, text) => req("/orders/" + id + "/comment", { method: "POST", body: JSON.stringify({ text }) }),
   commentTask: (id, text) => req("/tasks/" + id + "/comment", { method: "POST", body: JSON.stringify({ text }) }),
+
+  ganttTasks: (projectId) => req(`/projects/${projectId}/gantt-tasks`),
+  updateGanttTask: (id, patch) => req(`/gantt-tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  // Multipart: no pasa por req() porque el archivo va como FormData, no JSON.
+  importMpp: async (projectId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/projects/${projectId}/import-mpp`, {
+      method: "POST",
+      headers: token ? { Authorization: "Bearer " + token } : {},
+      body: form,
+    });
+    if (!res.ok) { const msg = await res.json().catch(() => ({ error: res.statusText })); throw new Error(msg.error || "Error de servidor"); }
+    return res.json();
+  },
 };
