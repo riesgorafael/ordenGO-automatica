@@ -51,6 +51,7 @@ const DEFAULT_BRANDING = {
   tvModeEnabled: false,
   tvCycleEnabled: false,
   tvCycleSeconds: 30,
+  hideAdminModules: false,
 };
 const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const normalizeBranding = (value = {}) => ({
@@ -65,6 +66,7 @@ const normalizeBranding = (value = {}) => ({
   tvModeEnabled: value.tvModeEnabled === true,
   tvCycleEnabled: value.tvModeEnabled === true && value.tvCycleEnabled === true,
   tvCycleSeconds: Math.min(300, Math.max(10, Math.round(Number(value.tvCycleSeconds) || 30))),
+  hideAdminModules: value.hideAdminModules === true,
 });
 async function loadBranding() {
   const row = (await pool.query("SELECT value FROM app_settings WHERE key='branding_v1'")).rows[0];

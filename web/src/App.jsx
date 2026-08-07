@@ -8,7 +8,7 @@ import {
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
   ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
-  Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare,
+  Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -21,7 +21,7 @@ const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
 const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
-const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "" };
+const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "", hideAdminModules: false };
 const BRAND_THEMES = [
   { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
   { id: "industrial", name: "Industrial", primaryColor: "#2563EB", headerColor: "#172033" },
@@ -895,11 +895,11 @@ export default function App() {
     ...(isMgr ? [{ id: "panel", label: "Panel", icon: TrendingUp }] : []),
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
-    ...(isMgr ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Negocio" }] : []),
+    ...(isMgr && !branding.hideAdminModules ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Administración" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
-    ...(isMgr ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Negocio" }] : []),
+    ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Negocio" }] : []),
-    ...(isMgr ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Negocio" }] : []),
+    ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
     { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Utilidades" }] : []),
@@ -4223,6 +4223,12 @@ function SettingsModule({ branding, onSaveBranding }) {
         <div className="p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold text-white" style={{ background: form.primaryColor }}>Crear registro</button></div></div></div></div>
       </Box>
     </div>
+    <Box className="overflow-hidden">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2"><EyeOff className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Ocultar módulos de Administración</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Oculta <b>Presupuestos</b>, <b>Compras</b> y <b>Finanzas</b> de la navegación para todos los usuarios (incluido vos). Útil para mostrar la aplicación a un cliente sin exponer datos comerciales sensibles. Volvé a activarlos cuando quieras recuperar el acceso.</p></div></div>
+        <button type="button" role="switch" aria-checked={form.hideAdminModules} onClick={() => set("hideAdminModules", !form.hideAdminModules)} className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${form.hideAdminModules ? "bg-brand-500" : "bg-slate-200"}`}><span className={`h-5 w-5 transform rounded-full bg-white shadow transition-transform ${form.hideAdminModules ? "translate-x-6" : "translate-x-1"}`} /></button>
+      </div>
+    </Box>
     <Box className="overflow-hidden">
       <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2"><Maximize2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Pantallas de oficina · TV</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Cada televisor tiene su propia cuenta con rol <b>Monitor de oficina</b> y su propia configuración (nombre de pantalla, modo TV y rotación) — así podés tener varias pantallas en distintas ubicaciones, cada una mostrando lo que corresponda. Configurala desde <b>Equipo</b>, en la cuenta de cada pantalla.</p></div></div><span className="w-fit rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">Sólo administradores</span></div>
     </Box>
