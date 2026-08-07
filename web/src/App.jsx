@@ -8,6 +8,7 @@ import {
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
   ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
+  Undo2, Redo2,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -3152,6 +3153,7 @@ function SupplierEditor({ value, onClose, onSave }) {
 const WHITEBOARD_COLORS = ["#111827", "#DC2626", "#2563EB", "#16A34A", "#F18700", "#FFFFFF"];
 const WHITEBOARD_WIDTHS = [{ label: "Fino", value: 4 }, { label: "Medio", value: 10 }, { label: "Grueso", value: 20 }];
 const WHITEBOARD_ERASER_WIDTH = 44;
+const WHITEBOARD_MAX_HISTORY = 30;
 const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5E7EB"];
 
 /* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
@@ -3318,6 +3320,53 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fileInputRef = useRef(null);
   const initialLoadedRef = useRef(false);
+  const historyRef = useRef([]);
+  const redoRef = useRef([]);
+  const [historyTick, setHistoryTick] = useState(0);
+  const snapshotCanvas = () => { try { return canvasRef.current?.toDataURL() || null; } catch { return null; } };
+  const restoreSnapshot = (dataUrl) => {
+    const canvas = canvasRef.current, wrap = canvasWrapRef.current;
+    if (!canvas || !wrap || !dataUrl) return;
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => { ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight); ctx.drawImage(img, 0, 0, wrap.clientWidth, wrap.clientHeight); };
+    img.src = dataUrl;
+  };
+  const pushHistory = () => {
+    const snap = snapshotCanvas();
+    if (!snap) return;
+    historyRef.current.push(snap);
+    if (historyRef.current.length > WHITEBOARD_MAX_HISTORY) historyRef.current.shift();
+    redoRef.current = [];
+    setHistoryTick((n) => n + 1);
+  };
+  const undo = () => {
+    if (!historyRef.current.length) return;
+    const current = snapshotCanvas();
+    const prev = historyRef.current.pop();
+    if (current) redoRef.current.push(current);
+    restoreSnapshot(prev);
+    setHistoryTick((n) => n + 1);
+  };
+  const redo = () => {
+    if (!redoRef.current.length) return;
+    const current = snapshotCanvas();
+    const next = redoRef.current.pop();
+    if (current) historyRef.current.push(current);
+    restoreSnapshot(next);
+    setHistoryTick((n) => n + 1);
+  };
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "z") { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
+      else if ((event.ctrlKey || event.metaKey) && key === "y") { event.preventDefault(); redo(); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const sizeCanvas = (preserveExisting) => {
     const canvas = canvasRef.current;
@@ -3370,6 +3419,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   };
   const startDraw = (event) => {
     event.preventDefault();
+    pushHistory();
     canvasRef.current?.setPointerCapture?.(event.pointerId);
     drawingRef.current = true;
     lastPointRef.current = pointFromEvent(event);
@@ -3397,6 +3447,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   const clearBoard = () => {
     const canvas = canvasRef.current, wrap = canvasWrapRef.current;
     if (!canvas || !wrap) return;
+    pushHistory();
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
@@ -3411,6 +3462,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
+        pushHistory();
         const ctx = canvas.getContext("2d");
         const { clientWidth: w, clientHeight: h } = wrap;
         ctx.fillStyle = "#FFFFFF";
@@ -3454,6 +3506,13 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
               </button>
             ))}
           </div>
+          <div className="h-9 w-px shrink-0 bg-slate-200" />
+          <button onClick={undo} disabled={!historyRef.current.length} title="Deshacer (Ctrl+Z)" aria-label="Deshacer" className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
+            <Undo2 className="h-5 w-5" />
+          </button>
+          <button onClick={redo} disabled={!redoRef.current.length} title="Rehacer (Ctrl+Shift+Z)" aria-label="Rehacer" className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
+            <Redo2 className="h-5 w-5" />
+          </button>
           <div className="h-9 w-px shrink-0 bg-slate-200" />
           <button onClick={() => setTool("erase")} aria-pressed={tool === "erase"} className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border-2 px-3.5 text-sm font-medium ${tool === "erase" ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-600"}`}>
             <Eraser className="h-5 w-5" /> Borrador
