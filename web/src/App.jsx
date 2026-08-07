@@ -667,12 +667,14 @@ export default function App() {
   // Convierte una tarea del diagrama de Gantt en una tarea real de proyecto (tablero Kanban).
   // Queda con vencimiento = fin planificado en el Gantt, y con "ganttTaskId" para trazabilidad;
   // GanttChart.jsx marca la tarea de origen como convertida (linkedTaskId) para no duplicarla.
-  const convertGanttTaskToProjectTask = async (ganttTask, { assignee, priority }) => {
+  // Si la tarea pertenece a una sección del Gantt (ej. "Comisionamiento"), ese nombre queda en la
+  // descripción para poder ubicar la tarea dentro de la estructura jerárquica del cronograma.
+  const convertGanttTaskToProjectTask = async (ganttTask, { assignee, priority, sectionName }) => {
     const draft = {
       id: nextTaskId(ganttTask.projectId),
       project: ganttTask.projectId,
       title: ganttTask.name,
-      desc: `Generada desde el Gantt · ${ganttTask.durationDays ? `${ganttTask.durationDays} día(s) · ` : ""}${ganttTask.start} → ${ganttTask.end}`,
+      desc: `Generada desde el Gantt${sectionName ? ` · Sección: ${sectionName}` : ""} · ${ganttTask.durationDays ? `${ganttTask.durationDays} día(s) · ` : ""}${ganttTask.start} → ${ganttTask.end}`,
       assignee, priority, status: "Por hacer", type: "Tarea",
       due: ganttTask.end,
       ganttTaskId: ganttTask.id,

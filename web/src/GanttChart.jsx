@@ -262,7 +262,19 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
   const [selectedForConversion, setSelectedForConversion] = useState(() => new Set());
   const [convertOpen, setConvertOpen] = useState(false);
   const [converting, setConverting] = useState(false);
-  const toggleSelectForConversion = (id) => setSelectedForConversion((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  // Al tildar una tarea resumen (ej. "Comisionamiento"), se agrupan automáticamente todas sus
+  // subtareas (recursivo, no solo las hijas directas) para convertirlas juntas de una sola vez.
+  const toggleSelectForConversion = (id) => setSelectedForConversion((current) => {
+    const next = new Set(current);
+    const task = tasks.find((t) => t.id === id);
+    const idsToToggle = task?.isSummary ? [...descendantIds(id, tasks)] : [id];
+    const turningOn = !next.has(id);
+    idsToToggle.forEach((tid) => {
+      const t = tasks.find((x) => x.id === tid);
+      if (t && !t.linkedTaskId) { turningOn ? next.add(tid) : next.delete(tid); }
+    });
+    return next;
+  });
   const fileInputRef = useRef(null);
   const containerRef = useRef(null);
   const panRef = useRef(null); // { pointerId, startX, scrollLeft, moved }
@@ -370,14 +382,17 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
   };
 
   // Convierte las tareas del Gantt seleccionadas en tareas reales del tablero Kanban de Proyectos.
-  // Cada una queda marcada con "linkedTaskId" para no poder convertirla dos veces por error.
+  // Cada una queda marcada con "linkedTaskId" para no poder convertirla dos veces por error. Si la
+  // tarea cuelga de una sección (tarea resumen, ej. "Comisionamiento"), ese nombre viaja como
+  // "sectionName" para que quede en la descripción — trazabilidad de a qué etapa pertenece.
   const handleConvert = async ({ assignee, priority }) => {
     if (!onConvertToTask) return;
     setConverting(true);
     try {
       const selected = tasks.filter((t) => selectedForConversion.has(t.id) && !t.linkedTaskId);
       for (const ganttTask of selected) {
-        const created = await onConvertToTask(ganttTask, { assignee, priority });
+        const sectionName = ganttTask.parentId ? tasks.find((t) => t.id === ganttTask.parentId)?.name : null;
+        const created = await onConvertToTask(ganttTask, { assignee, priority, sectionName });
         await api.updateGanttTask(ganttTask.id, { linkedTaskId: created.id });
         setTasks((current) => current.map((t) => (t.id === ganttTask.id ? { ...t, linkedTaskId: created.id } : t)));
       }
