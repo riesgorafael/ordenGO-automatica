@@ -3486,6 +3486,10 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fileInputRef = useRef(null);
   const initialLoadedRef = useRef(false);
+  // Imagen recién cargada/pegada que todavía no se "fijó" en el lienzo: se puede arrastrar
+  // libremente antes de confirmarla, y recién ahí se dibuja sobre el canvas para poder escribir encima.
+  const [placedImage, setPlacedImage] = useState(null); // { src, x, y, w, h }
+  const dragImageRef = useRef(null);
   const historyRef = useRef([]);
   const redoRef = useRef([]);
   const [historyTick, setHistoryTick] = useState(0);
@@ -3530,10 +3534,12 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
       if ((event.ctrlKey || event.metaKey) && key === "z") { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
       else if ((event.ctrlKey || event.metaKey) && key === "y") { event.preventDefault(); redo(); }
       else if ((event.ctrlKey || event.metaKey) && key === "c") { event.preventDefault(); copyCanvas(); }
+      else if (placedImage && key === "escape") { event.preventDefault(); cancelPlacedImage(); }
+      else if (placedImage && key === "enter") { event.preventDefault(); confirmPlacedImage(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [placedImage]);
 
   const scaleRef = useRef(typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
   const sizeCanvas = (preserveExisting, forcedScale) => {
@@ -3601,6 +3607,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   };
   const startDraw = (event) => {
+    if (placedImage) return;
     event.preventDefault();
     pushHistory();
     canvasRef.current?.setPointerCapture?.(event.pointerId);
@@ -3637,25 +3644,59 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
     setConfirmClear(false);
   };
   const toggleFullscreen = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else boardRef.current?.requestFullscreen?.(); };
-  const drawImageOntoCanvas = (img) => {
-    const canvas = canvasRef.current, wrap = canvasWrapRef.current;
-    if (!canvas || !wrap) return;
-    pushHistory();
-    ensureResolutionFor(img);
-    const ctx = canvas.getContext("2d");
+  // Deja la imagen "flotando" sobre el lienzo, sin dibujarla todavía, para poder arrastrarla a la
+  // posición deseada antes de fijarla — recién al confirmar se estampa sobre el dibujo existente
+  // (sin borrar lo ya dibujado) y queda disponible para escribir o dibujar encima.
+  const beginPlaceImage = (img) => {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
     const { clientWidth: w, clientHeight: h } = wrap;
-    ctx.fillStyle = "#FFFFFF";
-    ctx.fillRect(0, 0, w, h);
-    const scale = Math.min(w / img.width, h / img.height);
-    const drawW = img.width * scale, drawH = img.height * scale;
-    ctx.drawImage(img, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
+    if (!w || !h) return;
+    const fitScale = Math.min(1, w / img.width, h / img.height);
+    const boxW = Math.round(img.width * fitScale), boxH = Math.round(img.height * fitScale);
+    setPlacedImage({ src: img.src, naturalW: img.width, naturalH: img.height, x: Math.round((w - boxW) / 2), y: Math.round((h - boxH) / 2), w: boxW, h: boxH });
   };
+  const confirmPlacedImage = () => {
+    const placement = placedImage;
+    const canvas = canvasRef.current;
+    if (!placement || !canvas) return;
+    const img = new Image();
+    img.onload = () => {
+      pushHistory();
+      ensureResolutionFor({ width: placement.naturalW, height: placement.naturalH });
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, placement.x, placement.y, placement.w, placement.h);
+      setPlacedImage(null);
+    };
+    img.src = placement.src;
+  };
+  const cancelPlacedImage = () => setPlacedImage(null);
+  const startDragImage = (event) => {
+    if (!placedImage) return;
+    event.preventDefault();
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    dragImageRef.current = { offsetX: event.clientX - rect.left - placedImage.x, offsetY: event.clientY - rect.top - placedImage.y };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const dragImage = (event) => {
+    if (!dragImageRef.current) return;
+    event.preventDefault();
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const nx = event.clientX - rect.left - dragImageRef.current.offsetX;
+    const ny = event.clientY - rect.top - dragImageRef.current.offsetY;
+    setPlacedImage((current) => (current ? { ...current, x: nx, y: ny } : current));
+  };
+  const endDragImage = (event) => { dragImageRef.current = null; event.currentTarget.releasePointerCapture?.(event.pointerId); };
   const loadImage = (file) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
-      img.onload = () => drawImageOntoCanvas(img);
+      img.onload = () => beginPlaceImage(img);
       img.src = String(reader.result || "");
     };
     reader.readAsDataURL(file);
@@ -3678,7 +3719,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   const pasteImageFile = (file) => {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => { const img = new Image(); img.onload = () => drawImageOntoCanvas(img); img.src = String(reader.result || ""); };
+    reader.onload = () => { const img = new Image(); img.onload = () => beginPlaceImage(img); img.src = String(reader.result || ""); };
     reader.readAsDataURL(file);
   };
   const pasteFromClipboard = async () => {
@@ -3713,6 +3754,20 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   const handleSave = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // Si queda una imagen sin fijar (el usuario la arrastró pero no tocó "Listo"), se estampa
+    // automáticamente antes de exportar para no perderla silenciosamente al guardar.
+    if (placedImage) {
+      const placement = placedImage;
+      const img = new Image();
+      img.onload = () => {
+        ensureResolutionFor({ width: placement.naturalW, height: placement.naturalH });
+        canvas.getContext("2d").drawImage(img, placement.x, placement.y, placement.w, placement.h);
+        setPlacedImage(null);
+        onSave(canvas.toDataURL("image/png"), { title, projectId });
+      };
+      img.src = placement.src;
+      return;
+    }
     onSave(canvas.toDataURL("image/png"), { title, projectId });
   };
 
@@ -3775,6 +3830,19 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
           <canvas ref={canvasRef}
             onPointerDown={startDraw} onPointerMove={draw} onPointerUp={endDraw} onPointerLeave={endDraw} onPointerCancel={endDraw}
             className="absolute inset-0 h-full w-full touch-none" />
+          {placedImage && (
+            <div className="absolute inset-0 z-20 touch-none">
+              <img src={placedImage.src} alt="" draggable={false}
+                onPointerDown={startDragImage} onPointerMove={dragImage} onPointerUp={endDragImage} onPointerCancel={endDragImage}
+                style={{ position: "absolute", left: placedImage.x, top: placedImage.y, width: placedImage.w, height: placedImage.h, touchAction: "none", cursor: "grab" }}
+                className="rounded-sm shadow-lg ring-2 ring-brand-500" />
+              <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-slate-900/90 p-1.5 shadow-lg">
+                <span className="hidden px-1.5 text-[11px] text-white/70 sm:inline">Arrastrá la imagen para ubicarla</span>
+                <button onClick={cancelPlacedImage} className="rounded-md px-3 py-1.5 text-xs font-medium text-white hover:bg-white/10">Cancelar</button>
+                <button onClick={confirmPlacedImage} className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-400">Listo, fijar imagen</button>
+              </div>
+            </div>
+          )}
         </div>
         {/* El diálogo de confirmación va DENTRO de boardRef: es el elemento que entra en pantalla
             completa, y la API de Fullscreen solo pinta su propio subárbol — si el diálogo quedara
