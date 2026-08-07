@@ -22,16 +22,10 @@ const COL = { id: 9, name: 56, duration: 15, start: 16, end: 16 };
 const LABEL_W = COL.id + COL.name + COL.duration + COL.start + COL.end;
 const INDENT_PER_LEVEL = 3;
 
-// Una paleta por "rama" (la sección de nivel superior a la que pertenece cada tarea), para que
-// las barras de una misma etapa del proyecto compartan color y se puedan seguir de un vistazo.
-const BRANCH_PALETTE = [
-  { light: [254, 215, 170], strong: [234, 88, 12] },   // naranja
-  { light: [191, 219, 254], strong: [37, 99, 235] },   // azul
-  { light: [187, 247, 208], strong: [22, 163, 74] },   // verde
-  { light: [233, 213, 255], strong: [147, 51, 234] },  // violeta
-  { light: [254, 202, 202], strong: [220, 38, 38] },   // rojo
-  { light: [253, 230, 138], strong: [217, 119, 6] },   // ámbar
-];
+// Un solo acento de color para toda tarea normal (antes había un color distinto por sección
+// y quedaba muy recargado). Resumen y avance se distinguen por tono/contraste, no por matiz.
+const TASK_COLOR = { light: [219, 234, 254], strong: [37, 99, 235] }; // celeste / azul
+const MILESTONE_COLOR = [241, 135, 0]; // naranja de marca, igual en todos los hitos
 
 const addDays = (date, days) => { const d = new Date(date); d.setDate(d.getDate() + days); return d; };
 const startOfMonth = (date) => new Date(date.getFullYear(), date.getMonth(), 1);
@@ -80,12 +74,6 @@ function depthOf(task, byId) {
   while (current.parentId && byId.has(current.parentId) && !seen.has(current.parentId)) { seen.add(current.parentId); depth++; current = byId.get(current.parentId); }
   return depth;
 }
-function rootOf(task, byId) {
-  let current = task;
-  const seen = new Set();
-  while (current.parentId && byId.has(current.parentId) && !seen.has(current.parentId)) { seen.add(current.parentId); current = byId.get(current.parentId); }
-  return current.id;
-}
 /** Numeración jerárquica tipo WBS (1, 1.1, 1.2, 2, 2.1…) para tareas que no la traen del origen. */
 function buildWbsIndex(tasks) {
   const counters = new Map(); // parentId (o "root") -> próximo número a usar
@@ -115,13 +103,6 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
   const xForDate = (d) => MARGIN + LABEL_W + daysBetween(min, typeof d === "string" ? parseDate(d) : d) * dayW;
   const rowsPerPage = Math.floor((PAGE_H - MARGIN - CHART_TOP) / ROW_H);
   const pageCount = Math.ceil(tasks.length / rowsPerPage);
-
-  // Rama (sección de nivel superior) → color, en orden de aparición.
-  const branchColorById = new Map();
-  tasks.forEach((task) => {
-    const root = rootOf(task, byId);
-    if (!branchColorById.has(root)) branchColorById.set(root, BRANCH_PALETTE[branchColorById.size % BRANCH_PALETTE.length]);
-  });
 
   const drawHeader = (pageIndex) => {
     let logoW = 0;
@@ -188,7 +169,6 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
       const globalIndex = page * rowsPerPage + localIndex;
       const y = rowY(globalIndex);
       const depth = depthOf(task, byId);
-      const branch = branchColorById.get(rootOf(task, byId));
 
       // --- columnas de texto ---
       doc.setFont("helvetica", task.isSummary ? "bold" : "normal");
@@ -209,10 +189,10 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
 
       if (task.milestone) {
         const cx = x1, cy = y + ROW_H / 2, r = 1.7;
-        doc.setFillColor(...branch.strong);
+        doc.setFillColor(...MILESTONE_COLOR);
         doc.triangle(cx - r, cy, cx, cy - r, cx + r, cy, "F");
         doc.triangle(cx - r, cy, cx, cy + r, cx + r, cy, "F");
-        doc.setFontSize(6.2); doc.setTextColor(...branch.strong);
+        doc.setFontSize(6.2); doc.setTextColor(...MILESTONE_COLOR);
         doc.text(shortDate(task.start).slice(0, 5), cx + r + 1, cy + 1);
       } else if (task.isSummary) {
         doc.setFillColor(51, 65, 85);
@@ -225,13 +205,13 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
         const inline = `${task.name} · ${task.durationDays ?? ""} d`;
         if (doc.getTextWidth(inline) < barW - 2) doc.text(inline, x1 + barW / 2, barY + barH - 0.7, { align: "center" });
       } else {
-        doc.setFillColor(...branch.light);
+        doc.setFillColor(...TASK_COLOR.light);
         doc.roundedRect(x1, barY, barW, barH, 0.5, 0.5, "F");
         if (task.percentComplete > 0) {
-          doc.setFillColor(...branch.strong);
+          doc.setFillColor(...TASK_COLOR.strong);
           doc.roundedRect(x1, barY, barW * (Math.min(100, task.percentComplete) / 100), barH, 0.5, 0.5, "F");
         }
-        doc.setDrawColor(...branch.strong);
+        doc.setDrawColor(...TASK_COLOR.strong);
         doc.setLineWidth(0.12);
         doc.roundedRect(x1, barY, barW, barH, 0.5, 0.5, "S");
       }
