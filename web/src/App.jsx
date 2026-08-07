@@ -3445,7 +3445,7 @@ const WHITEBOARD_ERASER_WIDTH = 44;
 const WHITEBOARD_MAX_HISTORY = 30;
 // Resolución máxima del lienzo (px del lado más largo) al incorporar una imagen cargada o pegada,
 // para que fotos y capturas de alta resolución no se guarden pixeladas dentro de una caja de edición chica.
-const WHITEBOARD_MAX_CANVAS_DIM = 2400;
+const WHITEBOARD_MAX_CANVAS_DIM = 3200;
 const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5E7EB"];
 
 /* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
