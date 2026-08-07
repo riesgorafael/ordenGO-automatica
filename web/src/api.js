@@ -76,6 +76,7 @@ export const api = {
   deleteFinance: (id) => req("/finances/" + id, { method: "DELETE" }),
   bnaExchangeRate: () => req("/exchange-rates/bna"),
 
+  tasks: () => req("/tasks"),
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),
   updateTask: (id, patch) => req("/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (id) => req("/tasks/" + id, { method: "DELETE" }),

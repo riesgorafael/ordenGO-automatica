@@ -479,6 +479,20 @@ export default function App() {
   }, [me?.id, online, module]);
 
   useEffect(() => {
+    // Mientras se está viendo Proyectos, se refrescan las tareas periódicamente para reflejar
+    // cambios hechos por otros usuarios (otro técnico, gerencia) sin tener que recargar a mano.
+    if (!me || !online || module !== "projects") return;
+    let cancelled = false;
+    const refreshTasks = async () => { try { const fresh = await api.tasks(); if (!cancelled) setTasks(fresh || []); } catch {} };
+    const onVisibility = () => { if (document.visibilityState === "visible") void refreshTasks(); };
+    const timer = window.setInterval(refreshTasks, 10000);
+    window.addEventListener("focus", refreshTasks);
+    document.addEventListener("visibilitychange", onVisibility);
+    void refreshTasks();
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refreshTasks); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [me?.id, online, module]);
+
+  useEffect(() => {
     if (me?.role !== "monitor_oficina" || !online) return;
     let cancelled = false;
     const refreshMonitor = async () => { try { if (!cancelled) await boot(); } catch {} };
@@ -2894,7 +2908,10 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
   const editingExisting = !!task;
   const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
-  const save = () => { if (!f.title.trim()) return; onSave({ ...f, id: f.id || nextId(f.project), createdAt: f.createdAt || todayStr() }); };
+  // "activity" (comentarios y cambios de estado) se gestiona en el servidor mediante endpoints propios
+  // (comentar, cambiar estado). Nunca se reenvía desde acá para no pisar con una copia desactualizada
+  // un comentario que se haya agregado durante esta misma sesión de edición.
+  const save = () => { if (!f.title.trim()) return; const { activity, ...rest } = f; onSave({ ...rest, id: f.id || nextId(f.project), createdAt: f.createdAt || todayStr() }); };
   const assignable = readOnly || canAssign ? users : users.filter((u) => u.id === me.id);
   const mouseDownOnBackdrop = useRef(false);
   return (

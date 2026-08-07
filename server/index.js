@@ -1744,6 +1744,10 @@ const TASK_STATUSES = new Set(["Por hacer", "En progreso", "En revisión", "Hech
 const TASK_PRIORITIES = new Set(["Baja", "Media", "Alta", "Urgente"]);
 const TASK_TYPES = new Set(["Tarea", "Bug", "Mejora", "Historia"]);
 const TECH_TASK_PATCH = new Set(["title", "desc", "status", "priority", "type", "due", "participants"]);
+app.get("/api/tasks", auth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC");
+  res.json(rows.map((row) => ({ ...row.data, _updatedAt: row.updated_at })));
+});
 app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
   t.title = String(t.title || "").trim();
