@@ -998,13 +998,15 @@ export default function App() {
               : <MonthlyReport orders={orders} />}
           </>
         )}
-        {activeModule === "projects" && (
+        {activeModule === "projects" && (() => {
+          const tvProjects = projects.filter((project) => project.active !== false);
+          return (
           <>
             {tvMode && <div className="tv-project-banner relative mb-4 flex items-center gap-4 overflow-hidden rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
-              <span className="h-10 w-2 shrink-0 rounded-full" style={{ background: projects.find((project) => project.id === pProj)?.color || branding.primaryColor }} />
-              <div className="min-w-0 flex-1"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{tvSettings.screenName || "Proyecto en pantalla"}</p><h1 className="truncate text-2xl font-bold text-slate-900">{projects.find((project) => project.id === pProj)?.key || "—"} · {projects.find((project) => project.id === pProj)?.name || "Sin proyectos disponibles"}</h1></div>
-              <div className="hidden items-center gap-3 text-right lg:flex"><div><p className="text-xs font-semibold text-slate-600">{tvSettings.tvCycleEnabled && projects.length > 1 ? `Rotación cada ${tvSettings.tvCycleSeconds} s` : "Vista fija"}</p><p className="text-[11px] text-slate-400">{Math.max(0, projects.findIndex((project) => project.id === pProj) + 1)} de {projects.length}</p></div><button type="button" onClick={() => document.documentElement.requestFullscreen?.()} title="Abrir pantalla completa" aria-label="Abrir pantalla completa" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Maximize2 className="h-5 w-5" /></button></div>
-              {tvSettings.tvCycleEnabled && projects.length > 1 && <span key={pProj} className="tv-cycle-progress absolute bottom-0 left-0 h-1 bg-brand-500" style={{ animationDuration: `${tvSettings.tvCycleSeconds}s` }} />}
+              <span className="h-10 w-2 shrink-0 rounded-full" style={{ background: tvProjects.find((project) => project.id === pProj)?.color || branding.primaryColor }} />
+              <div className="min-w-0 flex-1"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{tvSettings.screenName || "Proyecto en pantalla"}</p><h1 className="truncate text-2xl font-bold text-slate-900">{tvProjects.find((project) => project.id === pProj)?.key || "—"} · {tvProjects.find((project) => project.id === pProj)?.name || "Sin proyectos disponibles"}</h1></div>
+              <div className="hidden items-center gap-3 text-right lg:flex"><div><p className="text-xs font-semibold text-slate-600">{tvSettings.tvCycleEnabled && tvProjects.length > 1 ? `Rotación cada ${tvSettings.tvCycleSeconds} s` : "Vista fija"}</p><p className="text-[11px] text-slate-400">{Math.max(0, tvProjects.findIndex((project) => project.id === pProj) + 1)} de {tvProjects.length}</p></div><button type="button" onClick={() => document.documentElement.requestFullscreen?.()} title="Abrir pantalla completa" aria-label="Abrir pantalla completa" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Maximize2 className="h-5 w-5" /></button></div>
+              {tvSettings.tvCycleEnabled && tvProjects.length > 1 && <span key={pProj} className="tv-cycle-progress absolute bottom-0 left-0 h-1 bg-brand-500" style={{ animationDuration: `${tvSettings.tvCycleSeconds}s` }} />}
             </div>}
             {!tvMode && <div className="mb-4 flex flex-wrap items-center gap-2">
               <div className="mr-1 flex rounded-lg bg-slate-200 p-0.5">
