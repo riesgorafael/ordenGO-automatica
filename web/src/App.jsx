@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart, Bar as RechartsBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie as RechartsPie, Legend } from "recharts";
 import {
   Plus, X, Search, Camera, Upload, Sparkles, Loader2, MapPin, Clock, ClipboardList,
@@ -372,15 +372,22 @@ export default function App() {
   const navTabsRef = useRef(null);
   const navTabsObserverRef = useRef(null);
   const [navScroll, setNavScroll] = useState({ left: false, right: false });
+  // Evita re-render si el valor no cambió: si no, cada scroll/resize dispararía un setState con un
+  // objeto nuevo (aunque left/right sean iguales) y React nunca podría "descartar" el render.
   const updateNavScroll = () => {
     const el = navTabsRef.current;
     if (!el) return;
-    setNavScroll({ left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+    const left = el.scrollLeft > 2;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    setNavScroll((current) => (current.left === left && current.right === right) ? current : { left, right });
   };
   // Con un callback ref nos enteramos apenas el elemento se monta (aunque sea condicional, como
   // acá con la vista de "Nueva orden"), sin depender de un useEffect con variables que todavía
   // no existen a esta altura del componente — así no se rompen las reglas de hooks.
-  const setNavTabsRef = (el) => {
+  // useCallback con [] es clave: si no, React ve una función "nueva" en cada render, desmonta y
+  // vuelve a montar el ref todo el tiempo, y cada montaje dispara otra actualización de estado
+  // → bucle infinito de renders (la causa de la pantalla en blanco).
+  const setNavTabsRef = useCallback((el) => {
     navTabsRef.current = el;
     navTabsObserverRef.current?.disconnect();
     navTabsObserverRef.current = null;
@@ -392,7 +399,7 @@ export default function App() {
       const inner = el.querySelector("nav"); if (inner) observer.observe(inner); // ancho del contenido (cambian las pestañas o sus badges)
       navTabsObserverRef.current = observer;
     }
-  };
+  }, []);
   useEffect(() => {
     window.addEventListener("resize", updateNavScroll);
     return () => { window.removeEventListener("resize", updateNavScroll); navTabsObserverRef.current?.disconnect(); };
