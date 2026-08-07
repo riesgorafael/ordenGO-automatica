@@ -292,13 +292,19 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
   // celular porque Pointer Events unifica ambos. Se ignora si el arrastre empezó sobre una barra
   // de tarea (esa ya tiene su propio arrastre para reprogramar fechas) o sobre un control de la
   // tabla lateral (checkbox, fila clickeable, etc.).
+  // Registrado en fase de CAPTURA (no burbuja): la librería del Gantt tiene sus propios manejadores
+  // sobre el SVG (tooltip al pasar el mouse, arrastre de barra) que llaman stopPropagation, así que
+  // un listener normal en el contenedor nunca llegaba a dispararse ahí adentro — solo funcionaba
+  // fuera del gráfico (ej. la barra de scroll nativa). La captura se ejecuta antes de que la
+  // librería pueda bloquearla. Recién se "roba" el puntero (setPointerCapture) cuando el gesto
+  // resulta ser un arrastre de verdad (superó el umbral), no en cada toque: así un clic simple
+  // sobre una barra sigue abriendo su tooltip/edición normalmente.
   const handlePanPointerDown = (event) => {
     if (event.button !== undefined && event.button !== 0) return; // solo click izquierdo / touch
     if (event.target.closest('[class*="barWrapper"], input, select, button, a, label')) return;
     const el = containerRef.current;
     if (!el) return;
-    panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, scrollLeft: el.scrollLeft, moved: false };
-    el.setPointerCapture?.(event.pointerId);
+    panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, scrollLeft: el.scrollLeft, moved: false, captured: false };
   };
   const handlePanPointerMove = (event) => {
     const state = panRef.current;
@@ -306,9 +312,9 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
     if (!state || !el || state.pointerId !== event.pointerId) return;
     const dx = event.clientX - state.startX;
     if (!state.moved && Math.abs(dx) < 4) return;
-    state.moved = true;
-    setPanning(true);
+    if (!state.moved) { state.moved = true; setPanning(true); el.setPointerCapture?.(event.pointerId); state.captured = true; }
     event.preventDefault();
+    event.stopPropagation(); // a partir de acá es un arrastre nuestro, no un clic de la librería
     el.scrollLeft = state.scrollLeft - dx;
   };
   const endPan = (event) => {
@@ -457,8 +463,8 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
         ref={containerRef}
         className={`overflow-x-auto rounded-xl border border-slate-200 bg-white ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}
         style={{ touchAction: "pan-y" }}
-        onPointerDown={handlePanPointerDown}
-        onPointerMove={handlePanPointerMove}
+        onPointerDownCapture={handlePanPointerDown}
+        onPointerMoveCapture={handlePanPointerMove}
         onPointerUp={endPan}
         onPointerCancel={endPan}
       >
