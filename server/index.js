@@ -40,7 +40,10 @@ app.use((req, res, next) => {
   // en tiempo de ejecución, y también descarga desde ahí el modelo de idioma (.traineddata) y el
   // core .wasm. tessdata.projectnaptha.com queda como respaldo por si alguna ruta interna todavía
   // lo usa (era el CDN por defecto en versiones anteriores de la librería).
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://cdn.jsdelivr.net https://tessdata.projectnaptha.com");
+  // 'wasm-unsafe-eval' en script-src: instanciar un módulo WebAssembly (el motor de OCR de
+  // Tesseract) cuenta como "eval" para CSP; esta keyword lo habilita sin abrir eval() de JS común.
+  // "data:" en connect-src: Tesseract carga el binario .wasm como un data: URI internamente.
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: https://cdn.jsdelivr.net https://tessdata.projectnaptha.com");
   next();
 });
 app.use(express.json({ limit: "24mb" }));
