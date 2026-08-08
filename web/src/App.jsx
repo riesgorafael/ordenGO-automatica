@@ -1157,23 +1157,8 @@ export default function App() {
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} whiteboardNotes={whiteboardNotes} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
-              // Mini-resumen de alertas del proyecto: antes había que recorrer las 4 columnas del
-              // Kanban a ojo para notar cuántas tareas estaban vencidas, por vencer o estancadas.
-              // Se calcula sobre TODAS las tareas del proyecto (no sobre "vis") para que no cambie
-              // según los filtros de búsqueda/"Mis tareas"/"Estancadas" ya aplicados en la barra.
-              const projectAlerts = pProj !== "all" && activeProjectView === "board" ? (() => {
-                const projectTasks = tasks.filter((t) => t.project === pProj);
-                return { overdue: projectTasks.filter(isOverdue).length, dueSoon: projectTasks.filter(isDueSoon).length, stale: projectTasks.filter(isStale).length };
-              })() : null;
-              const alertsBar = projectAlerts && (projectAlerts.overdue || projectAlerts.dueSoon || projectAlerts.stale) && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {projectAlerts.overdue > 0 && <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20"><AlertTriangle className="h-3.5 w-3.5" /> {projectAlerts.overdue} vencida(s)</span>}
-                  {projectAlerts.dueSoon > 0 && <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20"><Clock className="h-3.5 w-3.5" /> {projectAlerts.dueSoon} por vencer</span>}
-                  {projectAlerts.stale > 0 && <button onClick={() => setPStale(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20 hover:bg-amber-100"><Clock className="h-3.5 w-3.5" /> {projectAlerts.stale} estancada(s)</button>}
-                </div>
-              );
-              if (isMonitor) return <>{alertsBar}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} /></>;
-              if (isMgr) return <>{alertsBar}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
+              if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
+              if (isMgr) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} />;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
               return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} />;
             })()}
