@@ -10,38 +10,75 @@ function getWorker() {
   return workerPromise;
 }
 
-// Escala de grises + realce de contraste: el mismo tipo de "limpieza" que hacen apps de escaneo
-// como CamScanner antes de aplicar OCR, pero corriendo local con canvas — sin subir la foto a
-// ningún servicio de terceros. Ayuda especialmente con fotos de celular con sombras o poca luz.
+// Escala de grises + estiramiento de contraste ADAPTATIVO (por percentiles del histograma real
+// de la foto, no un factor fijo) — el mismo tipo de "limpieza" que hacen apps de escaneo como
+// CamScanner antes de aplicar OCR, pero corriendo local con canvas, sin subir la foto a ningún
+// servicio de terceros. Un factor de contraste fijo (como antes) sobrecorrige fotos ya bien
+// iluminadas y no alcanza para las muy oscuras; estirar entre el percentil 2 y 98 reales de cada
+// foto se adapta a la iluminación real de cada captura.
+// De paso se mide la calidad de la foto (oscura / quemada de luz / borrosa) para poder avisarle
+// al usuario CUÁL de esas tres cosas está afectando la lectura, en vez de un genérico "revisá los
+// datos" — es lo que pidió: verificar iluminación y nitidez, no solo intentar leer igual.
 function enhanceForOcr(imageDataUrl) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
+      const w = img.width, h = img.height, n = w * h;
       const canvas = document.createElement("canvas");
-      canvas.width = img.width; canvas.height = img.height;
+      canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, w, h);
       const data = imageData.data;
-      const contrast = 1.35;
-      for (let i = 0; i < data.length; i += 4) {
-        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-        const adjusted = Math.min(255, Math.max(0, (gray - 128) * contrast + 128));
-        data[i] = data[i + 1] = data[i + 2] = adjusted;
+      const gray = new Uint8ClampedArray(n);
+      const histogram = new Array(256).fill(0);
+      let sum = 0;
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        const g = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
+        gray[i] = g;
+        histogram[Math.round(g)]++;
+        sum += g;
+      }
+      const meanBrightness = sum / n;
+
+      const loTarget = n * 0.02, hiTarget = n * 0.98;
+      let cum = 0, lo = 0, hi = 255;
+      for (let v = 0; v < 256; v++) { cum += histogram[v]; if (cum >= loTarget) { lo = v; break; } }
+      cum = 0;
+      for (let v = 0; v < 256; v++) { cum += histogram[v]; if (cum >= hiTarget) { hi = v; break; } }
+      if (hi <= lo) hi = lo + 1;
+      const range = hi - lo;
+
+      // Nitidez: promedio de diferencia entre píxeles horizontales vecinos. Una foto enfocada
+      // tiene bordes marcados (diferencias grandes); una borrosa, transiciones suaves (diferencias
+      // chicas). Es un proxy simple, no una medición de nitidez "real", pero alcanza para avisar.
+      let gradSum = 0;
+      for (let y = 0; y < h; y++) {
+        const rowStart = y * w;
+        for (let x = 0; x < w - 1; x++) gradSum += Math.abs(gray[rowStart + x + 1] - gray[rowStart + x]);
+      }
+      const avgGradient = gradSum / (n - h);
+
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        const adjusted = Math.min(255, Math.max(0, ((gray[i] - lo) / range) * 255));
+        data[p] = data[p + 1] = data[p + 2] = adjusted;
       }
       ctx.putImageData(imageData, 0, 0);
-      resolve(canvas.toDataURL("image/jpeg", 0.92));
+      resolve({
+        dataUrl: canvas.toDataURL("image/jpeg", 0.92),
+        quality: { dark: meanBrightness < 70, bright: meanBrightness > 195, blurry: avgGradient < 4.5 },
+      });
     };
-    img.onerror = () => resolve(imageDataUrl);
+    img.onerror = () => resolve({ dataUrl: imageDataUrl, quality: { dark: false, bright: false, blurry: false } });
     img.src = imageDataUrl;
   });
 }
 
 async function extractText(imageDataUrl) {
   const worker = await getWorker();
-  const enhanced = await enhanceForOcr(imageDataUrl);
+  const { dataUrl: enhanced, quality } = await enhanceForOcr(imageDataUrl);
   const { data } = await worker.recognize(enhanced);
-  return data.text || "";
+  return { text: data.text || "", quality };
 }
 
 // Formato AR: "11.591.800,00" -> 11591800.00
@@ -130,7 +167,7 @@ function parseReceptor(text) {
 // Devuelve vacío/null en cada campo que no pudo inferir con confianza — el llamador solo debe
 // sobrescribir lo que el usuario no cargó a mano, nunca pisar un dato ya escrito.
 export async function parseReceiptImage(imageDataUrl) {
-  const text = await extractText(imageDataUrl);
+  const { text, quality } = await extractText(imageDataUrl);
   const receptor = parseReceptor(text);
   return {
     amount: parseAmount(text),
@@ -143,5 +180,6 @@ export async function parseReceiptImage(imageDataUrl) {
     receptorCuit: receptor.cuit,
     receptorName: receptor.name,
     rawText: text,
+    quality,
   };
 }
