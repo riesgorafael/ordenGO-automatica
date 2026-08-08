@@ -54,6 +54,8 @@ const DEFAULT_BRANDING = {
   hideAdminModules: false,
   companyCuit: "",
   companyLegalName: "",
+  companyIvaCondition: "IVA Responsable Inscripto",
+  companyAddress: "",
 };
 const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
@@ -64,6 +66,8 @@ const normalizeBranding = (value = {}) => ({
   companyName: String(value.companyName || DEFAULT_BRANDING.companyName).trim().slice(0, 80),
   companyCuit: digitsOnly(value.companyCuit).slice(0, 11),
   companyLegalName: String(value.companyLegalName || "").trim().slice(0, 120),
+  companyIvaCondition: IVA_CONDITIONS.includes(value.companyIvaCondition) ? value.companyIvaCondition : DEFAULT_BRANDING.companyIvaCondition,
+  companyAddress: String(value.companyAddress || "").trim().slice(0, 160),
   theme: String(value.theme || DEFAULT_BRANDING.theme).trim().slice(0, 30),
   primaryColor: validHexColor(value.primaryColor) ? value.primaryColor.toUpperCase() : DEFAULT_BRANDING.primaryColor,
   headerColor: validHexColor(value.headerColor) ? value.headerColor.toUpperCase() : DEFAULT_BRANDING.headerColor,
