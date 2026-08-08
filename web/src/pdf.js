@@ -158,12 +158,22 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
 
   const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(241, 135, 0); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
   const para = (label, val) => {
-    if (!val) return; brk(10);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(label + " ", M, y);
+    if (!val) return;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
     const w = doc.getTextWidth(label + " ");
     doc.setFont("helvetica", "normal");
     const lines = doc.splitTextToSize(String(val), W - 2 * M - w);
-    doc.text(lines, M + w, y); y += lines.length * 4.6 + 2.2;
+    // Cada línea se chequea contra el borde de página por separado: un valor largo (ej. la
+    // trazabilidad completa de una orden con muchas entradas) puede medir varias veces el alto
+    // disponible, y validar el bloque entero una sola vez antes de imprimir dejaba el resto de las
+    // líneas escribiéndose fuera de la página, superpuestas con el pie o el encabezado siguiente.
+    lines.forEach((line, index) => {
+      brk(6);
+      if (index === 0) { doc.setFont("helvetica", "bold"); doc.text(label + " ", M, y); doc.setFont("helvetica", "normal"); }
+      doc.text(line, M + w, y);
+      y += 4.6;
+    });
+    y += 2.2;
   };
 
   /* Detalle */
@@ -187,6 +197,8 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
     if (technical.arrivalAt && technical.completedAt) para("Tiempo total en planta:", duration(new Date(technical.completedAt) - new Date(technical.arrivalAt)));
     if (technical.billableWaitMinutes) para("Espera por condiciones del sitio:", `${technical.billableWaitMinutes} minutos${technical.billableWaitReason ? ` - ${technical.billableWaitReason}` : ""}`);
     if (technical.downtimeMinutes) para("Parada productiva informada:", `${technical.downtimeMinutes} minutos`);
+    const pauses = sessions.filter((session) => session.pauseReason);
+    if (pauses.length) para("Pausas registradas:", pauses.map((session) => `${formatStamp(session.end)} - Motivo: ${session.pauseReason}`).join("\n"));
   }
 
   if (technical.deviceType || technical.firmware || technical.programVersion || technical.backupRef || technical.ioVerified || technical.alarmsVerified) {
@@ -293,7 +305,7 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
     para("Horas facturables:", `${chargedHours} h${chargedHours > actualWithWait ? " (mínimo de servicio aplicado)" : ""}`);
     para("Técnicos en planta:", order.technicians || 1);
     para("Tarifa por hora y por técnico:", money(order.rate));
-    para("Cálculo:", `${chargedHours} h x ${order.technicians || 1} técnico(s) = ${chargedHours * (Number(order.technicians) || 1)} horas-técnico`);
+    para("Cálculo:", `${chargedHours} h x ${order.technicians || 1} técnico(s) = ${(chargedHours * (Number(order.technicians) || 1)).toFixed(2)} horas-técnico`);
   }
 
   /* Totales (solo con importes) */

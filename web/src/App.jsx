@@ -307,19 +307,22 @@ const compactDuration = (milliseconds) => {
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 };
 
-const useReducedMotion = () => {
-  const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(query.matches);
-    query.addEventListener?.("change", update);
-    return () => query.removeEventListener?.("change", update);
-  }, []);
-  return reduced;
+// Recharts identifica sus propias piezas (Bar, Pie) buscando un método estático
+// (getComposedData) en el `type` de cada elemento hijo dentro de <BarChart>/<PieChart>. Envolver
+// <Bar>/<Pie> en un componente propio (como se hacía antes, solo para inyectar animationDuration
+// según prefers-reduced-motion) cambia ese `type` a una función sin ese estático: Recharts no logra
+// calcular la geometría de la serie y las barras/porciones dejan de dibujarse, aunque ejes y grilla
+// (que no dependen de ese estático) se vean normales. Por eso acá NO se envuelve: se reutiliza la
+// clase real de Recharts y sólo se le pisan los defaultProps de animación.
+const applyReducedMotionDefaults = () => {
+  const reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  RechartsBar.defaultProps = { ...RechartsBar.defaultProps, isAnimationActive: !reduced, animationDuration: 550, animationEasing: "ease-out" };
+  RechartsPie.defaultProps = { ...RechartsPie.defaultProps, isAnimationActive: !reduced, animationDuration: 550, animationEasing: "ease-out" };
 };
-const Bar = (props) => <RechartsBar {...props} isAnimationActive={!useReducedMotion()} animationDuration={550} animationEasing="ease-out" />;
-const Pie = (props) => <RechartsPie {...props} isAnimationActive={!useReducedMotion()} animationDuration={550} animationEasing="ease-out" />;
+applyReducedMotionDefaults();
+if (typeof window !== "undefined") window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener?.("change", applyReducedMotionDefaults);
+const Bar = RechartsBar;
+const Pie = RechartsPie;
 
 const Chip = ({ children, className = "", ...rest }) => (<span {...rest} className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
 const Box = ({ children, className = "" }) => (<div className={`motion-card rounded-xl border border-slate-200 bg-white ${className}`}>{children}</div>);
@@ -2011,7 +2014,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   // 5) Mix de servicios (período, por monto)
   const byService = {};
   periodOrders.forEach((o) => { const k = o.service || "Otro"; byService[k] = (byService[k] || 0) + tot(o); });
-  const mix = Object.entries(byService).map(([name, value], i) => ({ name, value: Math.round(value), fill: PIE_COLORS[i % PIE_COLORS.length] }));
+  const mix = Object.entries(byService).map(([name, value], i) => ({ name, value: Math.round(value), fill: PIE_COLORS[i % PIE_COLORS.length] })).filter((m) => m.value > 0);
 
   // 6) Productividad por técnico (período)
   const byTech = {};
@@ -2062,7 +2065,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
               <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <Tooltip formatter={(v) => money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+              <Tooltip formatter={(v) => money(v)} cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
               <Bar dataKey="value" fill="#F18700" radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -2079,7 +2082,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                  <Tooltip formatter={(v) => money(v)} cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
                   <Bar dataKey="value" radius={[5, 5, 0, 0]}>{aging.map((a, i) => <Cell key={i} fill={a.fill} />)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -2109,7 +2112,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
                   <XAxis type="number" tickFormatter={fmtK} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                  <Tooltip formatter={(v) => money(v)} cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
                   <Bar dataKey="value" fill="#0ea5e9" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -2142,7 +2145,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="horas" name="Horas-técnico" fill="#F18700" radius={[5, 5, 0, 0]} />
                 <Bar dataKey="ordenes" name="Órdenes" fill="#0ea5e9" radius={[5, 5, 0, 0]} />
@@ -2160,7 +2163,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v) => money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Tooltip formatter={(v) => money(v)} cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="ingreso" name="Ingreso" fill="#10b981" radius={[5, 5, 0, 0]} />
                 <Bar dataKey="costo" name="Costo" fill="#ef4444" radius={[5, 5, 0, 0]} />
