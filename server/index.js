@@ -629,6 +629,20 @@ async function assigneeIsAllowed(userId) {
   const user = (await pool.query("SELECT role,active FROM users WHERE id=$1", [userId])).rows[0];
   return !!(user && user.active && !isMonitor(user.role));
 }
+// Al asignar una tarea a un técnico (de campo u oficina), esos roles quedan "scopeados" por
+// allowedUsers (ver isProjectScoped) — si todavía no tienen acceso al proyecto de la tarea, se lo
+// da automáticamente para que no queden con una tarea asignada a un proyecto que no pueden ver.
+async function ensureProjectAccess(userId, projectId) {
+  if (!userId || !projectId) return;
+  const user = (await pool.query("SELECT role FROM users WHERE id=$1", [userId])).rows[0];
+  if (!user || !isTec(user.role)) return;
+  const { rows } = await pool.query("SELECT data FROM projects WHERE id=$1", [projectId]);
+  const project = rows[0]?.data;
+  if (!project) return;
+  const allowedUsers = Array.isArray(project.allowedUsers) ? project.allowedUsers : [];
+  if (allowedUsers.includes(userId)) return;
+  await pool.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [projectId, { ...project, allowedUsers: [...allowedUsers, userId] }]);
+}
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
 app.get("/api/branding", async (_req, res) => {
@@ -1858,6 +1872,7 @@ app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
     t.id = `${key}-${Math.max(0, ...ids) + 1}`;
   }
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [t.id, t]);
+  if (t.assignee) await ensureProjectAccess(t.assignee, t.project);
   // Notifica al responsable si es una asignación nueva (a otra persona)
   if (t.assignee && t.assignee !== req.user.id && (!existing || existing.assignee !== t.assignee)) {
     await notify(t.assignee, `Te asignaron la tarea ${t.id}: ${t.title}`, "task:" + t.id);
@@ -1880,6 +1895,7 @@ app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
   if (patch.status && patch.status !== prev.status)
     merged.activity = [...(prev.activity || []), { type: "status", text: `Estado: ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  if (patch.assignee !== undefined) await ensureProjectAccess(patch.assignee, merged.project);
   if (patch.assignee && patch.assignee !== prev.assignee && patch.assignee !== req.user.id) {
     await notify(patch.assignee, `Te asignaron la tarea ${merged.id}: ${merged.title}`, "task:" + merged.id);
     pool.query("SELECT data FROM projects WHERE id=$1", [merged.project]).then((result) => notifyTaskAssignmentEmail(patch.assignee, merged, result.rows[0]?.data)).catch(() => {});
