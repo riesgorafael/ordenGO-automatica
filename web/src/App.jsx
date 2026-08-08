@@ -2581,8 +2581,11 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
 
 /* ===================================== ÓRDENES: REPORTE MENSUAL ===================================== */
 function MonthlyReport({ orders }) {
+  const [mode, setMode] = useState("mes"); // "mes" | "anio"
   const [month, setMonth] = useState(localMonthKey());
-  const monthOrders = orders.filter((o) => (o.date || "").startsWith(month) && ["Completada", "Aprobada", "Facturada"].includes(o.status));
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const period = mode === "anio" ? year : month;
+  const monthOrders = orders.filter((o) => (o.date || "").startsWith(period) && ["Completada", "Aprobada", "Facturada"].includes(o.status));
   const groups = {};
   monthOrders.forEach((o) => {
     const t = orderTotals(o);
@@ -2592,21 +2595,29 @@ function MonthlyReport({ orders }) {
   });
   const rows = Object.values(groups).sort((a, b) => b.total - a.total);
   const sum = rows.reduce((s, r) => ({ count: s.count + r.count, total: s.total + r.total, facturado: s.facturado + r.facturado, pendiente: s.pendiente + r.pendiente }), { count: 0, total: 0, facturado: 0, pendiente: 0 });
-  const monthLabel = new Date(month + "-01T00:00:00").toLocaleDateString("es-MX", { month: "long", year: "numeric" });
+  const monthLabel = mode === "anio" ? `Año ${year}` : new Date(month + "-01T00:00:00").toLocaleDateString("es-MX", { month: "long", year: "numeric" });
   const chart = rows.slice(0, 8).map((r) => ({ name: r.client.length > 14 ? r.client.slice(0, 13) + "…" : r.client, value: Math.round(r.total), fill: "#F18700" }));
   const exportCSV = () => {
     const head = ["Cliente", "Órdenes", "Horas-técnico", "Mano de obra (USD)", "Materiales (USD)", "Total (USD)", "Facturado (USD)", "Por facturar (USD)"];
     const lines = rows.map((r) => [r.client, r.count, round2(r.hours), r.labor.toFixed(2), r.mats.toFixed(2), r.total.toFixed(2), r.facturado.toFixed(2), r.pendiente.toFixed(2)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
-    downloadFile(`reporte_${month}.csv`, [head.join(","), ...lines].join("\n"));
+    downloadFile(`reporte_${period}.csv`, [head.join(","), ...lines].join("\n"));
   };
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm" />
+        <div className="flex rounded-lg bg-slate-200 p-0.5">
+          <button onClick={() => setMode("mes")} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${mode === "mes" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Mes</button>
+          <button onClick={() => setMode("anio")} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${mode === "anio" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Año</button>
+        </div>
+        {mode === "anio" ? (
+          <input type="number" min="2000" max="2100" step="1" value={year} onChange={(e) => setYear(e.target.value)} className="w-28 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm" />
+        ) : (
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm" />
+        )}
         <span className="text-sm font-medium capitalize text-slate-600">{monthLabel}</span>
         <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
           <button onClick={exportCSV} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
-          <button onClick={() => monthlyReportPDF(month, monthLabel, rows, sum)} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><FileText className="h-4 w-4" /> PDF</button>
+          <button onClick={() => monthlyReportPDF(period, monthLabel, rows, sum)} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><FileText className="h-4 w-4" /> PDF</button>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -3025,7 +3036,11 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [signerRoleChoice, setSignerRoleChoice] = useState(() => SIGNER_ROLES.includes(initial.technical?.signerRole) ? initial.technical.signerRole : (initial.technical?.signerRole ? "Otro" : ""));
   const [photos, setPhotos] = useState(initial.photos || []); const [analyzing, setAnalyzing] = useState(false);
   const [rate, setRate] = useState(normalizedRate(initial.rate)); const [laborHours, setLaborHours] = useState(initial.laborHours || ""); const [laborBillable, setLaborBillable] = useState(initial.laborBillable ?? true);
-  const technicians = 1 + assignedTechs.length;
+  // No sumar 1 + assignedTechs.length a secas: ese array ya incluye al responsable en todos los
+  // demás lugares (así lo lee OrderDetail, y así se inicializa cuando un técnico crea su propia
+  // orden), así que sumarle 1 aparte lo contaba dos veces y facturaba de más. Se cuentan personas
+  // distintas entre "tech" y "assignedTechs", sea cual sea la convención con la que se cargaron.
+  const technicians = Math.max(1, new Set([tech, ...assignedTechs].filter(Boolean).map((name) => name.trim().toLowerCase())).size);
   const [materials, setMaterials] = useState(initial.materials || []); const [location, setLocation] = useState(initial.location || null); const [geoMsg, setGeoMsg] = useState("");
   const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || "");
   const [siteCode, setSiteCode] = useState(initial.siteCode || (initial.clientId ? "" : defaultSite?.code || ""));
