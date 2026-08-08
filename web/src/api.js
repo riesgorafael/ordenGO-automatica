@@ -86,7 +86,7 @@ export const api = {
   deleteUser: (id) => req("/users/" + id, { method: "DELETE" }),
   updateBranding: (branding) => req("/settings/branding", { method: "PUT", body: JSON.stringify(branding) }),
 
-  analyze: (image, kind) => req("/ai/analyze", { method: "POST", body: JSON.stringify({ image, kind }) }),
+  analyze: (image) => req("/ai/analyze", { method: "POST", body: JSON.stringify({ image }) }),
 
   notifications: () => req("/notifications"),
   readNotification: (id) => req("/notifications/" + id + "/read", { method: "POST" }),
