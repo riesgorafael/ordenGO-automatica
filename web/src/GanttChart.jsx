@@ -246,22 +246,40 @@ function GanttConvertModal({ tasks, users, onClose, onConfirm }) {
   );
 }
 
-function toGanttTaskShape(task, byId) {
+// El color de la barra ahora codifica ESTADO real (vencida / completada / en curso), no solo tipo
+// de tarea — antes una tarea vencida se veía idéntica a una al día, y había que abrir cada una
+// para notarlo. Misma lógica de "vencida" que ya usa el Kanban (fecha de fin pasada y no al 100%).
+function taskHealthStyles(task, isOverdue, isComplete) {
+  if (task.isSummary) {
+    if (isOverdue) return { backgroundColor: "#fca5a5", progressColor: "#b91c1c" };
+    if (isComplete) return { backgroundColor: "#6ee7b7", progressColor: "#047857" };
+    return { backgroundColor: "#94a3b8", progressColor: "#475569" };
+  }
+  if (task.milestone) {
+    if (isOverdue) return { backgroundColor: "#ef4444", progressColor: "#ef4444" };
+    if (isComplete) return { backgroundColor: "#10b981", progressColor: "#10b981" };
+    return { backgroundColor: "#f18700", progressColor: "#f18700" };
+  }
+  if (isOverdue) return { backgroundColor: "#fecaca", progressColor: "#dc2626" };
+  if (isComplete) return { backgroundColor: "#bbf7d0", progressColor: "#059669" };
+  return { backgroundColor: "#bae6fd", progressColor: "#0284c7" };
+}
+
+function toGanttTaskShape(task, byId, todayKey) {
+  const progress = task.percentComplete || 0;
+  const isComplete = progress >= 100;
+  const isOverdue = !isComplete && !!task.end && task.end < todayKey;
   return {
     id: task.id,
     name: task.milestone ? `◆ ${task.name}` : task.name,
     start: new Date(`${task.start}T00:00:00`),
     end: new Date(`${task.end}T00:00:00`),
-    progress: task.percentComplete || 0,
+    progress,
     type: task.milestone ? "milestone" : task.isSummary ? "project" : "task",
     project: task.parentId || undefined,
     dependencies: (task.predecessors || []).map((p) => p.taskId).filter((id) => byId.has(id)),
     isDisabled: false,
-    styles: task.isSummary
-      ? { backgroundColor: "#94a3b8", progressColor: "#475569" }
-      : task.milestone
-        ? { backgroundColor: "#f18700", progressColor: "#f18700" }
-        : { backgroundColor: "#bae6fd", progressColor: "#0284c7" },
+    styles: taskHealthStyles(task, isOverdue, isComplete),
   };
 }
 
@@ -430,7 +448,8 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
   };
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const ganttTasks = tasks.map((t) => toGanttTaskShape(t, byId));
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const ganttTasks = tasks.map((t) => toGanttTaskShape(t, byId, todayKey));
   const editingTask = editingTaskId && editingTaskId !== "new" ? tasks.find((t) => t.id === editingTaskId) : null;
 
   return (
@@ -440,6 +459,11 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto min-w-0">
           <h3 className="text-sm font-semibold text-slate-900">Cronograma (Gantt)</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
+            <span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-sm" style={{ background: "#0284c7" }} /> En curso</span>
+            <span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-sm" style={{ background: "#dc2626" }} /> Vencida</span>
+            <span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-sm" style={{ background: "#059669" }} /> Completada</span>
+          </div>
           <p className="text-[11px] text-slate-500">{tasks.length} tarea(s) · {projectName}</p>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
