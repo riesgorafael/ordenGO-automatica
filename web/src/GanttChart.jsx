@@ -32,7 +32,20 @@ function descendantIds(taskId, tasks) {
   return ids;
 }
 
+// Mientras este diálogo de pantalla completa está abierto en mobile, oculta la barra de
+// navegación inferior fixed de la app — si no, queda tapando los botones de Guardar/Cancelar
+// (mismo bug ya corregido en los demás diálogos grandes de App.jsx).
+let openDialogCount = 0;
+function useDialogOpenClass() {
+  useEffect(() => {
+    openDialogCount++;
+    document.body.classList.add("dialog-open");
+    return () => { openDialogCount = Math.max(0, openDialogCount - 1); if (openDialogCount === 0) document.body.classList.remove("dialog-open"); };
+  }, []);
+}
+
 function GanttTaskModal({ task, tasks, onClose, onSave, onDelete }) {
+  useDialogOpenClass();
   const editing = !!task?.id;
   const [form, setForm] = useState(() => ({
     name: task?.name || "", start: task?.start || "", end: task?.end || "",
@@ -197,6 +210,7 @@ function GanttTaskListTable({ rowHeight, fontFamily, fontSize, tasks, selectedTa
 const GANTT_PRIORITIES = ["Baja", "Media", "Alta", "Urgente"];
 
 function GanttConvertModal({ tasks, users, onClose, onConfirm }) {
+  useDialogOpenClass();
   const [assignee, setAssignee] = useState(users[0]?.id || "");
   const [priority, setPriority] = useState("Media");
   const [saving, setSaving] = useState(false);
