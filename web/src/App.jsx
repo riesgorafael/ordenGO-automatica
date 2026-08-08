@@ -1404,6 +1404,97 @@ const PAYMENT_METHODS = ["Transferencia", "Efectivo", "Tarjeta", "Cuenta corrien
 const currencyAmount = (amount, currency = "USD") => `${currency} ${(Number(amount) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const currentMonth = () => todayStr().slice(0, 7);
 
+// Recorte rectangular estilo CamScanner: el usuario arrastra las esquinas de un marco sobre la
+// foto para descartar todo lo que no sea la factura (mesa, mano, otros papeles) antes de correr el
+// OCR — mejora la lectura sin depender de ningún servicio externo. No hace corrección de
+// perspectiva (eso requeriría una transformación geométrica más compleja); es un recorte simple.
+function ImageCropModal({ imageUrl, onDiscard, onSkipCrop, onConfirm }) {
+  useDialogOpenClass();
+  const boxRef = useRef(null);
+  const [rect, setRect] = useState({ x: 0.04, y: 0.04, w: 0.92, h: 0.92 });
+  const dragRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const pointFraction = (event) => {
+    const box = boxRef.current.getBoundingClientRect();
+    return { fx: clamp01((event.clientX - box.left) / box.width), fy: clamp01((event.clientY - box.top) / box.height) };
+  };
+  const onHandleDown = (corner) => (event) => {
+    event.preventDefault(); event.stopPropagation();
+    event.target.setPointerCapture?.(event.pointerId);
+    dragRef.current = { corner, pointerId: event.pointerId };
+  };
+  const onBoxDown = (event) => {
+    if (dragRef.current) return;
+    event.target.setPointerCapture?.(event.pointerId);
+    const { fx, fy } = pointFraction(event);
+    dragRef.current = { corner: "move", pointerId: event.pointerId, startFx: fx, startFy: fy, startRect: rect };
+  };
+  const onPointerMove = (event) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const { fx, fy } = pointFraction(event);
+    if (drag.corner === "move") {
+      const dx = fx - drag.startFx, dy = fy - drag.startFy;
+      const { w, h } = drag.startRect;
+      const x = Math.min(1 - w, Math.max(0, drag.startRect.x + dx));
+      const y = Math.min(1 - h, Math.max(0, drag.startRect.y + dy));
+      setRect({ x, y, w, h });
+      return;
+    }
+    setRect((current) => {
+      const { x, y, w, h } = current;
+      const right = x + w, bottom = y + h;
+      if (drag.corner === "nw") { const nx = Math.min(fx, right - 0.08); const ny = Math.min(fy, bottom - 0.08); return { x: nx, y: ny, w: right - nx, h: bottom - ny }; }
+      if (drag.corner === "ne") { const ny = Math.min(fy, bottom - 0.08); const nw = Math.max(0.08, fx - x); return { x, y: ny, w: nw, h: bottom - ny }; }
+      if (drag.corner === "sw") { const nx = Math.min(fx, right - 0.08); const nh = Math.max(0.08, fy - y); return { x: nx, y, w: right - nx, h: nh }; }
+      if (drag.corner === "se") { const nw = Math.max(0.08, fx - x); const nh = Math.max(0.08, fy - y); return { x, y, w: nw, h: nh }; }
+      return current;
+    });
+  };
+  const onPointerUp = (event) => { if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null; };
+  const confirmCrop = () => {
+    setBusy(true);
+    const img = new Image();
+    img.onload = () => {
+      const sx = Math.round(rect.x * img.naturalWidth), sy = Math.round(rect.y * img.naturalHeight);
+      const sw = Math.max(1, Math.round(rect.w * img.naturalWidth)), sh = Math.max(1, Math.round(rect.h * img.naturalHeight));
+      const scale = Math.min(1, 1600 / Math.max(sw, sh));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(sw * scale); canvas.height = Math.round(sh * scale);
+      canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      setBusy(false);
+      onConfirm(canvas.toDataURL("image/jpeg", 0.9));
+    };
+    img.onerror = () => { setBusy(false); onSkipCrop(); };
+    img.src = imageUrl;
+  };
+  const handleCls = "absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 touch-none rounded-full border-2 border-white bg-brand-500 shadow";
+  return <div className="motion-backdrop fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/85 p-3">
+    <div className="mobile-dialog flex max-h-[95dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3"><div><h2 className="text-base font-semibold text-slate-900">Recortar comprobante</h2><p className="text-xs text-slate-500">Arrastrá las esquinas para encuadrar solo los datos de la factura.</p></div><button onClick={onDiscard} aria-label="Cerrar" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+      <div className="flex-1 overflow-auto bg-slate-900 p-3">
+        <div ref={boxRef} className="relative mx-auto touch-none select-none" style={{ maxWidth: "100%", width: "fit-content" }}>
+          <img src={imageUrl} alt="Comprobante a recortar" className="block max-h-[60dvh] select-none" draggable={false} />
+          <div className="absolute inset-0" onPointerDown={onBoxDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+            <div className="absolute inset-x-0 top-0 bg-black/60" style={{ height: `${rect.y * 100}%` }} />
+            <div className="absolute inset-x-0 bottom-0 bg-black/60" style={{ height: `${(1 - rect.y - rect.h) * 100}%` }} />
+            <div className="absolute bg-black/60" style={{ left: 0, top: `${rect.y * 100}%`, width: `${rect.x * 100}%`, height: `${rect.h * 100}%` }} />
+            <div className="absolute bg-black/60" style={{ right: 0, top: `${rect.y * 100}%`, width: `${(1 - rect.x - rect.w) * 100}%`, height: `${rect.h * 100}%` }} />
+            <div className="absolute border-2 border-brand-400" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}>
+              {["nw", "ne", "sw", "se"].map((corner) => <div key={corner} className={handleCls} style={{ left: corner.includes("w") ? 0 : "100%", top: corner.includes("n") ? 0 : "100%" }} onPointerDown={onHandleDown(corner)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} />)}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 border-t border-slate-100 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <button onClick={onSkipCrop} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Usar imagen completa</button>
+        <button onClick={confirmCrop} disabled={busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Recortar y continuar</button>
+      </div>
+    </div>
+  </div>;
+}
+
 function FinanceEntryModal({ movement, initialKind = "expense", projects, budgets, clients, branding, onClose, onSave }) {
   useDialogOpenClass();
   const [form, setForm] = useState({ kind: initialKind, concept: "", amount: "", currency: "USD", exchangeRate: 1, date: todayStr(), category: EXPENSE_CATEGORIES[0], paymentMethod: PAYMENT_METHODS[0], projectId: "", budgetId: "", clientId: "", supplier: "", receiptNumber: "", detail: "", attachmentUrl: "", attachmentName: "", vatIncluded: false, paymentStatus: "paid", paidAt: todayStr(), ...(movement || {}) });
@@ -1421,42 +1512,46 @@ function FinanceEntryModal({ movement, initialKind = "expense", projects, budget
   const selectProject = (projectId) => setForm((current) => { const linked = projectLink(projectId); return { ...current, projectId, clientId: linked.clientId, clientName: linked.clientName, budgetId: linked.budget?.id || "" }; });
   const selectKind = (kind) => setForm((current) => { const linked = projectLink(current.projectId); return { ...current, kind, category: kind === "expense" ? current.category || EXPENSE_CATEGORIES[0] : "", clientId: linked.clientId || current.clientId, clientName: linked.clientName || current.clientName, budgetId: linked.budget?.id || current.budgetId }; });
   const selectedLink = projectLink(form.projectId);
+  const [cropPending, setCropPending] = useState(null); // { dataUrl, fileName } | null — foto recién elegida, esperando recorte
+  // Corre el OCR sobre la imagen ya recortada (o la original, si el usuario eligió no recortar) y
+  // pre-completa el formulario. Nunca guarda solo — el usuario siempre revisa/corrige antes de
+  // confirmar, ya que un monto mal leído contaminaría Finanzas.
+  const processReceiptImage = async (dataUrl, fileName) => {
+    setProcessing(true); setAiNotice(null); setCompanyMismatch(null); setMismatchConfirmed(false);
+    setForm((current) => ({ ...current, attachmentUrl: dataUrl, attachmentName: fileName }));
+    try {
+      const extracted = await parseReceiptImage(dataUrl);
+      setForm((current) => ({
+        ...current,
+        amount: Number(extracted.amount) > 0 ? Number(extracted.amount) : current.amount,
+        date: extracted.date || current.date,
+        supplier: extracted.supplier || current.supplier,
+        receiptNumber: extracted.receiptNumber || current.receiptNumber,
+        vatIncluded: extracted.vatIncluded || current.vatIncluded,
+      }));
+      const foundSomething = extracted.amount || extracted.date || extracted.supplier || extracted.receiptNumber;
+      setAiNotice({ ok: !!foundSomething });
+      // Un "gasto" debería estar facturado A la empresa configurada; si el CUIT del receptor que
+      // detectó el OCR no coincide, probablemente es un comprobante de otra persona/empresa
+      // (mezclado por error entre varios recibos, o de un gasto personal). No se bloquea el campo
+      // de forma silenciosa: se avisa y se exige una confirmación explícita antes de poder guardar,
+      // porque el OCR puede leer mal un dígito del CUIT y no queremos trabar un gasto legítimo.
+      if (form.kind === "expense" && branding?.companyCuit && extracted.receptorCuit && extracted.receptorCuit !== branding.companyCuit) {
+        setCompanyMismatch({ receptorCuit: extracted.receptorCuit, receptorName: extracted.receptorName });
+      }
+    } catch (error) {
+      // Se guarda el motivo real (en vez de un mensaje genérico) para poder diagnosticar sin
+      // acceso a los logs del servidor: fallo al descargar el modelo de idioma, imagen inválida, etc.
+      console.error("No se pudo leer el comprobante:", error);
+      setAiNotice({ ok: false, error: error?.message || "" });
+    } finally { setProcessing(false); setPickMode(false); }
+  };
+  // Antes de correr el OCR, se deja recortar la foto (como CamScanner) para descartar todo lo que
+  // no sea la factura — mesa, mano, otros papeles — y mejorar la lectura.
   const selectFile = async (file) => {
     if (!file) return;
-    setProcessing(true); setAiNotice(null); setCompanyMismatch(null); setMismatchConfirmed(false);
-    try {
-      const image = await fileToImages(file);
-      setForm((current) => ({ ...current, attachmentUrl: image.report, attachmentName: file.name }));
-      // Lectura automática del comprobante con OCR 100% en el navegador (Tesseract.js, sin API key
-      // ni servicio pago): pre-completa lo que pudo reconocer, pero nunca guarda solo — el usuario
-      // siempre revisa/corrige antes de confirmar, ya que un monto mal leído contaminaría Finanzas.
-      try {
-        const extracted = await parseReceiptImage(image.analysis);
-        setForm((current) => ({
-          ...current,
-          amount: Number(extracted.amount) > 0 ? Number(extracted.amount) : current.amount,
-          date: extracted.date || current.date,
-          supplier: extracted.supplier || current.supplier,
-          receiptNumber: extracted.receiptNumber || current.receiptNumber,
-          vatIncluded: extracted.vatIncluded || current.vatIncluded,
-        }));
-        const foundSomething = extracted.amount || extracted.date || extracted.supplier || extracted.receiptNumber;
-        setAiNotice({ ok: !!foundSomething });
-        // Un "gasto" debería estar facturado A la empresa configurada; si el CUIT del receptor que
-        // detectó el OCR no coincide, probablemente es un comprobante de otra persona/empresa
-        // (mezclado por error entre varios recibos, o de un gasto personal). No se bloquea el campo
-        // de forma silenciosa: se avisa y se exige una confirmación explícita antes de poder guardar,
-        // porque el OCR puede leer mal un dígito del CUIT y no queremos trabar un gasto legítimo.
-        if (form.kind === "expense" && branding?.companyCuit && extracted.receptorCuit && extracted.receptorCuit !== branding.companyCuit) {
-          setCompanyMismatch({ receptorCuit: extracted.receptorCuit, receptorName: extracted.receptorName });
-        }
-      } catch (error) {
-        // Se guarda el motivo real (en vez de un mensaje genérico) para poder diagnosticar sin
-        // acceso a los logs del servidor: fallo al descargar el modelo de idioma, imagen inválida, etc.
-        console.error("No se pudo leer el comprobante:", error);
-        setAiNotice({ ok: false, error: error?.message || "" });
-      }
-    } finally { setProcessing(false); setPickMode(false); }
+    const image = await fileToImages(file);
+    setCropPending({ dataUrl: image.report, fileName: file.name });
   };
   const loadBnaRate = async () => { setRateLoading(true); setRateError(""); try { const quote = await api.bnaExchangeRate(); setRateInfo(quote); setForm((current) => ({ ...current, exchangeRate: quote.arsPerUsd, exchangeRateSource: "BNA dólar billete vendedor", exchangeRateUpdatedAt: quote.updatedAt })); } catch (error) { setRateError(error.message || "No se pudo consultar BNA"); } finally { setRateLoading(false); } };
   useEffect(() => { if (form.currency === "ARS" && (!movement || !form.exchangeRate)) loadBnaRate(); }, [form.currency]);
@@ -1469,7 +1564,9 @@ function FinanceEntryModal({ movement, initialKind = "expense", projects, budget
     <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button onClick={() => selectKind("expense")} className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "expense" ? "bg-white text-brand-600 shadow-sm" : "text-slate-500"}`}>Gasto</button><button onClick={() => selectKind("income")} className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "income" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}>Ingreso</button></div>
       {pickMode ? <div className="mt-4"><h3 className="text-sm font-semibold text-slate-800">¿Cómo querés cargar el comprobante?</h3><div className="mt-3 space-y-2"><button onClick={() => setPickMode(false)} className="flex min-h-16 w-full items-center gap-3 rounded-xl border border-slate-200 px-3 text-left hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><ClipboardList className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Carga manual</b><span className="text-xs text-slate-500">Completá los datos del movimiento.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /></button><label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Camera className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Tomar una foto</b><span className="text-xs text-slate-500">Usala como evidencia durante la carga.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /><input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label><label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Upload className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Elegir imagen</b><span className="text-xs text-slate-500">Seleccioná una imagen existente.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /><input type="file" accept="image/*" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label></div>{processing && <div className="mt-3 flex items-center gap-2 rounded-lg bg-brand-50 p-3 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Leyendo el comprobante…</div>}<div className="mt-3 rounded-xl bg-gradient-to-r from-brand-50 to-violet-50 p-3 text-xs text-brand-700"><b className="block">Lectura automática (OCR local, sin servicios externos)</b>Al elegir una foto, se intenta completar importe, fecha, proveedor y N.º de comprobante. Siempre revisá los datos antes de guardar.</div></div> : <div className="mt-4 space-y-3">{aiNotice && (aiNotice.ok ? <div className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700"><b className="block">Datos completados por OCR</b>Revisá los campos, sobre todo el importe y la fecha, antes de guardar.</div> : <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600"><b className="block">No se pudo leer el comprobante automáticamente</b>La imagen quedó guardada como evidencia; completá los datos manualmente.{aiNotice.error && <span className="mt-1 block text-slate-400">Motivo: {aiNotice.error}</span>}</div>)}{form.kind === "expense" && companyMismatch && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><b className="block">Este comprobante no parece corresponder a {branding?.companyLegalName || branding?.companyName || "tu empresa"}</b>El CUIT detectado en el receptor es {formatCuit(companyMismatch.receptorCuit)}{companyMismatch.receptorName ? ` (${companyMismatch.receptorName})` : ""}, distinto al configurado ({formatCuit(branding?.companyCuit)}). Puede ser un comprobante de otra persona/empresa, o un error de lectura del OCR.<label className="mt-2 flex items-center gap-2 font-medium"><input type="checkbox" checked={mismatchConfirmed} onChange={(event) => setMismatchConfirmed(event.target.checked)} /> Confirmo que este gasto corresponde igual a mi empresa</label></div>}<L label="Concepto *"><input autoFocus value={form.concept} onChange={(event) => set("concept", event.target.value)} placeholder={form.kind === "expense" ? "Ej. Compra de sensor inductivo" : "Ej. Cobro de factura"} className="u-input" /></L><div className="grid grid-cols-2 gap-2"><L label="Importe *"><input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => set("amount", event.target.value)} placeholder="0,00" className="u-input" /></L><L label="Moneda"><select value={form.currency} onChange={(event) => { const currency = event.target.value; setForm((current) => ({ ...current, currency, exchangeRate: currency === "USD" ? 1 : "", exchangeRateSource: "", exchangeRateUpdatedAt: "" })); }} className="u-input"><option value="ARS">ARS · Peso argentino</option><option value="USD">USD · Dólar estadounidense</option><option value="EUR">EUR · Euro</option></select></L></div>{form.currency !== "USD" && <><div className="grid grid-cols-2 gap-2"><L label={form.currency === "ARS" ? "Dólar BNA vendedor (ARS/USD)" : `Cambio (${form.currency} por USD)`}><input type="number" min="0" step="0.0001" readOnly={form.currency === "ARS" && !rateError} value={form.exchangeRate || ""} onChange={(event) => set("exchangeRate", event.target.value)} placeholder={rateLoading ? "Consultando BNA…" : form.currency === "ARS" ? "Cotización BNA" : "Ej. 0,92"} className={`u-input ${form.currency === "ARS" && !rateError ? "bg-slate-50" : ""}`} /></L><div className="rounded-lg bg-slate-50 px-3 py-2"><span className="block text-[11px] text-slate-400">Equivalente</span><b>{usdLabel}</b></div></div>{form.currency === "ARS" && <div className="flex items-center justify-between gap-2 text-[11px]"><span className={rateError ? "text-rose-600" : "text-slate-500"}>{rateError ? `${rateError} Puedes ingresar la cotización manualmente.` : (form.exchangeRate ? `BNA billete vendedor · ${rateInfo?.updatedAt || form.exchangeRateUpdatedAt ? new Date(rateInfo?.updatedAt || form.exchangeRateUpdatedAt).toLocaleString("es-AR") : "cotización registrada"}` : "Consultando cotización…")}</span><button type="button" onClick={loadBnaRate} disabled={rateLoading} className="font-medium text-brand-600">{rateLoading ? "Actualizando…" : "Actualizar"}</button></div>}</>}<div className="grid grid-cols-2 gap-2"><L label="Fecha *"><input type="date" value={form.date} onChange={(event) => set("date", event.target.value)} className="u-input" /></L>{form.kind === "expense" ? <L label="Categoría"><select value={form.category} onChange={(event) => set("category", event.target.value)} className="u-input">{EXPENSE_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></L> : <L label="Cliente"><select value={form.clientId || ""} onChange={(event) => set("clientId", event.target.value)} className="u-input"><option value="">Sin asociar</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L>}</div><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Proyecto"><select value={form.projectId || ""} onChange={(event) => selectProject(event.target.value)} className="u-input"><option value="">General / sin proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Presupuesto">{form.kind === "expense" ? <div className={`min-h-10 rounded-lg border px-3 py-2 text-xs ${selectedLink.budget ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{selectedLink.budget ? <><b className="block">{selectedLink.budget.number || selectedLink.budget.id} · {selectedLink.budget.title}</b><span>Vinculado automáticamente</span></> : form.projectId ? "El proyecto no tiene un presupuesto aprobado." : "Se vinculará al seleccionar un proyecto."}</div> : <select value={form.budgetId || ""} onChange={(event) => set("budgetId", event.target.value)} className="u-input"><option value="">Sin asociar</option>{budgets.map((budget) => <option key={budget.id} value={budget.id}>{budget.number || budget.id} · {budget.title}</option>)}</select>}</L></div>{form.kind === "expense" && form.projectId && <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"><Link2 className="h-4 w-4 shrink-0 text-brand-600" /><div><b className="block text-slate-700">Trazabilidad del gasto</b><span className="text-slate-500">{selectedLink.clientName || "Cliente sin identificar"}{selectedLink.budget ? ` · ${selectedLink.budget.number || selectedLink.budget.id}` : " · pendiente de presupuesto aprobado"}</span></div></div>}<div className="grid grid-cols-2 gap-2"><L label={form.kind === "expense" ? "Proveedor" : "Pagador / referencia"}><input value={form.supplier || ""} onChange={(event) => set("supplier", event.target.value)} className="u-input" /></L><L label="Factura / comprobante"><input value={form.receiptNumber || ""} onChange={(event) => set("receiptNumber", event.target.value)} className="u-input" /></L></div><L label="Medio de pago"><select value={form.paymentMethod || ""} onChange={(event) => set("paymentMethod", event.target.value)} className="u-input">{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></L>{form.kind === "expense" && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!form.vatIncluded} onChange={(event) => set("vatIncluded", event.target.checked)} /> El importe incluye IVA (21%)</label>{form.vatIncluded && <p className="mt-1 text-[11px] text-slate-500">Neto estimado: {money(usd / 1.21)} · Crédito fiscal: {money(usd - usd / 1.21)}</p>}<div className="mt-3 grid grid-cols-2 gap-2"><L label="Estado de pago"><select value={form.paymentStatus || "paid"} onChange={(event) => { const paymentStatus = event.target.value; setForm((current) => ({ ...current, paymentStatus, paidAt: paymentStatus === "paid" ? (current.paidAt || current.date) : "" })); }} className="u-input"><option value="paid">Pagado</option><option value="pending">Pendiente de pago</option></select></L>{form.paymentStatus !== "pending" && <L label="Fecha de pago"><input type="date" value={form.paidAt || form.date} onChange={(event) => set("paidAt", event.target.value)} className="u-input" /></L>}</div>{form.paymentStatus === "pending" && <p className="mt-2 text-[11px] text-amber-600">Este gasto quedará como cuenta por pagar hasta que actualices su estado.</p>}</div>}<L label="Detalle"><textarea value={form.detail || ""} onChange={(event) => set("detail", event.target.value)} rows={3} className="u-input resize-none" /></L>{form.attachmentUrl ? <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-2"><img src={form.attachmentUrl} alt="Comprobante" className="h-16 w-16 rounded-lg object-cover" /><div className="min-w-0 flex-1"><b className="block truncate text-xs">{form.attachmentName || "Comprobante adjunto"}</b><span className="text-[11px] text-emerald-600">Imagen vinculada</span></div><button onClick={() => setForm((current) => ({ ...current, attachmentUrl: "", attachmentName: "" }))} className="grid h-9 w-9 place-items-center rounded-lg text-rose-500"><Trash2 className="h-4 w-4" /></button></div> : <button onClick={() => setPickMode(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium"><Camera className="h-4 w-4" /> Adjuntar comprobante</button>}</div>}
     </div>{!pickMode && <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium">Cancelar</button><button disabled={saving || !form.concept.trim() || !(Number(form.amount) > 0) || !form.date || (form.currency !== "USD" && !(Number(form.exchangeRate) > 0)) || (form.kind === "expense" && companyMismatch && !mismatchConfirmed)} onClick={submit} className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${form.kind === "expense" ? "bg-brand-500" : "bg-emerald-600"}`}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar {form.kind === "expense" ? "gasto" : "ingreso"}</button></div>}
-  </div></div>;
+  </div>
+  {cropPending && <ImageCropModal imageUrl={cropPending.dataUrl} onDiscard={() => setCropPending(null)} onSkipCrop={() => { const { dataUrl, fileName } = cropPending; setCropPending(null); processReceiptImage(dataUrl, fileName); }} onConfirm={(cropped) => { const { fileName } = cropPending; setCropPending(null); processReceiptImage(cropped, fileName); }} />}
+  </div>;
 }
 
 function FinanceModule({ movements, projects, budgets, clients, branding, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
