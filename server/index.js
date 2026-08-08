@@ -32,7 +32,15 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(self), geolocation=(self), microphone=(self)");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'");
+  // worker-src 'self' blob:: Tesseract.js y pdf.js instancian su Web Worker desde un blob: URL
+  // (el bundle del worker generado por Vite, envuelto en un blob). Sin worker-src explícito, el
+  // navegador usa script-src como fallback, que no incluye blob: — bloqueaba la creación del
+  // worker con "violates ... script-src 'self'", y el OCR nunca llegaba a correr.
+  // connect-src suma tessdata.projectnaptha.com: es el host por defecto desde donde Tesseract.js
+  // descarga el modelo de idioma (.traineddata) en tiempo de ejecución — no viene empaquetado en
+  // el paquete npm porque pesa varios MB. cdn.jsdelivr.net queda como respaldo por si alguna
+  // versión de la librería lo usa para el mismo fin.
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://tessdata.projectnaptha.com https://cdn.jsdelivr.net");
   next();
 });
 app.use(express.json({ limit: "24mb" }));
