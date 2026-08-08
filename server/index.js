@@ -2002,13 +2002,21 @@ app.delete("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
 });
 
 /* ------------------------------------------------ Proxy IA (clave del lado servidor) ------------------------------------------------ */
+const RECEIPT_CATEGORIES = ["Materiales y repuestos", "Viáticos", "Combustible", "Herramientas", "Servicios contratados", "Logística", "Software y licencias", "Impuestos", "Administración", "Órdenes de trabajo", "Otro"];
 app.post("/api/ai/analyze", auth, requireOrdersAccess, async (req, res) => {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return res.status(501).json({ error: "IA no configurada" });
-  const { image } = req.body || {};
+  const { image, kind } = req.body || {};
   if (!image) return res.status(400).json({ error: "Falta la imagen" });
-  const prompt =
-`Eres un técnico de automatización industrial. Analiza la imagen del equipo o trabajo y devuelve SOLO JSON válido (sin markdown):
+  // "receipt" solo lo usa Finanzas (gerencia/admin) para pre-cargar el formulario de Gasto/Ingreso
+  // desde la foto de un comprobante; el resto de los roles conserva el análisis de equipo/trabajo.
+  if (kind === "receipt" && !["admin", "gerente"].includes(req.user.role)) return res.status(403).json({ error: "No autorizado" });
+  const prompt = kind === "receipt"
+    ? `Eres un asistente contable. Analiza la imagen de un comprobante (factura, ticket o recibo) y devuelve SOLO JSON válido (sin markdown):
+{"concept":"","amount":0,"currency":"ARS","date":"","category":"","supplier":"","receiptNumber":"","vatIncluded":false,"confidence":0}
+- concept: descripción corta de la compra/servicio. - amount: importe TOTAL numérico, sin separadores de miles ni símbolo de moneda. - currency: "ARS", "USD" o "EUR" según el símbolo o texto del comprobante (default "ARS" si no es claro). - date: fecha del comprobante en formato YYYY-MM-DD (si no se ve, dejar "").
+- category: una de estas opciones EXACTAS: ${RECEIPT_CATEGORIES.join(", ")}. - supplier: nombre del comercio o proveedor emisor. - receiptNumber: número de factura/ticket si es visible. - vatIncluded: true si el comprobante discrimina o incluye IVA. - confidence: 0 a 1, qué tan seguro estás de estos datos.`
+    : `Eres un técnico de automatización industrial. Analiza la imagen del equipo o trabajo y devuelve SOLO JSON válido (sin markdown):
 {"equipo":"","category":"","description":"","confidence":0}
 - equipo: nombre corto del componente. - category: etiqueta corta. - description: 1-2 frases en español. - confidence: 0 a 1.`;
   try {

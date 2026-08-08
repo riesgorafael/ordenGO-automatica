@@ -175,6 +175,7 @@ function fileToImages(file) {
   });
 }
 async function analyzeImage(dataUrl) { return api.analyze(dataUrl.split(",")[1]); }
+async function analyzeReceipt(dataUrl) { return api.analyze(dataUrl.split(",")[1], "receipt"); }
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const rd = new FileReader();
