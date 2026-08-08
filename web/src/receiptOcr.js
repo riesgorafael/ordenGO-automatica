@@ -51,13 +51,37 @@ const parseArNumber = (raw) => {
 };
 
 function parseAmount(text) {
-  const patterns = [/importe\s*total\D{0,15}\$?\s*([\d.,]+)/i, /total\D{0,15}\$?\s*([\d.,]+)/i];
+  const patterns = [/importe\s*total\D{0,20}\$?\s*([\d.,]+)/i, /total\s*a\s*pagar\D{0,20}\$?\s*([\d.,]+)/i, /\btotal\b\D{0,20}\$?\s*([\d.,]+)/i];
   for (const re of patterns) {
     const m = text.match(re);
     const amount = m && parseArNumber(m[1]);
     if (amount) return amount;
   }
-  return null;
+  // Si no encontramos ninguna etiqueta "Total", el número con formato de monto más grande de
+  // toda la factura suele ser el total (es casi siempre el importe más alto del comprobante).
+  const allAmounts = [...text.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map((m) => parseArNumber(m[1])).filter((n) => n > 0);
+  return allAmounts.length ? Math.max(...allAmounts) : null;
+}
+
+function parseCurrency(text) {
+  if (/\bUSD\b|U\$S/i.test(text)) return "USD";
+  if (/\bEUR\b|€/i.test(text)) return "EUR";
+  return "ARS";
+}
+
+// Busca la primera línea de detalle en la tabla de ítems (código + descripción) para sugerir un
+// concepto, ej. "APPL  Revest mas materiales varios" → "Revest mas materiales varios".
+function parseConcept(text) {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const headerIdx = lines.findIndex((line) => /producto\s*\/?\s*servicio|descripci[oó]n/i.test(line));
+  if (headerIdx === -1) return "";
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/importe|subtotal|iva|cantidad|alicuota|total/i.test(line)) continue;
+    const cleaned = line.replace(/^[A-Z0-9]{2,8}\s+/, "").replace(/[\d.,]+\s*(unidades?|u\.|kg|hs?)?\s*$/i, "").trim();
+    if (cleaned.length > 4) return cleaned;
+  }
+  return "";
 }
 
 function parseDate(text) {
@@ -110,6 +134,8 @@ export async function parseReceiptImage(imageDataUrl) {
   const receptor = parseReceptor(text);
   return {
     amount: parseAmount(text),
+    currency: parseCurrency(text),
+    concept: parseConcept(text),
     date: parseDate(text),
     supplier: guessSupplier(text),
     receiptNumber: parseReceiptNumber(text),
