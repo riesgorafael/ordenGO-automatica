@@ -2941,7 +2941,12 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const save = async (status, { stayOpen = false, technicalOverride = technical } = {}) => {
     setSaving(true);
     const selectedPlant = clientMode === "existing" ? clientSites(client).find((s) => s.code === siteCode) : null;
-    const resolvedSite = [selectedPlant?.name, siteLabel.trim()].filter(Boolean).join(" · ") || client.site || "";
+    // Al editar una orden ya guardada, "siteLabel" se precarga con el sitio ya combinado
+    // (planta + sector), no solo con el sector: sin deduplicar acá, cada edición volvía a anteponer
+    // el nombre de la planta y el campo crecía indefinidamente ("Venado Tuerto · Venado Tuerto ·
+    // ... · Deschalado"). Deduplicar por segmento además autocorrige órdenes que ya quedaron así.
+    const siteSegments = [selectedPlant?.name, ...siteLabel.split(" · ").map((part) => part.trim())].filter(Boolean);
+    const resolvedSite = [...new Set(siteSegments)].join(" · ") || client.site || "";
     const savedLocation = location ? { ...location, label: resolvedSite } : null;
     const completionStamp = new Date().toISOString();
     const timelineHours = technicalOverride.startedAt ? round2(timelineWorkMs(technicalOverride, Date.now()) / 3600000) : automaticLaborHours;
