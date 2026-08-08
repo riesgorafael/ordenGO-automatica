@@ -84,8 +84,13 @@ input[list]::-webkit-calendar-picker-indicator {
 }
 
 /* Mientras hay un diálogo de confirmación abierto (ConfirmDialog vive dentro de cada
-   módulo, no en el estado global), ocultamos el botón flotante para que no tape sus botones. */
-body.dialog-open .mobile-fab {
+   módulo, no en el estado global), ocultamos el botón flotante para que no tape sus botones.
+   También ocultamos la barra de navegación inferior de mobile: en algunos navegadores (Chrome
+   Android con la barra de direcciones dinámica) el alto real del viewport puede quedar mal
+   calculado un instante, dejando ver esta barra fixed por debajo del pie del diálogo — mejor
+   sacarla del todo mientras haya un diálogo abierto, así nunca tapa "Cancelar"/"Guardar". */
+body.dialog-open .mobile-fab,
+body.dialog-open .mobile-bottom-bar {
   display: none;
 }
 
