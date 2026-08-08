@@ -1405,6 +1405,7 @@ const currencyAmount = (amount, currency = "USD") => `${currency} ${(Number(amou
 const currentMonth = () => todayStr().slice(0, 7);
 
 function FinanceEntryModal({ movement, initialKind = "expense", projects, budgets, clients, branding, onClose, onSave }) {
+  useDialogOpenClass();
   const [form, setForm] = useState({ kind: initialKind, concept: "", amount: "", currency: "USD", exchangeRate: 1, date: todayStr(), category: EXPENSE_CATEGORIES[0], paymentMethod: PAYMENT_METHODS[0], projectId: "", budgetId: "", clientId: "", supplier: "", receiptNumber: "", detail: "", attachmentUrl: "", attachmentName: "", vatIncluded: false, paymentStatus: "paid", paidAt: todayStr(), ...(movement || {}) });
   const [pickMode, setPickMode] = useState(!movement); const [saving, setSaving] = useState(false); const [processing, setProcessing] = useState(false);
   const [aiNotice, setAiNotice] = useState(null); // {ok, confidence} | null
@@ -1618,6 +1619,7 @@ const budgetDate = (value) => value ? new Date(`${String(value).slice(0, 10)}T12
 const emptyBudget = (me, clients) => ({ number: "", clientId: clients[0]?.id || "", client: clients[0]?.name || "", site: clients[0]?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: BUDGET_STAGE_PROBABILITY.Borrador, targetMargin: 35, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: "Ingeniero", qty: 1, unit: "h", unitPrice: 38.46, unitCost: 25 }] });
 
 function BudgetEditor({ budget, clients, parts, me, onClose, onSave }) {
+  useDialogOpenClass();
   const [form, setForm] = useState(() => ({ ...emptyBudget(me, clients), ...(budget || {}), number: budget?.number || budget?.id || "", probabilityOverridden: Boolean(budget?.probabilityOverridden), probability: budget?.probabilityOverridden ? budget.probability : BUDGET_STAGE_PROBABILITY[budget?.stage || "Borrador"], items: (budget?.items || emptyBudget(me, clients).items).map((item) => ({ ...item })), additionalCosts: (budget?.additionalCosts || []).map((item) => ({ ...item })) }));
   const [saving, setSaving] = useState(false);
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
@@ -1756,6 +1758,7 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, me, create
 }
 
 function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOrder, onProject }) {
+  useDialogOpenClass();
   const [creatingProject, setCreatingProject] = useState(false);
   const orderIsRecommended = !recommendProject || Boolean(project);
   const createProject = async () => { setCreatingProject(true); await onProject(); setCreatingProject(false); };
@@ -1782,6 +1785,7 @@ function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOr
 }
 
 function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }) {
+  useDialogOpenClass();
   const [form, setForm] = useState(() => ({ supplierId: "", projectId: "", stage: "Borrador", dueDate: "", supplierQuoteNumber: "", supplierInvoiceNumber: "", notes: "", ...(po || {}), items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map((item) => ({ ...item })) }));
   const [saving, setSaving] = useState(false);
   const [rateLoading, setRateLoading] = useState(false);
@@ -1888,6 +1892,7 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
 /* ===================================== LISTADO DE MATERIALES ===================================== */
 const SECTION_LETTERS_CLIENT = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 function MaterialListEditor({ materialList, projects, clients, onClose, onSave, onErr }) {
+  useDialogOpenClass();
   const [form, setForm] = useState(() => ({
     projectId: "", discipline: "Eléctricos", version: "1.0", client: "", site: "", notes: [...MATERIAL_LIST_DEFAULT_NOTES],
     ...(materialList || {}),
@@ -2510,6 +2515,7 @@ function MonthlyReport({ orders }) {
 
 /* ===================================== ÓRDENES: DETALLE ===================================== */
 function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, onContinue, onEdit, me }) {
+  useDialogOpenClass();
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const assignedTechs = order.assignedTechs?.length ? order.assignedTechs : (order.tech ? [order.tech] : []);
@@ -2632,6 +2638,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
 }
 
 function OrderEditDialog({ order, clients, users, parts, budgets = [], projects = [], onClose, onSave }) {
+  useDialogOpenClass();
   const hydrateMaterial = (material) => {
     const part = parts.find((item) => (material.partId && item.id === material.partId) || item.name === material.name);
     if (!part) return { ...material };
@@ -2744,6 +2751,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
 }
 
 function ReasonDialog({ onClose, onConfirm, title = "Aprobar sin firma", description = "Registrá el motivo para mantener la trazabilidad de la orden.", placeholder = "Ej. Cliente ausente; conformidad recibida por teléfono", confirmLabel = "Aprobar", confirmClass = "bg-amber-600" }) {
+  useDialogOpenClass();
   const [reason, setReason] = useState("");
   const mouseDownOnBackdrop = useRef(false);
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600"><AlertTriangle className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></div></div><L label="Motivo"><textarea autoFocus rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} className="u-input resize-none" /></L><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!reason.trim()} onClick={() => onConfirm(reason.trim())} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${confirmClass}`}>{confirmLabel}</button></div></div></div>;
@@ -2796,6 +2804,7 @@ function MicButton({ value, onChange, className = "" }) {
 
 /* ===================================== ESCÁNER DE CÓDIGO (TAG DE ACTIVO) ===================================== */
 function BarcodeScannerDialog({ onClose, onDetect }) {
+  useDialogOpenClass();
   const videoRef = useRef(null);
   const [error, setError] = useState("");
   const supported = typeof window !== "undefined" && "BarcodeDetector" in window;
@@ -3288,6 +3297,7 @@ function ActivitySection({ entity, onSend, userById }) {
 
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
 function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, onDuplicate, prefill }) {
+  useDialogOpenClass();
   const editingExisting = !!task;
   const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
@@ -3420,6 +3430,7 @@ function ChartBox({ data }) {
 /* ===================================== EQUIPO (ADMIN) ===================================== */
 /* ===================================== ACCESO POR PROYECTO ===================================== */
 function ProjectAccess({ project, users, onClose, onSave }) {
+  useDialogOpenClass();
   const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina" || u.role === "monitor_oficina"));
   const [sel, setSel] = useState(new Set(project.allowedUsers || []));
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -3450,6 +3461,7 @@ function ProjectAccess({ project, users, onClose, onSave }) {
 
 /* ===================================== DUPLICAR PROYECTO ===================================== */
 function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) {
+  useDialogOpenClass();
   const people = users.filter((u) => u.active && u.role !== "monitor_oficina");
   const suggestKey = (project.key || "PRJ");
   const [name, setName] = useState(`${project.name} (copia)`);
@@ -3617,6 +3629,7 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
 }
 
 function ClientEditor({ value, onClose, onSave }) {
+  useDialogOpenClass();
   const [form, setForm] = useState({ name: value.name || "", cuit: value.cuit || "", ivaCondition: value.ivaCondition || "", address: value.address || "", locality: value.locality || "", phone: value.phone || "", email: value.email || "", contactName: value.contactName || "", saleCondition: value.saleCondition || "", logoDataUrl: value.logoDataUrl || "", sites: value.sites?.length ? value.sites.map((s) => ({ ...s })) : [{ code: value.code || "", name: value.site || "" }] });
   const [logoError, setLogoError] = useState("");
   const mouseDownOnBackdrop = useRef(false);
@@ -3682,6 +3695,7 @@ function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr 
 }
 
 function SupplierEditor({ value, onClose, onSave }) {
+  useDialogOpenClass();
   const [form, setForm] = useState({ name: value.name || "", code: value.code || "", cuit: value.cuit || "", address: value.address || "", locality: value.locality || "", phone: value.phone || "", email: value.email || "", contactName: value.contactName || value.contact || "", ivaCondition: value.ivaCondition || "", saleCondition: value.saleCondition || "", paymentTermsDays: value.paymentTermsDays ?? 30, active: value.active !== false });
   const mouseDownOnBackdrop = useRef(false);
   const set = (field, val) => setForm((current) => ({ ...current, [field]: val }));
@@ -3892,6 +3906,7 @@ function WhiteboardViewDialog({ note, projects, onClose }) {
 
 /* ===================================== PIZARRA: EDITOR DE DIBUJO ===================================== */
 function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
+  useDialogOpenClass();
   const [title, setTitle] = useState(note.title || "");
   const [projectId, setProjectId] = useState(note.projectId || "");
   const boardRef = useRef(null);
@@ -4376,6 +4391,7 @@ function Team({ users, tasks, orders, projects = [], me, onAdd, onPatch, onRemov
 }
 
 function UserProjectsDialog({ user, projects, onClose, onSave }) {
+  useDialogOpenClass();
   const [sel, setSel] = useState(new Set(projects.filter((p) => (p.allowedUsers || []).includes(user.id)).map((p) => p.id)));
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const mouseDownOnBackdrop = useRef(false);
@@ -4403,6 +4419,7 @@ function UserProjectsDialog({ user, projects, onClose, onSave }) {
 }
 
 function TvScreenDialog({ user, onClose, onSave }) {
+  useDialogOpenClass();
   const s = user.settings || {};
   const [form, setForm] = useState({ screenName: s.screenName || "", tvModeEnabled: s.tvModeEnabled || false, tvCycleEnabled: s.tvCycleEnabled || false, tvCycleSeconds: s.tvCycleSeconds || 30 });
   const [saving, setSaving] = useState(false);
@@ -4425,6 +4442,7 @@ function TvScreenDialog({ user, onClose, onSave }) {
 }
 
 function PasswordResetDialog({ user, onClose, onSave }) {
+  useDialogOpenClass();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);

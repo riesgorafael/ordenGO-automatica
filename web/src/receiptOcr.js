@@ -10,9 +10,37 @@ function getWorker() {
   return workerPromise;
 }
 
+// Escala de grises + realce de contraste: el mismo tipo de "limpieza" que hacen apps de escaneo
+// como CamScanner antes de aplicar OCR, pero corriendo local con canvas — sin subir la foto a
+// ningún servicio de terceros. Ayuda especialmente con fotos de celular con sombras o poca luz.
+function enhanceForOcr(imageDataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const contrast = 1.35;
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        const adjusted = Math.min(255, Math.max(0, (gray - 128) * contrast + 128));
+        data[i] = data[i + 1] = data[i + 2] = adjusted;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL("image/jpeg", 0.92));
+    };
+    img.onerror = () => resolve(imageDataUrl);
+    img.src = imageDataUrl;
+  });
+}
+
 async function extractText(imageDataUrl) {
   const worker = await getWorker();
-  const { data } = await worker.recognize(imageDataUrl);
+  const enhanced = await enhanceForOcr(imageDataUrl);
+  const { data } = await worker.recognize(enhanced);
   return data.text || "";
 }
 
