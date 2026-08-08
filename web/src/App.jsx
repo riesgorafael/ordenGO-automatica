@@ -14,6 +14,7 @@ import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
 import { clientOrderReportPDF, internalOrderReportPDF, materialListReportPDF, monthlyReportPDF, purchaseOrderReportPDF, valuedClientReportPDF } from "./pdf";
 import { parseReceiptImage } from "./receiptOcr";
+import { warpPerspective, autoDetectCorners } from "./imagePerspective";
 import GanttChart from "./GanttChart";
 import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, updateQueuedOrder } from "./offline";
 
@@ -1404,92 +1405,85 @@ const PAYMENT_METHODS = ["Transferencia", "Efectivo", "Tarjeta", "Cuenta corrien
 const currencyAmount = (amount, currency = "USD") => `${currency} ${(Number(amount) || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const currentMonth = () => todayStr().slice(0, 7);
 
-// Recorte rectangular estilo CamScanner: el usuario arrastra las esquinas de un marco sobre la
-// foto para descartar todo lo que no sea la factura (mesa, mano, otros papeles) antes de correr el
-// OCR — mejora la lectura sin depender de ningún servicio externo. No hace corrección de
-// perspectiva (eso requeriría una transformación geométrica más compleja); es un recorte simple.
+// Recorte con corrección de perspectiva estilo CamScanner: apenas se abre, se autodetectan los
+// bordes del papel (best-effort, por contraste de brillo contra el fondo) y se ofrecen las 4
+// esquinas ya puestas — en el caso común (papel claro sobre un escritorio) la persona de
+// administración solo tiene que apretar "Confirmar". Si el encuadre automático no queda bien
+// (fondo claro, factura girada), puede arrastrar cualquiera de las 4 esquinas de forma
+// independiente para ajustarla a mano antes de continuar.
 function ImageCropModal({ imageUrl, onDiscard, onSkipCrop, onConfirm }) {
   useDialogOpenClass();
   const boxRef = useRef(null);
-  const [rect, setRect] = useState({ x: 0.04, y: 0.04, w: 0.92, h: 0.92 });
+  const [corners, setCorners] = useState(null); // [{x,y}×4] TL,TR,BR,BL en fracción [0,1] | null mientras autodetecta
+  const [detecting, setDetecting] = useState(true);
   const dragRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetecting(true);
+    autoDetectCorners(imageUrl).then((detected) => { if (!cancelled) { setCorners(detected); setDetecting(false); } });
+    return () => { cancelled = true; };
+  }, [imageUrl]);
+
   const pointFraction = (event) => {
     const box = boxRef.current.getBoundingClientRect();
     return { fx: clamp01((event.clientX - box.left) / box.width), fy: clamp01((event.clientY - box.top) / box.height) };
   };
-  const onHandleDown = (corner) => (event) => {
+  const onHandleDown = (index) => (event) => {
     event.preventDefault(); event.stopPropagation();
     event.target.setPointerCapture?.(event.pointerId);
-    dragRef.current = { corner, pointerId: event.pointerId };
-  };
-  const onBoxDown = (event) => {
-    if (dragRef.current) return;
-    event.target.setPointerCapture?.(event.pointerId);
-    const { fx, fy } = pointFraction(event);
-    dragRef.current = { corner: "move", pointerId: event.pointerId, startFx: fx, startFy: fy, startRect: rect };
+    dragRef.current = { index, pointerId: event.pointerId };
   };
   const onPointerMove = (event) => {
     const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag) return;
     const { fx, fy } = pointFraction(event);
-    if (drag.corner === "move") {
-      const dx = fx - drag.startFx, dy = fy - drag.startFy;
-      const { w, h } = drag.startRect;
-      const x = Math.min(1 - w, Math.max(0, drag.startRect.x + dx));
-      const y = Math.min(1 - h, Math.max(0, drag.startRect.y + dy));
-      setRect({ x, y, w, h });
-      return;
-    }
-    setRect((current) => {
-      const { x, y, w, h } = current;
-      const right = x + w, bottom = y + h;
-      if (drag.corner === "nw") { const nx = Math.min(fx, right - 0.08); const ny = Math.min(fy, bottom - 0.08); return { x: nx, y: ny, w: right - nx, h: bottom - ny }; }
-      if (drag.corner === "ne") { const ny = Math.min(fy, bottom - 0.08); const nw = Math.max(0.08, fx - x); return { x, y: ny, w: nw, h: bottom - ny }; }
-      if (drag.corner === "sw") { const nx = Math.min(fx, right - 0.08); const nh = Math.max(0.08, fy - y); return { x: nx, y, w: right - nx, h: nh }; }
-      if (drag.corner === "se") { const nw = Math.max(0.08, fx - x); const nh = Math.max(0.08, fy - y); return { x, y, w: nw, h: nh }; }
-      return current;
-    });
+    setCorners((current) => current.map((point, index) => (index === drag.index ? { x: fx, y: fy } : point)));
   };
-  const onPointerUp = (event) => { if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null; };
+  const onPointerUp = () => { dragRef.current = null; };
+
   const confirmCrop = () => {
     setBusy(true);
     const img = new Image();
     img.onload = () => {
-      const sx = Math.round(rect.x * img.naturalWidth), sy = Math.round(rect.y * img.naturalHeight);
-      const sw = Math.max(1, Math.round(rect.w * img.naturalWidth)), sh = Math.max(1, Math.round(rect.h * img.naturalHeight));
-      const scale = Math.min(1, 1600 / Math.max(sw, sh));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(sw * scale); canvas.height = Math.round(sh * scale);
-      canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      const srcCorners = corners.map((point) => ({ x: point.x * img.naturalWidth, y: point.y * img.naturalHeight }));
+      const edgeLen = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+      const outWraw = (edgeLen(srcCorners[0], srcCorners[1]) + edgeLen(srcCorners[3], srcCorners[2])) / 2;
+      const outHraw = (edgeLen(srcCorners[0], srcCorners[3]) + edgeLen(srcCorners[1], srcCorners[2])) / 2;
+      const scale = Math.min(1, 1600 / Math.max(outWraw, outHraw));
+      const outW = Math.max(1, Math.round(outWraw * scale)), outH = Math.max(1, Math.round(outHraw * scale));
+      const canvas = warpPerspective(img, srcCorners, outW, outH);
       setBusy(false);
       onConfirm(canvas.toDataURL("image/jpeg", 0.9));
     };
     img.onerror = () => { setBusy(false); onSkipCrop(); };
     img.src = imageUrl;
   };
-  const handleCls = "absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 touch-none rounded-full border-2 border-white bg-brand-500 shadow";
+
+  const handleCls = "absolute h-8 w-8 -translate-x-1/2 -translate-y-1/2 touch-none rounded-full border-2 border-white bg-brand-500 shadow";
+  const polygonPoints = corners ? corners.map((point) => `${point.x * 100},${point.y * 100}`).join(" ") : "";
+  const maskPath = corners
+    ? `M0,0 H100 V100 H0 Z M ${corners.map((point) => `${point.x * 100},${point.y * 100}`).join(" L ")} Z`
+    : "";
   return <div className="motion-backdrop fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/85 p-3">
     <div className="mobile-dialog flex max-h-[95dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3"><div><h2 className="text-base font-semibold text-slate-900">Recortar comprobante</h2><p className="text-xs text-slate-500">Arrastrá las esquinas para encuadrar solo los datos de la factura.</p></div><button onClick={onDiscard} aria-label="Cerrar" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3"><div><h2 className="text-base font-semibold text-slate-900">Recortar comprobante</h2><p className="text-xs text-slate-500">{detecting ? "Detectando los bordes del papel…" : "Ajustá las esquinas si el encuadre automático no quedó exacto."}</p></div><button onClick={onDiscard} aria-label="Cerrar" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
       <div className="flex-1 overflow-auto bg-slate-900 p-3">
         <div ref={boxRef} className="relative mx-auto touch-none select-none" style={{ maxWidth: "100%", width: "fit-content" }}>
           <img src={imageUrl} alt="Comprobante a recortar" className="block max-h-[60dvh] select-none" draggable={false} />
-          <div className="absolute inset-0" onPointerDown={onBoxDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-            <div className="absolute inset-x-0 top-0 bg-black/60" style={{ height: `${rect.y * 100}%` }} />
-            <div className="absolute inset-x-0 bottom-0 bg-black/60" style={{ height: `${(1 - rect.y - rect.h) * 100}%` }} />
-            <div className="absolute bg-black/60" style={{ left: 0, top: `${rect.y * 100}%`, width: `${rect.x * 100}%`, height: `${rect.h * 100}%` }} />
-            <div className="absolute bg-black/60" style={{ right: 0, top: `${rect.y * 100}%`, width: `${(1 - rect.x - rect.w) * 100}%`, height: `${rect.h * 100}%` }} />
-            <div className="absolute border-2 border-brand-400" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}>
-              {["nw", "ne", "sw", "se"].map((corner) => <div key={corner} className={handleCls} style={{ left: corner.includes("w") ? 0 : "100%", top: corner.includes("n") ? 0 : "100%" }} onPointerDown={onHandleDown(corner)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} />)}
-            </div>
-          </div>
+          {detecting && <div className="absolute inset-0 flex items-center justify-center bg-black/50"><span className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700"><Loader2 className="h-4 w-4 animate-spin" /> Detectando bordes…</span></div>}
+          {corners && !detecting && <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <path d={maskPath} fillRule="evenodd" fill="rgba(0,0,0,0.6)" />
+            <polygon points={polygonPoints} fill="none" stroke="#F18700" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
+          </svg>}
+          {corners && !detecting && corners.map((point, index) => <div key={index} className={handleCls} style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }} onPointerDown={onHandleDown(index)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} />)}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 border-t border-slate-100 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <button onClick={onSkipCrop} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Usar imagen completa</button>
-        <button onClick={confirmCrop} disabled={busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Recortar y continuar</button>
+        <button onClick={confirmCrop} disabled={busy || detecting} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Confirmar y continuar</button>
       </div>
     </div>
   </div>;
@@ -1703,7 +1697,23 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
       </Panel>
     </div>
 
-    <div><Box className="p-4"><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar concepto, proveedor o comprobante…" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"><option value="all">Todos los movimientos</option><option value="expense">Gastos</option><option value="income">Cobros</option><option value="invoice">Facturas</option></select></div><div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto">{visible.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">No hay movimientos registrados.</div> : visible.map((movement) => { const project = projects.find((item) => item.id === movement.projectId); const invoice = movement.kind === "invoice"; return <div key={movement.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 p-3"><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${invoice ? "bg-sky-50 text-sky-600" : movement.kind === "income" ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>{invoice ? <FileText className="h-5 w-5" /> : movement.kind === "income" ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{movement.concept}</b><span className="font-mono text-[10px] text-slate-400">{movement.id}</span>{movement.budgetId && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{movement.budgetNumber || budgets.find((item) => item.id === movement.budgetId)?.number || movement.budgetId}</span>}{movement.sourceOrderId && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Automático · OT {movement.sourceOrderId}</span>}{movement.sourcePurchaseOrderId && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">Automático · OC {movement.purchaseOrderNumber || movement.sourcePurchaseOrderId}</span>}{movement.kind === "expense" && movement.paymentStatus === "pending" && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Pendiente de pago</span>}</div><div className="mt-0.5 text-xs text-slate-500">{budgetDate(movement.date)}{project ? ` · ${project.key}` : ""}{movement.category ? ` · ${movement.category}` : ""}{movement.receiptNumber ? ` · ${movement.receiptNumber}` : ""}{movement.purchaseOrderNumber ? ` · OC ${movement.purchaseOrderNumber}` : ""}{movement.kind === "expense" && movement.vatIncluded ? ` · IVA cred. ${money(movement.vatAmountUsd)}` : ""}</div></div><div className="text-right"><b className={invoice ? "text-sky-700" : movement.kind === "income" ? "text-emerald-600" : "text-rose-600"}>{invoice ? "" : movement.kind === "income" ? "+" : "−"}{currencyAmount(movement.amount, movement.currency)}</b>{movement.currency !== "USD" && <span className="block text-[10px] text-slate-400">{money(movement.amountUsd)}</span>}{movement.arsReference?.grossArs && <span className="block text-[10px] text-slate-400">≈ {ars(movement.arsReference.grossArs)}</span>}</div>{(movement.hasAttachment || movement.attachmentUrl) && <span title="Comprobante adjunto" className="grid h-10 w-10 place-items-center rounded-lg bg-emerald-50 text-emerald-600"><FileText className="h-4 w-4" /></span>}{!invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <button disabled={loadingEdit === movement.id} onClick={() => openEdit(movement)} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 disabled:opacity-50">{loadingEdit === movement.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}</button>}{!movement.sourceBudgetId && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <button onClick={() => onDelete(movement)} className="grid h-10 w-10 place-items-center rounded-lg border border-rose-200 text-rose-500"><Trash2 className="h-4 w-4" /></button>}</div>; })}</div></Box></div>
+    <div><Box className="p-4"><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar concepto, proveedor o comprobante…" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"><option value="all">Todos los movimientos</option><option value="expense">Gastos</option><option value="income">Cobros</option><option value="invoice">Facturas</option></select></div><div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto">{visible.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">No hay movimientos registrados.</div> : visible.map((movement) => { const project = projects.find((item) => item.id === movement.projectId); const invoice = movement.kind === "invoice"; return <div key={movement.id} className="flex flex-col gap-3 rounded-xl border border-slate-200 p-3 sm:flex-row sm:items-center">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${invoice ? "bg-sky-50 text-sky-600" : movement.kind === "income" ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>{invoice ? <FileText className="h-5 w-5" /> : movement.kind === "income" ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2"><b className="text-sm">{movement.concept}</b><span className="font-mono text-[10px] text-slate-400">{movement.id}</span>{movement.budgetId && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{movement.budgetNumber || budgets.find((item) => item.id === movement.budgetId)?.number || movement.budgetId}</span>}{movement.sourceOrderId && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Automático · OT {movement.sourceOrderId}</span>}{movement.sourcePurchaseOrderId && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">Automático · OC {movement.purchaseOrderNumber || movement.sourcePurchaseOrderId}</span>}{movement.kind === "expense" && movement.paymentStatus === "pending" && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Pendiente de pago</span>}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">{budgetDate(movement.date)}{project ? ` · ${project.key}` : ""}{movement.category ? ` · ${movement.category}` : ""}{movement.receiptNumber ? ` · ${movement.receiptNumber}` : ""}{movement.purchaseOrderNumber ? ` · OC ${movement.purchaseOrderNumber}` : ""}{movement.kind === "expense" && movement.vatIncluded ? ` · IVA cred. ${money(movement.vatAmountUsd)}` : ""}</div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 sm:shrink-0 sm:justify-end sm:gap-3">
+                  <div className="text-left sm:text-right"><b className={invoice ? "text-sky-700" : movement.kind === "income" ? "text-emerald-600" : "text-rose-600"}>{invoice ? "" : movement.kind === "income" ? "+" : "−"}{currencyAmount(movement.amount, movement.currency)}</b>{movement.currency !== "USD" && <span className="block text-[10px] text-slate-400">{money(movement.amountUsd)}</span>}{movement.arsReference?.grossArs && <span className="block text-[10px] text-slate-400">≈ {ars(movement.arsReference.grossArs)}</span>}</div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {(movement.hasAttachment || movement.attachmentUrl) && <span title="Comprobante adjunto" className="grid h-10 w-10 place-items-center rounded-lg bg-emerald-50 text-emerald-600"><FileText className="h-4 w-4" /></span>}
+                    {!invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <button disabled={loadingEdit === movement.id} onClick={() => openEdit(movement)} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 disabled:opacity-50">{loadingEdit === movement.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}</button>}
+                    {!movement.sourceBudgetId && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <button onClick={() => onDelete(movement)} className="grid h-10 w-10 place-items-center rounded-lg border border-rose-200 text-rose-500"><Trash2 className="h-4 w-4" /></button>}
+                  </div>
+                </div>
+              </div>; })}</div></Box></div>
     {editor && <FinanceEntryModal movement={editor.mode === "new" ? null : editor} initialKind={newKind} projects={projects} budgets={budgets} clients={clients} branding={branding} onClose={() => setEditor(null)} onSave={onSave} />}
   </div>;
 }
@@ -1987,7 +1997,7 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
       )}
       <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Pendiente de recibir" value={money(pendingTotal)} icon={Truck} tint="text-brand-600" description="Suma del total con IVA de las órdenes de compra en Borrador, Enviada o Confirmada." /><Metric label="Recibido (histórico)" value={money(receivedTotal)} icon={CheckCircle2} tint="text-emerald-600" description="Suma del total con IVA de las órdenes marcadas como Recibidas." /><Metric label="Cuentas por pagar de OC" value={payableCount} icon={AlertTriangle} tint={payableCount ? "text-amber-600" : "text-emerald-600"} description="Movimientos de Finanzas generados por órdenes de compra recibidas que siguen pendientes de pago." /><Metric label="Proveedores activos" value={suppliers.filter((s) => s.active !== false).length} icon={Building2} tint="text-slate-600" description="Cantidad de proveedores marcados como activos." /></div>
       <div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar orden, proveedor o factura…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={stage} onChange={(event) => setStage(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="Todos">Todos los estados</option>{PO_STAGES.map((item) => <option key={item}>{item}</option>)}</select></div>
-      {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><ShoppingCart className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin órdenes de compra para mostrar</h3><p className="mt-1 text-xs text-slate-400">Registrá una compra a proveedor para empezar.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((po) => <Box key={po.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{po.number || po.id}</span><Chip className={`${PO_STAGE_STYLE[po.stage]} ring-1`}>{po.stage}</Chip>{po.supplierQuoteNumber && <Chip className="bg-violet-50 text-violet-700 ring-violet-200">Presup. {po.supplierQuoteNumber}</Chip>}{po.supplierInvoiceNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">Fact. {po.supplierInvoiceNumber}</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{po.supplierName}</h3><p className="mt-0.5 text-xs text-slate-500">{(po.items || []).length} producto(s) · {(po.items || []).reduce((sum, item) => sum + (Number(item.qty) || 0), 0)} unidad(es){po.dueDate ? ` · Entrega ${budgetDate(po.dueDate)}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => purchaseOrderReportPDF(po, suppliers.find((s) => s.id === po.supplierId), projects.find((p) => p.id === po.projectId))} title="Descargar PDF" aria-label="Descargar PDF de la orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingPo(po); setEditorOpen(true); }} title="Editar orden de compra" aria-label="Editar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>{onDuplicate && <button onClick={() => wrap(onDuplicate)(po)} title="Duplicar orden de compra" aria-label="Duplicar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>}<button onClick={() => setPendingDelete(po)} title="Eliminar orden de compra" aria-label="Eliminar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs"><div><span className="block text-[10px] text-slate-400">Neto</span><b>{money(po.netAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">IVA</span><b>{money(po.vatAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">Total</span><b>{money(po.grossAmountUsd)}</b></div></div>{po.stage === "Recibida" && (() => { const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); if (!payable) return null; const isPaid = payable.paymentStatus !== "pending"; return (
+      {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><ShoppingCart className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin órdenes de compra para mostrar</h3><p className="mt-1 text-xs text-slate-400">Registrá una compra a proveedor para empezar.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((po) => <Box key={po.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{po.number || po.id}</span><Chip className={`${PO_STAGE_STYLE[po.stage]} ring-1`}>{po.stage}</Chip>{po.supplierQuoteNumber && <Chip className="bg-violet-50 text-violet-700 ring-violet-200" title="Número de cotización que te dio el proveedor (no un Presupuesto tuyo)">Cotiz. proveedor {po.supplierQuoteNumber}</Chip>}{po.supplierInvoiceNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">Fact. {po.supplierInvoiceNumber}</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{po.supplierName}</h3><p className="mt-0.5 text-xs text-slate-500">{(po.items || []).length} producto(s) · {(po.items || []).reduce((sum, item) => sum + (Number(item.qty) || 0), 0)} unidad(es){po.dueDate ? ` · Entrega ${budgetDate(po.dueDate)}` : ""}</p></div><div className="flex shrink-0 gap-1.5"><button onClick={() => purchaseOrderReportPDF(po, suppliers.find((s) => s.id === po.supplierId), projects.find((p) => p.id === po.projectId))} title="Descargar PDF" aria-label="Descargar PDF de la orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingPo(po); setEditorOpen(true); }} title="Editar orden de compra" aria-label="Editar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>{onDuplicate && <button onClick={() => wrap(onDuplicate)(po)} title="Duplicar orden de compra" aria-label="Duplicar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>}<button onClick={() => setPendingDelete(po)} title="Eliminar orden de compra" aria-label="Eliminar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs"><div><span className="block text-[10px] text-slate-400">Neto</span><b>{money(po.netAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">IVA</span><b>{money(po.vatAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">Total</span><b>{money(po.grossAmountUsd)}</b></div></div>{po.stage === "Recibida" && (() => { const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); if (!payable) return null; const isPaid = payable.paymentStatus !== "pending"; return (
                 <div className={`mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs font-medium ${isPaid ? "text-emerald-700" : "text-amber-700"}`}>
                   <Link2 className="h-3.5 w-3.5 shrink-0" />
                   {isPaid ? <span>Pagada{payable.paidAt ? ` el ${budgetDate(payable.paidAt)}` : ""}</span> : <span>Cuenta por pagar pendiente</span>}

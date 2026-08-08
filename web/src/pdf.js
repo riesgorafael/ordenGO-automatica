@@ -466,7 +466,7 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   field("R. Social", po.supplierName, M, 66, 58); field("CUIT", supplier?.cuit, 110, 66, 53);
   field("Dirección", supplier?.address, M, 73, 58); field("Atención", supplier?.contactName || supplier?.contact, 110, 73, 53);
   field("Localidad", supplier?.locality, M, 80, 58); field("Condición", supplier?.ivaCondition, 110, 80, 53);
-  field("Teléfono", supplier?.phone, M, 87, 58); field("Presup. N.º", po.supplierQuoteNumber, 110, 87, 53);
+  field("Teléfono", supplier?.phone, M, 87, 58); field("Cotiz. proveedor N.º", po.supplierQuoteNumber, 110, 87, 53);
   field("Email", supplier?.email, M, 94, 58);
 
   y = 106;
