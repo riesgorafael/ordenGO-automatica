@@ -52,13 +52,18 @@ const DEFAULT_BRANDING = {
   tvCycleEnabled: false,
   tvCycleSeconds: 30,
   hideAdminModules: false,
+  companyCuit: "",
+  companyLegalName: "",
 };
 const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
+const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
 const normalizeBranding = (value = {}) => ({
   ...DEFAULT_BRANDING,
   appName: String(value.appName || DEFAULT_BRANDING.appName).trim().slice(0, 40),
   subtitle: String(value.subtitle || DEFAULT_BRANDING.subtitle).trim().slice(0, 80),
   companyName: String(value.companyName || DEFAULT_BRANDING.companyName).trim().slice(0, 80),
+  companyCuit: digitsOnly(value.companyCuit).slice(0, 11),
+  companyLegalName: String(value.companyLegalName || "").trim().slice(0, 120),
   theme: String(value.theme || DEFAULT_BRANDING.theme).trim().slice(0, 30),
   primaryColor: validHexColor(value.primaryColor) ? value.primaryColor.toUpperCase() : DEFAULT_BRANDING.primaryColor,
   headerColor: validHexColor(value.headerColor) ? value.headerColor.toUpperCase() : DEFAULT_BRANDING.headerColor,

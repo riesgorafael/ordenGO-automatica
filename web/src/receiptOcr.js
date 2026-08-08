@@ -61,16 +61,33 @@ function guessSupplier(text) {
 
 const hasVat = (text) => /iva\s*(21|27|10[.,]5)\s*%/i.test(text);
 
-// Devuelve null en cada campo que no pudo inferir con confianza — el llamador solo debe
+// En una factura AFIP el receptor (a quién se le factura) se identifica con la combinación
+// "Apellido y Nombre / Razón Social", a diferencia del emisor que solo dice "Razón Social". El
+// CUIT del receptor suele aparecer justo antes de esa etiqueta, en la misma línea o cerca.
+function parseReceptor(text) {
+  const sameLine = text.match(/cuit\s*:?\s*([\d.\-]{10,14})[^\n]{0,60}apellido\s*y\s*nombre\s*\/?\s*raz[oó]n\s*social\s*:?\s*([^\n]+)/i);
+  if (sameLine) return { cuit: sameLine[1].replace(/\D/g, ""), name: sameLine[2].trim() };
+  const labelIdx = text.search(/apellido\s*y\s*nombre/i);
+  if (labelIdx === -1) return { cuit: "", name: "" };
+  const before = text.slice(Math.max(0, labelIdx - 60), labelIdx);
+  const cuitMatch = before.match(/(\d{2}[.\-]?\d{8}[.\-]?\d)(?!.*\d{2}[.\-]?\d{8}[.\-]?\d)/);
+  const nameMatch = text.slice(labelIdx).match(/raz[oó]n\s*social\s*:?\s*([^\n]+)/i);
+  return { cuit: cuitMatch ? cuitMatch[1].replace(/\D/g, "") : "", name: nameMatch ? nameMatch[1].trim() : "" };
+}
+
+// Devuelve vacío/null en cada campo que no pudo inferir con confianza — el llamador solo debe
 // sobrescribir lo que el usuario no cargó a mano, nunca pisar un dato ya escrito.
 export async function parseReceiptImage(imageDataUrl) {
   const text = await extractText(imageDataUrl);
+  const receptor = parseReceptor(text);
   return {
     amount: parseAmount(text),
     date: parseDate(text),
     supplier: guessSupplier(text),
     receiptNumber: parseReceiptNumber(text),
     vatIncluded: hasVat(text),
+    receptorCuit: receptor.cuit,
+    receptorName: receptor.name,
     rawText: text,
   };
 }
