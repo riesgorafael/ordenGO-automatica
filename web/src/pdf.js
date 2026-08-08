@@ -382,7 +382,7 @@ export function monthlyReportPDF(month, monthLabel, rows, sum) {
 
   const lh = drawLogo(doc, M, y - 4);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
-  doc.text("REPORTE MENSUAL POR CLIENTE", W - M, y, { align: "right" });
+  doc.text(String(month).length <= 4 ? "REPORTE ANUAL POR CLIENTE" : "REPORTE MENSUAL POR CLIENTE", W - M, y, { align: "right" });
   y += 6; doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   doc.text(cap(monthLabel), W - M, y, { align: "right" });
   y = Math.max(y, (y - 10) + lh);
