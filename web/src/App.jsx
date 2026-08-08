@@ -929,9 +929,9 @@ export default function App() {
     ...(isOffice ? [] : [{ id: "orders", label: "Órdenes", icon: ClipboardList }]),
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isMgr && !branding.hideAdminModules ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Administración" }] : []),
-    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Negocio" }] : []),
+    ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
-    ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Negocio" }] : []),
+    ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
     { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
@@ -1087,7 +1087,7 @@ export default function App() {
           <>
             {isMgr && (
               <div className="mb-4 flex w-fit rounded-lg bg-slate-200 p-0.5">
-                {[["list", "Órdenes", ClipboardList], ["report", "Reporte mensual", BarChart3]].map(([id, lb, Ic]) => (
+                {[["list", "Órdenes", ClipboardList], ["report", "Reportes OT", BarChart3]].map(([id, lb, Ic]) => (
                   <button key={id} onClick={() => setOTab(id)} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium ${oTab === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}><Ic className="h-4 w-4" /> {lb}</button>
                 ))}
               </div>
