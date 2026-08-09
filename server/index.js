@@ -5,6 +5,7 @@ import pkg from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import path from "path";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import { registerGanttRoutes } from "./ganttRoutes.js";
@@ -130,6 +131,13 @@ setInterval(() => {
   for (const [key, value] of apiRequestCounts) if (value.startedAt < cutoff) apiRequestCounts.delete(key);
 }, API_RATE_WINDOW_MS).unref();
 
+// Nunca hardcodear una contraseña por defecto en el código fuente (los escáneres de secretos como
+// GitGuardian la detectan como una credencial expuesta, y cualquiera que lea el repo la conoce).
+// Si no se definió la variable de entorno correspondiente, se genera una al azar en cada arranque
+// y se imprime una única vez en el log del servidor — junto con mustchangepassword=true, obliga a
+// definir una contraseña real en el primer inicio de sesión.
+const randomTempPassword = () => crypto.randomBytes(9).toString("base64url");
+
 /* ------------------------------------------------ DB init + seed ------------------------------------------------ */
 async function initDb() {
   await pool.query(`
@@ -163,26 +171,18 @@ async function initDb() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 0;");
 
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
-  const adminPass = process.env.ADMIN_PASSWORD || "admin1234";
-  const demoPass = process.env.DEMO_PASSWORD || "ordengo123";
+  const adminPasswordProvided = Boolean(process.env.ADMIN_PASSWORD);
+  const adminPass = process.env.ADMIN_PASSWORD || randomTempPassword();
   const monitorEmail = (process.env.MONITOR_EMAIL || "monitor.oficina@empresa.com").toLowerCase();
-  const monitorPass = process.env.MONITOR_PASSWORD || demoPass;
+  const monitorPasswordProvided = Boolean(process.env.MONITOR_PASSWORD);
+  const monitorPass = process.env.MONITOR_PASSWORD || randomTempPassword();
 
   if ((await pool.query("SELECT count(*)::int n FROM users")).rows[0].n === 0) {
-    if (IS_PRODUCTION && String(process.env.ADMIN_PASSWORD || "").length < 8) throw new Error("ADMIN_PASSWORD (mínimo 8 caracteres) es obligatorio para inicializar una instalación productiva");
-    const seed = IS_PRODUCTION ? [
-      { id: "u1", name: "Administrador", email: adminEmail, role: "admin", color: "#6366f1", pass: adminPass },
-    ] : [
-      { id: "u1", name: "Administrador", email: adminEmail, role: "admin", color: "#6366f1", pass: adminPass },
-      { id: "u2", name: "Ana Gómez", email: "ana@empresa.com", role: "gerente", color: "#0ea5e9", pass: demoPass },
-      { id: "u3", name: "Luis Mora", email: "luis@empresa.com", role: "tecnico", color: "#10b981", pass: demoPass },
-      { id: "u4", name: "María Ruiz", email: "maria@empresa.com", role: "tecnico", color: "#f59e0b", pass: demoPass },
-      { id: "u-monitor-oficina", name: "Monitor Oficina", email: monitorEmail, role: "monitor_oficina", color: "#14b8a6", pass: monitorPass },
-    ];
-    for (const u of seed)
-      await pool.query("INSERT INTO users(id,name,email,password_hash,role,color) VALUES($1,$2,$3,$4,$5,$6)",
-        [u.id, u.name, u.email.toLowerCase(), bcrypt.hashSync(u.pass, 10), u.role, u.color]);
-    console.log("→ Usuarios sembrados. Admin:", adminEmail);
+    if (IS_PRODUCTION && adminPasswordProvided && String(process.env.ADMIN_PASSWORD).length < 8) throw new Error("ADMIN_PASSWORD (mínimo 8 caracteres) es obligatorio para inicializar una instalación productiva");
+    await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,mustchangepassword) VALUES($1,$2,$3,$4,$5,$6,$7)",
+      ["u1", "Administrador", adminEmail, bcrypt.hashSync(adminPass, 10), "admin", "#6366f1", !adminPasswordProvided]);
+    if (adminPasswordProvided) console.log("→ Usuario administrador sembrado:", adminEmail);
+    else console.log(`→ Usuario administrador sembrado: ${adminEmail} · contraseña temporal generada (cambiala al ingresar): ${adminPass}`);
   }
 
   if ((await pool.query("SELECT count(*)::int n FROM clients")).rows[0].n === 0) {
@@ -200,16 +200,18 @@ async function initDb() {
     ];
     for (const p of projects) await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [p.id, p]);
 
+    // Sin "assignee": los únicos usuarios sembrados en una instalación nueva son el administrador
+    // (y el Monitor Oficina, sin tareas); asignar a un técnico demo inexistente rompería la tarea.
     const tasks = [
-      { id: "AUT-1", project: "p1", title: "Programar PLC de línea de llenado", assignee: "u3", status: "En progreso", priority: "Alta", type: "Tarea", due: "2026-07-25", desc: "Lógica de arranque/paro y enclavamientos." },
-      { id: "AUT-2", project: "p1", title: "Diseñar HMI de operador", assignee: "u4", status: "Por hacer", priority: "Media", type: "Historia", due: "2026-07-30", desc: "Pantallas de proceso y alarmas." },
-      { id: "SCADA-2", project: "p2", title: "Configurar servidor OPC UA", assignee: "u3", status: "En progreso", priority: "Alta", type: "Tarea", due: "2026-07-28", desc: "Conexión con PLCs Siemens y Rockwell." },
-      { id: "MANT-2", project: "p3", title: "Calibrar instrumentos de campo", assignee: "u4", status: "Por hacer", priority: "Alta", type: "Tarea", due: "2026-07-24", desc: "Presión, temperatura y flujo." },
+      { id: "AUT-1", project: "p1", title: "Programar PLC de línea de llenado", status: "En progreso", priority: "Alta", type: "Tarea", due: "2026-07-25", desc: "Lógica de arranque/paro y enclavamientos." },
+      { id: "AUT-2", project: "p1", title: "Diseñar HMI de operador", status: "Por hacer", priority: "Media", type: "Historia", due: "2026-07-30", desc: "Pantallas de proceso y alarmas." },
+      { id: "SCADA-2", project: "p2", title: "Configurar servidor OPC UA", status: "En progreso", priority: "Alta", type: "Tarea", due: "2026-07-28", desc: "Conexión con PLCs Siemens y Rockwell." },
+      { id: "MANT-2", project: "p3", title: "Calibrar instrumentos de campo", status: "Por hacer", priority: "Alta", type: "Tarea", due: "2026-07-24", desc: "Presión, temperatura y flujo." },
     ];
     for (const t of tasks) await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [t.id, t]);
 
     const orders = [
-      { id: "OT-2026-014", client: "Embotelladora Andina", site: "Línea de llenado 3", contact: "Ing. Salazar", service: "Mantenimiento correctivo", date: "2026-07-15", equipo: "Variador de frecuencia banda 3", sintoma: "Sobrecorriente intermitente", solucion: "Reemplazo de ventilador de disipador.", category: "Sobrecalentamiento", photos: [], signatureUrl: null, signedBy: "", laborHours: 3.5, technicians: 1, rate: 50, laborBillable: true, materials: [{ name: "Ventilador disipador VFD", qty: 1, price: 1200, billable: true }], status: "Completada", tech: "Luis Mora" },
+      { id: "OT-2026-014", client: "Embotelladora Andina", site: "Línea de llenado 3", contact: "Ing. Salazar", service: "Mantenimiento correctivo", date: "2026-07-15", equipo: "Variador de frecuencia banda 3", sintoma: "Sobrecorriente intermitente", solucion: "Reemplazo de ventilador de disipador.", category: "Sobrecalentamiento", photos: [], signatureUrl: null, signedBy: "", laborHours: 3.5, technicians: 1, rate: 50, laborBillable: true, materials: [{ name: "Ventilador disipador VFD", qty: 1, price: 1200, billable: true }], status: "Completada", tech: "" },
     ];
     for (const o of orders) await pool.query("INSERT INTO orders(id,data) VALUES($1,$2)", [o.id, o]);
     console.log("→ Datos de demostración sembrados.");
@@ -234,6 +236,7 @@ async function initDb() {
       await pool.query("INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword) VALUES($1,$2,$3,$4,$5,$6,true,true)",
         ["u-monitor-oficina", "Monitor Oficina", monitorEmail, bcrypt.hashSync(monitorPass, 10), "monitor_oficina", "#14b8a6"]);
       monitor = (await pool.query("SELECT * FROM users WHERE email=$1", [monitorEmail])).rows[0];
+      if (!monitorPasswordProvided) console.log(`→ Usuario Monitor Oficina: contraseña temporal generada (cambiala al ingresar): ${monitorPass}`);
     }
     const projectRows = await pool.query("SELECT id,data FROM projects");
     for (const row of projectRows.rows) {
