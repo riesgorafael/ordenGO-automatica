@@ -681,3 +681,92 @@ export function materialListReportPDF(ml, project, client) {
 
   doc.save(`${ml.number || ml.id}_listado_de_materiales.pdf`);
 }
+
+// Presupuesto comercial para el cliente: solo se muestra la venta (cantidad, unidad, precio de
+// venta, total) — costo interno y margen quedan fuera del PDF a propósito, son datos de uso
+// exclusivo interno que existen en la ficha de Estimación económica.
+export function budgetReportPDF(budget, client) {
+  const doc = new jsPDF("p", "mm", "a4");
+  const W = 210, M = 15;
+  let y = 20;
+  let drawHead = () => {};
+  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+
+  drawLogo(doc, M, 12);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
+  ["CUIT: 20-35196020-6", "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
+  doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+  doc.text("PRESUPUESTO", W - M, 16, { align: "right" });
+  doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+  doc.text(`N.º: ${budget.number || budget.id || "—"}`, W - M, 23, { align: "right" });
+  doc.text(`Fecha: ${formatDate(budget.createdAt || new Date())}`, W - M, 28, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
+
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  const field = (label, value, x, atY, width = 60) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, atY);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+    const lines = doc.splitTextToSize(String(value || "—"), width);
+    doc.text(lines.slice(0, 2), x + 28, atY);
+  };
+
+  heading("DATOS DEL CLIENTE", 58);
+  field("Cliente", budget.client, M, 66, 58); field("CUIT", client?.cuit, 110, 66, 53);
+  field("Planta", budget.site, M, 73, 58); field("Condición", client?.ivaCondition, 110, 73, 53);
+  field("Atención", budget.contact, M, 80, 58); field("Servicio", budget.service, 110, 80, 53);
+  field("Proyecto", budget.title, M, 87, 118);
+
+  y = 99;
+  heading("ALCANCE", y); y += 6;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(15, 23, 42);
+  const scopeLines = doc.splitTextToSize(budget.scope || "Según detalle técnico acordado con el cliente.", W - 2 * M);
+  doc.text(scopeLines, M, y); y += scopeLines.length * 4 + 6;
+
+  brk(14);
+  heading("DETALLE", y); y += 8;
+  const cols = () => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+    doc.text("Concepto", M, y);
+    doc.text("Cant.", M + 108, y, { align: "right" });
+    doc.text("Un.", M + 124, y, { align: "right" });
+    doc.text("P. Unitario", M + 152, y, { align: "right" });
+    doc.text("Total", W - M, y, { align: "right" });
+    y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
+  };
+  drawHead = cols; cols();
+
+  doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(8.2);
+  const items = budget.items || [];
+  items.forEach((item) => {
+    brk(8);
+    const desc = doc.splitTextToSize(item.description || "—", 100);
+    doc.text(desc[0] + (desc.length > 1 ? "…" : ""), M, y);
+    doc.text(String(item.qty || 0), M + 108, y, { align: "right" });
+    doc.text(String(item.unit || "u"), M + 124, y, { align: "right" });
+    doc.text(money(item.unitPrice), M + 152, y, { align: "right" });
+    doc.text(money((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)), W - M, y, { align: "right" });
+    y += 5.5;
+  });
+
+  brk(20); doc.setDrawColor(148, 163, 184); doc.line(M, y, W - M, y); y += 6;
+  const total = items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitPrice) || 0), 0);
+  y += 3; doc.setFillColor(241, 245, 249); doc.rect(M, y - 5, W - 2 * M, 9, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(15, 23, 42);
+  doc.text("Total", M + 4, y + 1); doc.text(money(total), W - M - 4, y + 1, { align: "right" }); y += 12;
+
+  brk(16);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
+  doc.text(`Validez de la oferta: ${budget.validUntil ? formatDate(budget.validUntil) : "A convenir"}`, M, y); y += 5;
+  if (budget.plannedStart) { doc.text(`Plazo estimado de ejecución: ${budget.durationDays || 0} día(s) hábil(es)`, M, y); y += 5; }
+
+  if (budget.assumptions || budget.exclusions) {
+    brk(20); y += 2;
+    if (budget.assumptions) { heading("Supuestos y condiciones", y); y += 6; doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(15, 23, 42); const lines = doc.splitTextToSize(budget.assumptions, W - 2 * M); doc.text(lines, M, y); y += lines.length * 4 + 4; }
+    if (budget.exclusions) { brk(14); heading("Exclusiones", y); y += 6; doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(15, 23, 42); const lines = doc.splitTextToSize(budget.exclusions, W - 2 * M); doc.text(lines, M, y); y += lines.length * 4 + 4; }
+  }
+
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+
+  doc.save(`${budget.number || budget.id}_presupuesto.pdf`);
+}
