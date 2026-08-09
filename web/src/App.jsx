@@ -3295,7 +3295,6 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         {step === 1 && (
         <Section title="Documentación del trabajo">
           <ReqLabel>Fotos de evidencia (mínimo 1)</ReqLabel>
-          <div className="mb-2 mt-1 flex items-center gap-1.5 text-xs font-medium text-slate-500"><Sparkles className="h-3.5 w-3.5 text-brand-500" /> Las fotos autocompletan equipo y descripción con IA</div>
           <div className={`grid grid-cols-3 gap-2 rounded-lg ${errCls(photos.length === 0)}`}><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addPhoto} /></div>
           <p className="mt-1 text-[11px] text-slate-400">Foto, PDF, Excel o CSV · máx. 5 MB por archivo</p>
           {analyzing && <div className="mt-2 flex items-center gap-2 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Procesando archivo…</div>}
