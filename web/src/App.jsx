@@ -89,7 +89,7 @@ const LABOR_ROLES = [
 const LABOR_TYPES = ["Mano de obra", "Ingeniería", "Programación", "Montaje", "Puesta en marcha"];
 const ADDITIONAL_COST_CATEGORIES = ["Retrabajo", "Ingeniería adicional", "Programación adicional", "Materiales", "Viáticos", "Terceros", "Otro"];
 const DEFAULT_ROLE_BY_TYPE = { "Mano de obra": "Ingeniero", "Ingeniería": "Ingeniero", "Programación": "Programador", "Montaje": "Tablerista", "Puesta en marcha": "Ingeniero" };
-const UNIT_OPTIONS = ["u", "h", "mts", "gl"];
+const UNIT_OPTIONS = ["u", "hs", "mts", "gl"];
 const BUDGET_STYLE = {
   "Borrador": "bg-slate-100 text-slate-600 ring-slate-200", "En preparación": "bg-sky-50 text-sky-700 ring-sky-200",
   "Enviado": "bg-brand-50 text-brand-700 ring-brand-200", "En seguimiento": "bg-violet-50 text-violet-700 ring-violet-200",
@@ -1794,7 +1794,7 @@ const defaultBudgetClient = (clients) =>
 const emptyBudget = (me, clients) => {
   const client = defaultBudgetClient(clients);
   const site = clientSites(client).find((s) => /venado tuerto/i.test(s.name || "")) || clientSites(client)[0];
-  return { number: "", clientId: client?.id || "", client: client?.name || "", site: site?.name || client?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: BUDGET_STAGE_PROBABILITY.Borrador, targetMargin: 35, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: "Ingeniero", qty: 1, unit: "h", unitPrice: 38.46, unitCost: 25 }] };
+  return { number: "", clientId: client?.id || "", client: client?.name || "", site: site?.name || client?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: BUDGET_STAGE_PROBABILITY.Borrador, targetMargin: 35, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: "Ingeniero", qty: 1, unit: "hs", unitPrice: 38.46, unitCost: 25 }] };
 };
 
 function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, onClose, onSave }) {
@@ -1809,12 +1809,12 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, on
     if (computed !== form.durationDays) set("durationDays", computed);
   }, [form.plannedStart, form.plannedEnd]);
   const saleRate = (costValue, marginValue = form.targetMargin) => { const costRate = Number(costValue) || 0; const target = Math.min(100, Math.max(0, Number(marginValue) || 0)); return Math.round((target >= 100 ? costRate : costRate / (1 - target / 100)) * 100) / 100; };
-  const changeLaborRole = (index, roleName) => { const role = LABOR_ROLES.find((item) => item.name === roleName); if (role) setItem(index, { description: role.name, unit: "h", unitCost: role.cost, unitPrice: saleRate(role.cost) }); };
+  const changeLaborRole = (index, roleName) => { const role = LABOR_ROLES.find((item) => item.name === roleName); if (role) setItem(index, { description: role.name, unit: "hs", unitCost: role.cost, unitPrice: saleRate(role.cost) }); };
   // Al cambiar el Tipo de una línea, si el tipo anterior era mano de obra (ej. "Ingeniería") sus
   // datos (perfil, unidad "h", costo/venta del rol) quedaban pegados en la línea aunque el nuevo
   // tipo fuera "Materiales" — mostraba "Ingenier[ía]" como concepto y el costo/venta de un rol de
   // mano de obra en vez de los de Inventario. Se limpia la línea al pasar a un tipo no-laboral.
-  const changeItemType = (index, type) => { if (LABOR_TYPES.includes(type)) { const role = LABOR_ROLES.find((item) => item.name === DEFAULT_ROLE_BY_TYPE[type]) || LABOR_ROLES[0]; setItem(index, { type, description: role.name, unit: "h", unitCost: role.cost, unitPrice: saleRate(role.cost) }); } else setItem(index, { type, description: "", partId: null, unit: "u", unitPrice: 0, unitCost: 0 }); };
+  const changeItemType = (index, type) => { if (LABOR_TYPES.includes(type)) { const role = LABOR_ROLES.find((item) => item.name === DEFAULT_ROLE_BY_TYPE[type]) || LABOR_ROLES[0]; setItem(index, { type, description: role.name, unit: "hs", unitCost: role.cost, unitPrice: saleRate(role.cost) }); } else setItem(index, { type, description: "", partId: null, unit: "u", unitPrice: 0, unitCost: 0 }); };
   const changeTargetMargin = (value) => { const targetMargin = Math.min(100, Math.max(0, Number(value) || 0)); setForm((current) => ({ ...current, targetMargin, items: current.items.map((item) => LABOR_TYPES.includes(item.type) ? { ...item, unitPrice: saleRate(item.unitCost, targetMargin) } : item) })); };
   const amount = form.items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitPrice) || 0), 0);
   const cost = form.items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitCost) || 0), 0);
@@ -1880,13 +1880,13 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, on
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <L label="Cantidad"><input type="number" min="0" step="0.1" value={item.qty} onChange={(event) => setItem(index, { qty: event.target.value })} aria-label={labor ? "Horas estimadas" : "Cantidad"} className="u-input" /></L>
-              <L label="Unidad">{labor ? <input value={item.unit || "h"} readOnly aria-label="Unidad" className="u-input bg-slate-50" /> : <select value={UNIT_OPTIONS.includes(item.unit) ? item.unit : "u"} onChange={(event) => setItem(index, { unit: event.target.value })} aria-label="Unidad" className="u-input">{UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select>}</L>
+              <L label="Unidad"><select value={UNIT_OPTIONS.includes(item.unit) ? item.unit : (labor ? "hs" : "u")} onChange={(event) => setItem(index, { unit: event.target.value })} aria-label="Unidad" className="u-input">{UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></L>
               <L label="Venta/u (USD)"><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: event.target.value })} placeholder="Venta" aria-label="Precio de venta unitario USD" className="u-input" /></L>
               <L label="Costo/u (USD)"><input type="number" min="0" step="0.01" value={item.unitCost} readOnly={labor} onChange={(event) => setItem(index, { unitCost: event.target.value })} placeholder="Costo" aria-label="Costo unitario USD" className={`u-input ${labor ? "bg-slate-50" : ""}`} /></L>
             </div>
             <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-[11px] text-slate-500"><span>Venta: <b>{money(lineSale)}</b></span><span>Costo: <b>{money(lineCost)}</b></span><span>Margen: <b className={lineSale - lineCost >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(lineSale - lineCost)}</b></span></div>
           </div>; })}</div>
-          <button onClick={() => set("items", [...form.items, { type: "Ingeniería", description: "Ingeniero", qty: 1, unit: "h", unitPrice: saleRate(25), unitCost: 25 }])} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"><Plus className="h-4 w-4" /> Agregar concepto</button>
+          <button onClick={() => set("items", [...form.items, { type: "Ingeniería", description: "Ingeniero", qty: 1, unit: "hs", unitPrice: saleRate(25), unitCost: 25 }])} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"><Plus className="h-4 w-4" /> Agregar concepto</button>
           <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-3"><div><span className="block text-[10px] uppercase text-slate-400">Venta presupuestada</span><b>{money(amount)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Costo interno estimado</span><b>{money(cost)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Margen bruto estimado</span><b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{amount > 0 ? ` · ${Math.round((margin / amount) * 100)}%` : ""}</b></div></div>
           </fieldset>
           {margin < 0 && ["Aprobado", "Facturado"].includes(form.stage) && <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="mb-2 text-xs font-medium text-rose-700">El margen es negativo. Para aprobar o facturar este presupuesto, indicá el motivo (venta estratégica, cliente clave, riesgo de perder la cuenta, etc.).</p><textarea value={form.negativeMarginReason || ""} onChange={(event) => set("negativeMarginReason", event.target.value)} rows={2} placeholder="Motivo del margen negativo *" className="u-input resize-none bg-white" /></div>}
