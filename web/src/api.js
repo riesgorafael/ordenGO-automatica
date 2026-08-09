@@ -20,7 +20,9 @@ async function req(path, opts = {}) {
   if (res.status === 401 && path !== "/auth/login") { setToken(null); throw new Error("Sesión expirada"); }
   if (!res.ok) {
     const msg = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(msg.error || "Error de servidor");
+    const error = new Error(msg.error || "Error de servidor");
+    error.status = res.status;
+    throw error;
   }
   return res.status === 204 ? null : res.json();
 }

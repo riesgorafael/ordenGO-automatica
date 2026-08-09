@@ -1259,11 +1259,17 @@ export default function App() {
 }
 
 /* ===================================== LOGIN ===================================== */
+const LAST_EMAIL_KEY = "og_last_email";
 function Login({ branding = DEFAULT_BRANDING, onLogin }) {
-  const [email, setEmail] = useState(""); const [pass, setPass] = useState("");
+  const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_KEY) || ""); const [pass, setPass] = useState("");
   const [show, setShow] = useState(false);
-  const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
-  const submit = async () => { if (!email || !pass) return; setBusy(true); setErr(""); try { await onLogin(email.trim(), pass); } catch (e) { setErr(e?.message || "No se pudo iniciar sesión"); setBusy(false); } };
+  const [err, setErr] = useState(null); const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!email || !pass) return;
+    setBusy(true); setErr(null);
+    try { await onLogin(email.trim(), pass); localStorage.setItem(LAST_EMAIL_KEY, email.trim()); }
+    catch (e) { setErr({ message: e?.message || "No se pudo iniciar sesión", locked: e?.status === 429 }); setBusy(false); }
+  };
   const bullets = ["Permisos por proyecto y por rol", "Trazabilidad de cada operación", "Información centralizada en tiempo real"];
   return (
     <div className="grid min-h-screen grid-cols-1 bg-slate-100 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -1302,7 +1308,17 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
                     <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-50">{show ? "Ocultar" : "Mostrar"}</button>
                   </div>
                 </label>
-                {err && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{err}</div>}
+                {err && (err.locked ? (
+                  <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                    <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    <div className="text-xs leading-relaxed text-amber-800">
+                      <b className="block font-semibold">Acceso bloqueado temporalmente</b>
+                      Detectamos demasiados intentos fallidos con este correo. Por seguridad, esperá 15 minutos antes de volver a intentar. Si no fuiste vos, contactá al administrador.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{err.message}</div>
+                ))}
                 <button onClick={submit} disabled={busy || !email || !pass} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-400 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Ingresar</button>
               </div>
               <div className="mt-5 border-t border-slate-100 pt-4">
