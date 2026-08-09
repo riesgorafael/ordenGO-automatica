@@ -3985,17 +3985,9 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
   const [ef, setEf] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState("Todas");
-  const [selected, setSelected] = useState(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
-  const toggleSelected = (id) => setSelected((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  const bulkDelete = async () => {
-    setBulkDeleting(true);
-    try { await Promise.all([...selected].map((id) => onRemove(id))); setSelected(new Set()); setBulkDeleteOpen(false); }
-    catch (e) { onErr(e); }
-    finally { setBulkDeleting(false); }
-  };
   // Si hay un margen de venta cargado, el precio de venta se recalcula automáticamente a partir del costo.
   const applyMargin = (state) => state.margin !== "" && state.margin != null ? { ...state, price: String(wholeMoney(Number(state.cost || 0) * (1 + (Number(state.margin) || 0) / 100))) } : state;
   const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0, category: nf.category }); setNf({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: nf.category }); } catch (e) { onErr(e); } };
@@ -4007,11 +3999,19 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
   // Separados por categoría (mismo criterio que ya usan los Listados de Materiales) en vez de una
   // lista plana única, para poder ubicar y filtrar repuestos por tipo.
   const grouped = MATERIAL_LIST_DISCIPLINES.map((category) => ({ category, items: sorted.filter((p) => categoryOf(p) === category) })).filter((group) => group.items.length > 0);
+  // Sin checkboxes por ítem: la eliminación masiva actúa sobre lo que el filtro de categoría deja
+  // visible (ej. elegís "Otro" y borrás todos los de esa categoría de una sola vez).
+  const bulkDelete = async () => {
+    setBulkDeleting(true);
+    try { await Promise.all(sorted.map((p) => onRemove(p.id))); setBulkDeleteOpen(false); }
+    catch (e) { onErr(e); }
+    finally { setBulkDeleting(false); }
+  };
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2">
         {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} repuesto(s) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
-        <Panel title={`Repuestos (${parts.length})`} action={parts.length > 0 && <div className="flex flex-wrap items-center gap-2"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"><option value="Todas">Todas las categorías</option>{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select>{selected.size > 0 && <button onClick={() => setBulkDeleteOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Eliminar ({selected.size})</button>}{sorted.length > 0 && <label className="flex items-center gap-1.5 text-xs font-medium text-slate-500"><input type="checkbox" checked={selected.size > 0 && selected.size === sorted.length} onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map((p) => p.id)) : new Set())} className="h-4 w-4" /> Todos</label>}</div>}>
+        <Panel title={`Repuestos (${parts.length})`} action={parts.length > 0 && <div className="flex flex-wrap items-center gap-2"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"><option value="Todas">Todas las categorías</option>{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select>{sorted.length > 0 && <button onClick={() => setBulkDeleteOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Eliminar visibles ({sorted.length})</button>}</div>}>
           <div className="space-y-4">
             {sorted.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin repuestos cargados</div>}
             {grouped.map((group) => (
@@ -4040,16 +4040,15 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
                 </div>
               );
               return (
-                <div key={p.id} className={`flex gap-2.5 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
-                  <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} aria-label={`Seleccionar ${p.name}`} className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div className="min-w-0 flex-1">
+                <div key={p.id} onClick={() => startEdit(p)} className={`cursor-pointer rounded-lg border p-3 hover:border-brand-300 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                  <div className="min-w-0">
                     <div className="break-words text-sm font-semibold text-slate-800">{p.name}</div>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                       <span>Venta <b className="font-medium text-slate-700">{money(p.price)}</b></span>
                       <span>Costo <b className="font-medium text-slate-700">{money(p.cost)}</b></span>
                       {margin != null && <span className="font-medium text-emerald-600">Margen {margin}%</span>}
                     </div>
-                    <div className="mt-3 flex w-full flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3">
+                    <div className="mt-3 flex w-full flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3" onClick={(e) => e.stopPropagation()}>
                       <span className={`rounded-md px-2 py-1.5 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
                       <span className="rounded-md border border-slate-200 bg-white/60 px-2 py-1.5 text-xs text-slate-500">Mín: {p.minStock}</span>
                       <button onClick={() => startEdit(p)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
@@ -4083,7 +4082,7 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
       </Panel></div>
     </div>
     {pendingDelete && <ConfirmDialog title="Eliminar repuesto" message={`Se eliminará “${pendingDelete.name}” del catálogo. Esta acción no modifica órdenes anteriores.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
-    {bulkDeleteOpen && <ConfirmDialog title={`Eliminar ${selected.size} repuesto(s)`} message="Se eliminarán del catálogo los repuestos seleccionados. Esta acción no modifica órdenes anteriores y no se puede deshacer." confirmLabel={bulkDeleting ? "Eliminando…" : "Eliminar seleccionados"} danger onClose={() => !bulkDeleting && setBulkDeleteOpen(false)} onConfirm={bulkDelete} />}
+    {bulkDeleteOpen && <ConfirmDialog title={`Eliminar ${sorted.length} repuesto(s)`} message={`Se eliminarán del catálogo los ${sorted.length} repuesto(s) que quedaron visibles con el filtro actual${categoryFilter !== "Todas" ? ` (categoría "${categoryFilter}")` : ""}. Esta acción no modifica órdenes anteriores y no se puede deshacer.`} confirmLabel={bulkDeleting ? "Eliminando…" : "Eliminar visibles"} danger onClose={() => !bulkDeleting && setBulkDeleteOpen(false)} onConfirm={bulkDelete} />}
   </>;
 }
 
