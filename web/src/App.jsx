@@ -1326,7 +1326,7 @@ function ChangePassword({ onClose, forced, onDone }) {
     if (n1.length < 8) { setMsg("La nueva contraseña debe tener al menos 8 caracteres."); return; }
     if (n1 !== n2) { setMsg("Las contraseñas nuevas no coinciden."); return; }
     setBusy(true);
-    try { await api.changePassword(cur, n1); setDone(true); }
+    try { const r = await api.changePassword(cur, n1); if (r?.token) setToken(r.token); setDone(true); }
     catch (e) { setMsg(e?.message || "No se pudo cambiar la contraseña."); }
     finally { setBusy(false); }
   };

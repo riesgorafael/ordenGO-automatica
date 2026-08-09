@@ -108,6 +108,28 @@ setInterval(() => {
   for (const [key, value] of loginAttempts) if (value.startedAt < cutoff) loginAttempts.delete(key);
 }, LOGIN_WINDOW_MS).unref();
 
+// Limitador genérico por usuario autenticado (además del de login): evita que una cuenta
+// comprometida o un cliente descontrolado agote la base con llamadas repetidas a endpoints caros
+// (ej. /api/bootstrap dispara ~15 consultas en paralelo) o golpee rutas de escritura en bucle.
+const apiRequestCounts = new Map();
+const API_RATE_WINDOW_MS = 60 * 1000;
+function apiRateLimit(max) {
+  return (req, res, next) => {
+    const key = `${req.user?.id || req.ip}:${req.method}:${req.baseUrl}${req.route?.path || req.path}`;
+    const now = Date.now();
+    const current = apiRequestCounts.get(key);
+    const entry = !current || now - current.startedAt > API_RATE_WINDOW_MS ? { count: 0, startedAt: now } : current;
+    if (entry.count >= max) return res.status(429).json({ error: "Demasiadas solicitudes. Esperá un momento e intentá nuevamente." });
+    entry.count += 1;
+    apiRequestCounts.set(key, entry);
+    next();
+  };
+}
+setInterval(() => {
+  const cutoff = Date.now() - API_RATE_WINDOW_MS;
+  for (const [key, value] of apiRequestCounts) if (value.startedAt < cutoff) apiRequestCounts.delete(key);
+}, API_RATE_WINDOW_MS).unref();
+
 /* ------------------------------------------------ DB init + seed ------------------------------------------------ */
 async function initDb() {
   await pool.query(`
@@ -135,6 +157,10 @@ async function initDb() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
   // Config individual por usuario (pantalla TV: nombre, modo TV, rotación) — permite N televisores, uno por cuenta Monitor Oficina.
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}'::jsonb;");
+  // Permite revocar sesiones: el JWT lleva el token_version vigente al momento de emitirlo, y
+  // "auth" lo compara contra el valor actual en la base. Incrementarlo (al cambiar la contraseña,
+  // propia o por un admin) invalida de inmediato cualquier token viejo, aunque todavía no expire.
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 0;");
 
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
   const adminPass = process.env.ADMIN_PASSWORD || "admin1234";
@@ -554,9 +580,12 @@ async function auth(req, res, next) {
   const t = h.startsWith("Bearer ") ? h.slice(7) : null;
   if (!t) return res.status(401).json({ error: "Sin token" });
   try {
-    const claims = jwt.verify(t, JWT_SECRET);
-    const current = (await pool.query("SELECT id,name,role,active,mustchangepassword FROM users WHERE id=$1", [claims.id])).rows[0];
+    const claims = jwt.verify(t, JWT_SECRET, { algorithms: ["HS256"] });
+    const current = (await pool.query("SELECT id,name,role,active,mustchangepassword,token_version FROM users WHERE id=$1", [claims.id])).rows[0];
     if (!current?.active) return res.status(401).json({ error: "La cuenta está inactiva o ya no existe" });
+    // Si el token trae un token_version anterior al vigente en la base, ya fue revocado (cambio
+    // de contraseña propio o forzado por un admin) — se rechaza aunque todavía no haya expirado.
+    if ((claims.tokenVersion || 0) !== (current.token_version || 0)) return res.status(401).json({ error: "La sesión ya no es válida. Iniciá sesión de nuevo." });
     if (current.mustchangepassword && !["/api/bootstrap", "/api/me/password"].includes(req.path)) return res.status(403).json({ error: "Debes cambiar la contraseña temporal antes de continuar" });
     req.user = { id: current.id, name: current.name, role: current.role, mustChangePassword: current.mustchangepassword };
     next();
@@ -676,7 +705,7 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   if (!u || !u.active || !bcrypt.compareSync(password || "", u.password_hash))
     return res.status(401).json({ error: "Correo o contraseña inválidos" });
   loginAttempts.delete(req.loginAttemptKey);
-  const token = jwt.sign({ id: u.id, role: u.role, name: u.name }, JWT_SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ id: u.id, role: u.role, name: u.name, tokenVersion: u.token_version || 0 }, JWT_SECRET, { expiresIn: "7d" });
   res.json({ token, user: pubUser(u) });
 });
 
@@ -687,12 +716,17 @@ app.post("/api/me/password", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]);
   const u = rows[0];
   if (!u || !bcrypt.compareSync(current || "", u.password_hash)) return res.status(400).json({ error: "La contraseña actual es incorrecta" });
-  await pool.query("UPDATE users SET password_hash=$2, mustchangepassword=false WHERE id=$1", [u.id, bcrypt.hashSync(next, 10)]);
-  res.json({ ok: true });
+  // Cambiar la contraseña revoca cualquier otra sesión abierta con la anterior (token_version++);
+  // se firma y devuelve un token nuevo para que la sesión actual, la que acaba de hacer el cambio,
+  // no quede invalidada también.
+  const tokenVersion = (u.token_version || 0) + 1;
+  await pool.query("UPDATE users SET password_hash=$2, mustchangepassword=false, token_version=$3 WHERE id=$1", [u.id, bcrypt.hashSync(next, 10), tokenVersion]);
+  const token = jwt.sign({ id: u.id, role: u.role, name: u.name, tokenVersion }, JWT_SECRET, { expiresIn: "7d" });
+  res.json({ ok: true, token });
 });
 
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
-app.get("/api/bootstrap", auth, async (req, res) => {
+app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const tec = isTec(req.user.role);
   const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml, wb] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
@@ -1122,7 +1156,7 @@ app.get("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (re
   const { rows } = await pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC");
   res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
-app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
   const po = normalizePurchaseOrder(req.body);
   if (!po.supplierId) return res.status(400).json({ error: "El proveedor es obligatorio" });
   const supplier = (await pool.query("SELECT data FROM suppliers WHERE id=$1", [po.supplierId])).rows[0]?.data;
@@ -1153,7 +1187,7 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (r
     return res.status(500).json({ error: "No se pudo guardar la orden de compra de forma consistente." });
   } finally { db.release(); }
 });
-app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
   const current = (await pool.query("SELECT data FROM purchase_orders WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const po = normalizePurchaseOrder(req.body, current);
@@ -1240,7 +1274,7 @@ app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"),
   const allowedProjectIds = new Set((await pool.query("SELECT id FROM projects WHERE data->'allowedUsers' ? $1", [req.user.id])).rows.map((row) => row.id));
   res.json(materialLists.filter((ml) => !ml.projectId || allowedProjectIds.has(ml.projectId)));
 });
-app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
+app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
   const ml = normalizeMaterialList(req.body);
   // El proyecto solo es obligatorio para el listado destinado al cliente; uno de uso interno no necesita estar atado a un proyecto.
   if (ml.audience !== "interno" && !ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
@@ -1272,7 +1306,7 @@ app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico")
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un listado con ese identificador" }); throw error; }
   res.json(ml);
 });
-app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
+app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
   const current = (await pool.query("SELECT data FROM material_lists WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   // Necesita acceso tanto al proyecto donde está hoy el listado como, si lo mueve, al de destino.
@@ -1360,7 +1394,7 @@ app.delete("/api/whiteboard-notes/:id", auth, async (req, res) => {
   res.status(204).end();
 });
 
-app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
   const budget = normalizeBudget(req.body);
   if (!String(budget.client || "").trim() || !String(budget.title || "").trim()) return res.status(400).json({ error: "Cliente y nombre del presupuesto son obligatorios." });
   if (!budget.id) {
@@ -1398,7 +1432,7 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), async (req, res)
   } finally { db.release(); }
 });
 
-app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
   const current = (await pool.query("SELECT data FROM budgets WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const budget = normalizeBudget(req.body, current);
@@ -1736,7 +1770,7 @@ app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   res.json(rows.filter((row) => orderVisibleToUser(req.user, row.data)).map((row) => ({ ...(tec ? stripMoney(row.data) : row.data), _updatedAt: row.updated_at })));
 });
 
-app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
+app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req, res) => {
   let o = { ...(req.body || {}) };
   o.status = o.status || "Borrador";
   if (o.status === "En progreso") o.status = "En proceso de ejecución";
@@ -1801,7 +1835,7 @@ app.post("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   res.json(isTec(req.user.role) ? stripMoney(o) : o);
 });
 
-app.patch("/api/orders/:id", auth, requireOrdersAccess, async (req, res) => {
+app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM orders WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   if (!orderVisibleToUser(req.user, rows[0].data)) return res.status(403).json({ error: "Esta orden está asignada a otro técnico" });
