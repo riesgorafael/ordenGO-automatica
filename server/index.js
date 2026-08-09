@@ -2034,6 +2034,10 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
     if (String(password).length < 8) return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres" });
     sets.push(`password_hash=$${i++}`); vals.push(bcrypt.hashSync(password, 10));
     sets.push("mustchangepassword=true");
+    // Un reseteo de contraseña por un admin revoca de inmediato cualquier sesión abierta con la
+    // anterior (a diferencia del cambio de contraseña propio, acá no hay sesión "actual" que
+    // preservar: el usuario afectado va a tener que loguearse de nuevo con la clave temporal).
+    sets.push("token_version=token_version+1");
   }
   if (!sets.length) return res.status(400).json({ error: "Nada que actualizar" });
   vals.push(req.params.id);
