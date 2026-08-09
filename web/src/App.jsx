@@ -2328,10 +2328,20 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   facturadas.filter(inPeriod).forEach((o) => { const m = orderMargin(o); const k = o.client; if (!byClientRent[k]) byClientRent[k] = { name: k.length > 14 ? k.slice(0, 13) + "…" : k, ingreso: 0, costo: 0 }; byClientRent[k].ingreso += m.rev; byClientRent[k].costo += m.cost; });
   const rentClients = Object.values(byClientRent).map((r) => ({ ...r, ingreso: Math.round(r.ingreso), costo: Math.round(r.costo) })).sort((a, b) => (b.ingreso - b.costo) - (a.ingreso - a.costo)).slice(0, 6);
 
-  // 5) Mix de servicios (período, por monto)
+  // 5) Mix de servicios (período, por monto facturable). Si en el período no hubo ningún monto
+  // facturable (ej. solo trabajos de garantía o mano de obra no facturable), el mix "por monto"
+  // queda todo en cero y desaparecía por completo — aunque sí hubo actividad real ese mes. En ese
+  // caso se muestra la mezcla por cantidad de órdenes en su lugar, en vez de un gráfico vacío.
   const byService = {};
   periodOrders.forEach((o) => { const k = o.service || "Otro"; byService[k] = (byService[k] || 0) + tot(o); });
-  const mix = Object.entries(byService).map(([name, value], i) => ({ name, value: Math.round(value), fill: PIE_COLORS[i % PIE_COLORS.length] })).filter((m) => m.value > 0);
+  const mixByAmount = Object.entries(byService).map(([name, value], i) => ({ name, value: Math.round(value), fill: PIE_COLORS[i % PIE_COLORS.length] })).filter((m) => m.value > 0);
+  const mixIsCount = mixByAmount.length === 0 && periodOrders.length > 0;
+  const mixByCount = (() => {
+    const byServiceCount = {};
+    periodOrders.forEach((o) => { const k = o.service || "Otro"; byServiceCount[k] = (byServiceCount[k] || 0) + 1; });
+    return Object.entries(byServiceCount).map(([name, value], i) => ({ name, value, fill: PIE_COLORS[i % PIE_COLORS.length] }));
+  })();
+  const mix = mixIsCount ? mixByCount : mixByAmount;
 
   // 6) Productividad por técnico (período)
   const byTech = {};
@@ -2451,13 +2461,14 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
         </Panel>
 
         {/* Mix de servicios */}
-        <Panel title={`Mix de servicios (${periodLabel})`}>
+        <Panel title={`Mix de servicios (${periodLabel})${mixIsCount ? " · por cantidad" : ""}`}>
+          {mixIsCount && <p className="mb-2 text-[11px] text-slate-400">Sin monto facturable en el período; se muestra la cantidad de órdenes por tipo de servicio.</p>}
           {mix.length === 0 ? <Empty text="Sin datos en el período." /> : (
             <div style={{ width: "100%", height: 220 }}>
               <ResponsiveContainer>
                 <PieChart>
                   <Pie data={mix} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2}>{mix.map((m, i) => <Cell key={i} fill={m.fill} />)}</Pie>
-                  <Tooltip formatter={(v) => money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                  <Tooltip formatter={(v) => mixIsCount ? `${v} orden(es)` : money(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                 </PieChart>
               </ResponsiveContainer>
