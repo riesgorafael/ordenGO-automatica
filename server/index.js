@@ -546,6 +546,24 @@ async function materialsFromInventory(materials, onlyMissing = false) {
     };
   });
 }
+// Conciliación automática de stock: antes ni consumir materiales en una orden ni recibir una OC
+// tocaban el stock del catálogo — quedaba 100% a cargo de que alguien lo actualizara a mano.
+async function adjustPartStock(partId, delta, db = pool) {
+  if (!partId || !delta) return;
+  const row = (await db.query("SELECT data FROM parts WHERE id=$1", [partId])).rows[0];
+  if (!row) return;
+  const data = { ...row.data, stock: Math.max(0, (Number(row.data.stock) || 0) + delta) };
+  await db.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [partId, data]);
+}
+// Los ítems de una OC son texto libre del proveedor (sku/descripción), sin vínculo obligatorio al
+// catálogo — se intenta emparejar por nombre igual que materialsFromInventory; lo que no matchea
+// simplemente no ajusta stock (es una compra que no está en el catálogo de repuestos).
+async function matchPartIdByName(name, db = pool) {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const row = (await db.query("SELECT id FROM parts WHERE lower(data->>'name')=$1 LIMIT 1", [normalized])).rows[0];
+  return row?.id || null;
+}
 function codeFromName(name) {
   return (String(name || "CLI").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3)) || "CLI";
 }
@@ -1182,6 +1200,12 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateL
     await db.query("BEGIN");
     await db.query("INSERT INTO purchase_orders(id,data) VALUES($1,$2)", [po.id, po]);
     const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    if (po.stage === "Recibida") {
+      for (const item of po.items || []) {
+        const partId = item.partId || await matchPartIdByName(item.description, db);
+        if (partId) await adjustPartStock(partId, Number(item.qty) || 0, db);
+      }
+    }
     await db.query("COMMIT");
     res.json({ ...po, _generatedMovement: generatedMovement });
   } catch (error) {
@@ -1209,11 +1233,18 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
   if (po.stage !== current.stage) changes.push(`Estado: ${current.stage} → ${po.stage}`);
   if (!changes.length) changes.push("Orden de compra actualizada");
   po.activity = [...(current.activity || []), { type: "update", text: changes.join(" · "), by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  const receivingNow = po.stage === "Recibida" && current.stage !== "Recibida";
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
     await db.query("UPDATE purchase_orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, po]);
     const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    if (receivingNow) {
+      for (const item of po.items || []) {
+        const partId = item.partId || await matchPartIdByName(item.description, db);
+        if (partId) await adjustPartStock(partId, Number(item.qty) || 0, db);
+      }
+    }
     await db.query("COMMIT");
     res.json({ ...po, _generatedMovement: generatedMovement });
   } catch (error) {
@@ -1895,6 +1926,18 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
     merged.activity = [...(prev.activity || []), { type: "status", text: statusText, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   } else if (req.user.role === "admin" && Object.keys(patch).length) {
     merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
+  }
+  // Al completar la orden por primera vez, descuenta del catálogo los materiales facturables
+  // vinculados a un repuesto (partId). Guardado con stockDeductedAt para no descontar de nuevo si
+  // la orden se reabre y se vuelve a completar — evita descuentos duplicados, a costa de no
+  // reflejar correcciones de materiales posteriores a la primera finalización.
+  if (merged.status === "Completada" && prev.status !== "Completada" && !prev.stockDeductedAt) {
+    try {
+      for (const material of merged.materials || []) {
+        if (material.billable && material.partId) await adjustPartStock(material.partId, -(Number(material.qty) || 0));
+      }
+      merged.stockDeductedAt = new Date().toISOString();
+    } catch (error) { console.error("No se pudo descontar el stock de la OT:", error); }
   }
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   if (merged.projectId || prev.projectId) { try { await upsertOrderCostExpense(merged); } catch (error) { console.error("No se pudo reconciliar el costo de la OT en Finanzas:", error); } }
