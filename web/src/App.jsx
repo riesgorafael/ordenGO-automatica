@@ -3994,7 +3994,7 @@ function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) 
 
 /* ===================================== INVENTARIO / REPUESTOS ===================================== */
 function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", sku: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: MATERIAL_LIST_DISCIPLINES[0] });
+  const [nf, setNf] = useState({ name: "", sku: "", brand: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: MATERIAL_LIST_DISCIPLINES[0] });
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -4010,9 +4010,9 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
   // Si hay un margen de venta cargado, el precio de venta se recalcula automáticamente a partir del costo.
   const applyMargin = (state) => state.margin !== "" && state.margin != null ? { ...state, price: String(wholeMoney(Number(state.cost || 0) * (1 + (Number(state.margin) || 0) / 100))) } : state;
-  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), sku: nf.sku.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0, category: nf.category }); setNf({ name: "", sku: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: nf.category }); } catch (e) { onErr(e); } };
-  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", sku: p.sku || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, margin: "", stock: p.stock ?? 0, minStock: p.minStock ?? 0, category: MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro" }); };
-  const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), sku: ef.sku.trim(), unit: ef.unit.trim() || "u", price: wholeMoney(ef.price), cost: wholeMoney(ef.cost), stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0, category: ef.category }); setEditId(null); } catch (e) { onErr(e); } };
+  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), sku: nf.sku.trim(), brand: nf.brand.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0, category: nf.category }); setNf({ name: "", sku: "", brand: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: nf.category }); } catch (e) { onErr(e); } };
+  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", sku: p.sku || "", brand: p.brand || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, margin: "", stock: p.stock ?? 0, minStock: p.minStock ?? 0, category: MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro" }); };
+  const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), sku: ef.sku.trim(), brand: ef.brand.trim(), unit: ef.unit.trim() || "u", price: wholeMoney(ef.price), cost: wholeMoney(ef.cost), stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0, category: ef.category }); setEditId(null); } catch (e) { onErr(e); } };
   const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
   const categoryOf = (p) => MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro";
   // Consumo real de los últimos 90 días (a partir de las órdenes completadas/aprobadas/facturadas,
@@ -4028,7 +4028,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
     return byPart;
   }, [orders]);
   const sorted = [...parts]
-    .filter((p) => (categoryFilter === "Todas" || categoryOf(p) === categoryFilter) && (!query || `${p.name} ${p.sku || ""}`.toLowerCase().includes(query.toLowerCase())))
+    .filter((p) => (categoryFilter === "Todas" || categoryOf(p) === categoryFilter) && (!query || `${p.name} ${p.sku || ""} ${p.brand || ""}`.toLowerCase().includes(query.toLowerCase())))
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   // Separados por categoría (mismo criterio que ya usan los Listados de Materiales) en vez de una
   // lista plana única, para poder ubicar y filtrar repuestos por tipo.
@@ -4042,8 +4042,8 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
     finally { setBulkDeleting(false); }
   };
   const exportCSV = () => {
-    const head = ["Nombre", "SKU", "Categoría", "Unidad", "Precio venta", "Costo", "Stock", "Stock mínimo"];
-    const lines = parts.map((p) => [p.name || "", p.sku || "", categoryOf(p), p.unit || "u", p.price || 0, p.cost || 0, p.stock || 0, p.minStock || 0].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    const head = ["Nombre", "SKU", "Marca", "Categoría", "Unidad", "Precio venta", "Costo", "Stock", "Stock mínimo"];
+    const lines = parts.map((p) => [p.name || "", p.sku || "", p.brand || "", categoryOf(p), p.unit || "u", p.price || 0, p.cost || 0, p.stock || 0, p.minStock || 0].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
     downloadFile("inventario.csv", [head.join(","), ...lines].join("\n"));
   };
   // Parser mínimo de CSV (soporta campos entre comillas con comas adentro, como los que exportan
@@ -4060,9 +4060,9 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
     cells.push(cur);
     return cells;
   };
-  // Carga masiva: mismas columnas que exportCSV, en el mismo orden (Nombre, SKU, Categoría, Unidad,
-  // Precio venta, Costo, Stock, Stock mínimo). Se saltea la primera fila (encabezado) y las filas
-  // sin nombre; cada fila se crea con el mismo onAdd que usa el formulario de a uno.
+  // Carga masiva: mismas columnas que exportCSV, en el mismo orden (Nombre, SKU, Marca, Categoría,
+  // Unidad, Precio venta, Costo, Stock, Stock mínimo). Se saltea la primera fila (encabezado) y las
+  // filas sin nombre; cada fila se crea con el mismo onAdd que usa el formulario de a uno.
   const importCSV = async (file) => {
     setImportBusy(true); setImportResult(null);
     try {
@@ -4070,10 +4070,10 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
       const dataRows = text.split(/\r?\n/).filter((line) => line.trim()).slice(1);
       let created = 0, failed = 0;
       for (const line of dataRows) {
-        const [name, sku, category, unit, price, cost, stock, minStock] = parseCsvLine(line);
+        const [name, sku, brand, category, unit, price, cost, stock, minStock] = parseCsvLine(line);
         if (!name?.trim()) continue;
         try {
-          await onAdd({ name: name.trim(), sku: (sku || "").trim(), category: MATERIAL_LIST_DISCIPLINES.includes(category) ? category : "Otro", unit: (unit || "").trim() || "u", price: wholeMoney(price), cost: wholeMoney(cost), stock: Number(stock) || 0, minStock: Number(minStock) || 0 });
+          await onAdd({ name: name.trim(), sku: (sku || "").trim(), brand: (brand || "").trim(), category: MATERIAL_LIST_DISCIPLINES.includes(category) ? category : "Otro", unit: (unit || "").trim() || "u", price: wholeMoney(price), cost: wholeMoney(cost), stock: Number(stock) || 0, minStock: Number(minStock) || 0 });
           created++;
         } catch { failed++; }
       }
@@ -4085,7 +4085,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row">
-          <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nombre o SKU…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+          <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nombre, SKU o marca…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
           <button onClick={() => setScannerTarget("search")} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><ScanLine className="h-4 w-4" /> Escanear</button>
           <button onClick={exportCSV} disabled={!parts.length} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
           <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">{importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Importar CSV<input type="file" accept=".csv,text/csv" className="hidden" disabled={importBusy} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) importCSV(file); }} /></label>
@@ -4109,6 +4109,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
                   <L label="SKU / código" help="Código de barras o QR del material, opcional. Se usa para encontrarlo con el botón Escanear."><div className="mt-1 flex gap-1.5"><input value={ef.sku} onChange={(e) => setEf({ ...ef, sku: e.target.value })} className="u-input" /><button type="button" onClick={() => setScannerTarget("edit")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <L label="Categoría"><select value={ef.category} onChange={(e) => setEf({ ...ef, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
+                    <L label="Marca / Fabricante"><input value={ef.brand} onChange={(e) => setEf({ ...ef, brand: e.target.value })} placeholder="Ej. Siemens" className="u-input" /></L>
                     <L label="Unidad"><input value={ef.unit} onChange={(e) => setEf({ ...ef, unit: e.target.value })} className="u-input" /></L>
                     <L label="Stock"><input type="number" value={ef.stock} onChange={(e) => setEf({ ...ef, stock: e.target.value })} className="u-input" /></L>
                     <L label="Stock mínimo" help="Nivel que activa la alerta de reposición. El material se considera crítico cuando el stock disponible es igual o menor a este valor."><input type="number" value={ef.minStock} onChange={(e) => setEf({ ...ef, minStock: e.target.value })} className="u-input" /></L>
@@ -4126,6 +4127,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
                 <div key={p.id} onClick={() => startEdit(p)} className={`cursor-pointer rounded-lg border p-3 hover:border-brand-300 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
                   <div className="min-w-0">
                     <div className="break-words text-sm font-semibold text-slate-800">{p.name}{p.sku && <span className="ml-1.5 font-mono text-[11px] font-normal text-slate-400">· {p.sku}</span>}</div>
+                    {p.brand && <div className="text-xs text-slate-500">{p.brand}</div>}
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                       <span>Venta <b className="font-medium text-slate-700">{money(p.price)}</b></span>
                       <span>Costo <b className="font-medium text-slate-700">{money(p.cost)}</b></span>
@@ -4153,6 +4155,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
           <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Descripción del material" className="u-input" /></L>
           <L label="SKU / código" help="Código de barras o QR del material, opcional. Se usa para encontrarlo con el botón Escanear."><div className="flex gap-1.5"><input value={nf.sku} onChange={(e) => setNf({ ...nf, sku: e.target.value })} placeholder="Opcional" className="u-input" /><button type="button" onClick={() => setScannerTarget("new")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
           <L label="Categoría"><select value={nf.category} onChange={(e) => setNf({ ...nf, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
+          <L label="Marca / Fabricante"><input value={nf.brand} onChange={(e) => setNf({ ...nf, brand: e.target.value })} placeholder="Ej. Siemens" className="u-input" /></L>
           <div className="grid grid-cols-2 gap-2">
             <L label="Unidad"><input value={nf.unit} onChange={(e) => setNf({ ...nf, unit: e.target.value })} placeholder="u / m / kg" className="u-input" /></L>
             <L label="Stock"><input type="number" value={nf.stock} onChange={(e) => setNf({ ...nf, stock: e.target.value })} className="u-input" /></L>
