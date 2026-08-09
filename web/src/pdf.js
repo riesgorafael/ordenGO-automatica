@@ -788,3 +788,88 @@ export function budgetReportPDF(budget, client, audience = "cliente") {
 
   doc.save(`${budget.number || budget.id}_presupuesto${internal ? "_interno" : ""}.pdf`);
 }
+
+// Resumen ejecutivo del Panel de dirección: los gráficos de Recharts son SVG/canvas en vivo, no
+// algo que jsPDF pueda incrustar directamente, así que el PDF reconstruye los mismos números como
+// tablas — el resumen que un gerente se llevaría de una reunión, no un calco pixel a pixel del panel.
+export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, aging) {
+  const doc = new jsPDF("p", "mm", "a4");
+  const W = 210, M = 15;
+  let y = 20;
+  let drawHead = () => {};
+  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+
+  drawLogo(doc, M, 12);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+  doc.text("PANEL DE DIRECCIÓN", W - M, 16, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+  doc.text(`Período: ${periodLabel}`, W - M, 23, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 32, W - M, 32);
+  y = 42;
+
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  const table = (rows, cols) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+    cols.forEach((c) => doc.text(c.label, M + c.x, y, { align: c.align || "left" }));
+    y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
+    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(8.2);
+    rows.forEach((row) => { brk(7); cols.forEach((c) => doc.text(String(c.value(row)), M + c.x, y, { align: c.align || "left" })); y += 5.5; });
+    y += 4;
+  };
+
+  heading("INDICADORES CLAVE", y); y += 8;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+  kpis.forEach((kpi) => { doc.setFont("helvetica", "bold"); doc.text(kpi.label + ":", M, y); doc.setFont("helvetica", "normal"); doc.text(String(kpi.value), M + 55, y); y += 5.5; });
+  y += 4;
+
+  if (topClients?.length) { brk(20); heading("TOP CLIENTES DEL PERÍODO", y); y += 8; table(topClients, [{ label: "Cliente", x: 0, value: (r) => r.name }, { label: "Facturado", x: 150, align: "right", value: (r) => money(r.value) }]); }
+  if (mix?.length) { brk(20); heading("MIX DE SERVICIOS", y); y += 8; table(mix, [{ label: "Servicio", x: 0, value: (r) => r.name }, { label: "Monto", x: 150, align: "right", value: (r) => money(r.value) }]); }
+  if (tech?.length) { brk(20); heading("PRODUCTIVIDAD POR TÉCNICO", y); y += 8; table(tech, [{ label: "Técnico", x: 0, value: (r) => r.name }, { label: "Horas", x: 100, align: "right", value: (r) => r.horas }, { label: "Órdenes", x: 150, align: "right", value: (r) => r.ordenes }]); }
+  if (aging?.length) { brk(20); heading("AGING DE COBRANZAS PENDIENTES", y); y += 8; table(aging, [{ label: "Rango", x: 0, value: (r) => r.name }, { label: "Monto", x: 150, align: "right", value: (r) => money(r.value) }]); }
+
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+
+  doc.save(`panel_direccion_${periodLabel.replace(/\s+/g, "_")}.pdf`);
+}
+
+// Resumen financiero mensual: antes Finanzas no tenía ninguna exportación (ni CSV ni PDF), solo
+// se veía en pantalla — este PDF deja constancia de los KPIs y las alertas automáticas del mes.
+export function financeReportPDF(period, kpis, insights) {
+  const doc = new jsPDF("p", "mm", "a4");
+  const W = 210, M = 15;
+  let y = 20;
+  let drawHead = () => {};
+  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+
+  drawLogo(doc, M, 12);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+  doc.text("RESUMEN FINANCIERO", W - M, 16, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+  doc.text(`Período: ${formatDate(period + "-01")}`, W - M, 23, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 32, W - M, 32);
+  y = 42;
+
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  heading("INDICADORES DEL MES", y); y += 8;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+  kpis.forEach((kpi) => { brk(7); doc.setFont("helvetica", "bold"); doc.text(kpi.label + ":", M, y); doc.setFont("helvetica", "normal"); doc.text(String(kpi.value), M + 65, y); y += 5.5; });
+  y += 4;
+
+  if (insights?.length) {
+    brk(14); heading("ALERTAS Y OBSERVACIONES AUTOMÁTICAS", y); y += 8;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.2);
+    insights.forEach((insight) => {
+      brk(12);
+      doc.setFont("helvetica", "bold"); doc.setTextColor(15, 23, 42); doc.text(`• ${insight.title}`, M, y); y += 4.5;
+      doc.setFont("helvetica", "normal"); doc.setTextColor(71, 85, 105);
+      const lines = doc.splitTextToSize(insight.text, W - 2 * M - 4);
+      doc.text(lines, M + 4, y); y += lines.length * 4 + 3;
+    });
+  }
+
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+
+  doc.save(`finanzas_${period}.pdf`);
+}
