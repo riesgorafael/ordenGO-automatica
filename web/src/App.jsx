@@ -55,11 +55,29 @@ const wholeMoney = (value) => Math.max(0, Math.round(Number(value) || 0));
 // así que usamos una clase en <body> para poder ocultar el botón flotante mientras alguno esté abierto,
 // sin tener que subir el estado de cada "pendingDelete" hasta la raíz.
 let openDialogCount = 0;
-function useDialogOpenClass() {
+// Si se pasa onRequestClose, además deja que el botón/gesto "atrás" del teléfono cierre el modal
+// en vez de salir de la app: al abrirse, empuja una entrada de historial "de más"; al recibir
+// popstate (atrás) la consume y cierra el diálogo. Si el diálogo se cierra por otro medio (botón
+// Cancelar, X, guardar) sin haber recibido ese popstate, la limpieza saca esa entrada extra con
+// history.back() para que la pila no crezca sin parar.
+function useDialogOpenClass(onRequestClose) {
   useEffect(() => {
     openDialogCount++;
     document.body.classList.add("dialog-open");
-    return () => { openDialogCount = Math.max(0, openDialogCount - 1); if (openDialogCount === 0) document.body.classList.remove("dialog-open"); };
+    let pushed = false;
+    let onPopState = null;
+    if (onRequestClose) {
+      window.history.pushState({ __modal: true }, "");
+      pushed = true;
+      onPopState = () => { pushed = false; onRequestClose(); };
+      window.addEventListener("popstate", onPopState);
+    }
+    return () => {
+      if (onPopState) window.removeEventListener("popstate", onPopState);
+      openDialogCount = Math.max(0, openDialogCount - 1);
+      if (openDialogCount === 0) document.body.classList.remove("dialog-open");
+      if (pushed) window.history.back();
+    };
   }, []);
 }
 // Un cliente puede tener varias plantas, cada una con su propio código (usado para numerar OTs).
@@ -469,15 +487,39 @@ export default function App() {
   const [offlineSyncFailed, setOfflineSyncFailed] = useState(false);
   const [offlineRetry, setOfflineRetry] = useState(0);
   const toast = (msg, type = "info") => { const id = Date.now() + Math.random(); setToasts((t) => [...t, { id, msg, type, leaving: false }]); setTimeout(() => setToasts((t) => t.map((x) => x.id === id ? { ...x, leaving: true } : x)), 3200); setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3450); };
+  // El botón/gesto "atrás" del teléfono, en vez de salir de la app, recupera la última sección
+  // visitada: cada navegación entre módulos empuja una entrada de historial, y "atrás" la recorre
+  // hacia atrás (siempre que no haya un modal abierto — esos ya consumen su propio "atrás" con
+  // useDialogOpenClass). isPoppingRef evita volver a empujar una entrada cuando el cambio de
+  // módulo vino de un popstate en vez de un clic del usuario.
+  const isPoppingRef = useRef(false);
   const navigateModule = (nextModule) => {
     if (nextModule !== module) {
       setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0); setMaterialListCreateSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
       setProjectEditor(null); setAccessProj(null); setDupProj(null); setWhiteboardProjectFilter("");
       setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setUtilMenuOpen(false); setBizMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
+      if (!isPoppingRef.current) window.history.pushState({ __module: nextModule }, "");
     }
+    isPoppingRef.current = false;
     setModule(nextModule);
   };
+  // navigateModule se recrea en cada render (cierra sobre "module"); el efecto de abajo solo se
+  // registra una vez, así que llama siempre a través de esta ref para no quedarse con una versión
+  // vieja de "module" en la comparación.
+  const navigateModuleRef = useRef(navigateModule);
+  navigateModuleRef.current = navigateModule;
+  useEffect(() => {
+    window.history.replaceState({ __module: module }, "");
+    const onPopState = (event) => {
+      if (openDialogCount > 0) return;
+      const targetModule = event.state?.__module;
+      if (targetModule) { isPoppingRef.current = true; navigateModuleRef.current(targetModule); }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => { const on = () => setOnline(true), off = () => setOnline(false); window.addEventListener("online", on); window.addEventListener("offline", off); return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); }; }, []);
   useEffect(() => { const openSearch = (e) => { if ((e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) { e.preventDefault(); setGlobalSearchOpen(true); } }; window.addEventListener("keydown", openSearch); return () => window.removeEventListener("keydown", openSearch); }, []);
   useEffect(() => {
@@ -1410,7 +1452,7 @@ function ChangePassword({ onClose, forced, onDone }) {
 
 function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger, onClose, onConfirm }) {
   const mouseDownOnBackdrop = useRef(false);
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-2xl sm:pb-5" onClick={(e) => e.stopPropagation()}><div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl ${danger ? "bg-rose-50 text-rose-600" : "bg-brand-50 text-brand-600"}`}>{danger ? <Trash2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</div><h2 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-2 text-sm leading-relaxed text-slate-500">{message}</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={onConfirm} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-brand-500 hover:bg-brand-400"}`}>{confirmLabel}</button></div></div></div>;
 }
 
@@ -1469,7 +1511,7 @@ const currentMonth = () => todayStr().slice(0, 7);
 // (fondo claro, factura girada), puede arrastrar cualquiera de las 4 esquinas de forma
 // independiente para ajustarla a mano antes de continuar.
 function ImageCropModal({ imageUrl, onDiscard, onSkipCrop, onConfirm }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onDiscard);
   const boxRef = useRef(null);
   const [corners, setCorners] = useState(null); // [{x,y}×4] TL,TR,BR,BL en fracción [0,1] | null mientras autodetecta
   const [detecting, setDetecting] = useState(true);
@@ -1547,7 +1589,7 @@ function ImageCropModal({ imageUrl, onDiscard, onSkipCrop, onConfirm }) {
 }
 
 function FinanceEntryModal({ movement, initialKind = "expense", projects, budgets, clients, branding, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [form, setForm] = useState({ kind: initialKind, concept: "", amount: "", currency: "USD", exchangeRate: 1, date: todayStr(), category: EXPENSE_CATEGORIES[0], paymentMethod: PAYMENT_METHODS[0], projectId: "", budgetId: "", clientId: "", supplier: "", receiptNumber: "", detail: "", attachmentUrl: "", attachmentName: "", vatIncluded: false, paymentStatus: "paid", paidAt: todayStr(), ...(movement || {}) });
   const [pickMode, setPickMode] = useState(!movement); const [saving, setSaving] = useState(false); const [processing, setProcessing] = useState(false);
   const [aiNotice, setAiNotice] = useState(null); // {ok, confidence} | null
@@ -1850,7 +1892,7 @@ const emptyBudget = (me, clients) => {
 };
 
 function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [form, setForm] = useState(() => ({ ...emptyBudget(me, clients), ...(budget || {}), number: budget?.number || budget?.id || "", probabilityOverridden: Boolean(budget?.probabilityOverridden), probability: budget?.probabilityOverridden ? budget.probability : BUDGET_STAGE_PROBABILITY[budget?.stage || "Borrador"], items: (budget?.items || emptyBudget(me, clients).items).map((item) => ({ ...item })), additionalCosts: (budget?.additionalCosts || []).map((item) => ({ ...item })) }));
   const [saving, setSaving] = useState(false);
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
@@ -2022,7 +2064,7 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
 }
 
 function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOrder, onProject }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [creatingProject, setCreatingProject] = useState(false);
   const orderIsRecommended = !recommendProject || Boolean(project);
   const createProject = async () => { setCreatingProject(true); await onProject(); setCreatingProject(false); };
@@ -2049,7 +2091,7 @@ function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOr
 }
 
 function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [form, setForm] = useState(() => ({ supplierId: "", projectId: "", stage: "Borrador", dueDate: "", supplierQuoteNumber: "", supplierInvoiceNumber: "", notes: "", ...(po || {}), items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map((item) => ({ ...item })) }));
   const [saving, setSaving] = useState(false);
   const [rateLoading, setRateLoading] = useState(false);
@@ -2160,7 +2202,7 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
 /* ===================================== LISTADO DE MATERIALES ===================================== */
 const SECTION_LETTERS_CLIENT = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 function MaterialListEditor({ materialList, projects, clients, onClose, onSave, onErr }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [form, setForm] = useState(() => ({
     projectId: "", discipline: "Eléctricos", stage: "Borrador", version: "1.0", client: "", site: "", notes: [...MATERIAL_LIST_DEFAULT_NOTES],
     ...(materialList || {}),
@@ -2738,7 +2780,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo, técnico, síntoma…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
-        <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:flex-none"><option>Todas</option>{[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((s) => <option key={s}>{s}</option>)}</select>
+        <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:w-auto sm:flex-none"><option>Todas</option>{[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((s) => <option key={s}>{s}</option>)}</select>
         <button onClick={() => setOUrgent((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${oUrgent ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-200 bg-white text-slate-600"}`}><AlertTriangle className="h-4 w-4" /> Urgentes</button>
         <div className="flex rounded-lg bg-slate-200 p-0.5"><button onClick={() => setView("lista")} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${view === "lista" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Lista</button><button onClick={() => setView("estado")} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${view === "estado" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Por estado</button></div>
         {ger && (<>
@@ -2908,7 +2950,7 @@ function MonthlyReport({ orders }) {
 
 /* ===================================== ÓRDENES: DETALLE ===================================== */
 function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, onContinue, onEdit, me }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
   const assignedTechs = order.assignedTechs?.length ? order.assignedTechs : (order.tech ? [order.tech] : []);
@@ -3032,7 +3074,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
 }
 
 function OrderEditDialog({ order, clients, users, parts, budgets = [], projects = [], onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const hydrateMaterial = (material) => {
     const part = parts.find((item) => (material.partId && item.id === material.partId) || item.name === material.name);
     if (!part) return { ...material };
@@ -3150,7 +3192,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
 }
 
 function ReasonDialog({ onClose, onConfirm, title = "Aprobar sin firma", description = "Registrá el motivo para mantener la trazabilidad de la orden.", placeholder = "Ej. Cliente ausente; conformidad recibida por teléfono", confirmLabel = "Aprobar", confirmClass = "bg-amber-600", showCategory = false }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [reason, setReason] = useState("");
   const [category, setCategory] = useState(PAUSE_CATEGORIES[0]);
   const mouseDownOnBackdrop = useRef(false);
@@ -3204,7 +3246,7 @@ function MicButton({ value, onChange, className = "" }) {
 
 /* ===================================== ESCÁNER DE CÓDIGO (TAG DE ACTIVO) ===================================== */
 function BarcodeScannerDialog({ onClose, onDetect }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const videoRef = useRef(null);
   const [error, setError] = useState("");
   const supported = typeof window !== "undefined" && "BarcodeDetector" in window;
@@ -3706,7 +3748,7 @@ function ActivitySection({ entity, onSend, userById }) {
 
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
 function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, onDuplicate, prefill }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const editingExisting = !!task;
   const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
@@ -3839,7 +3881,7 @@ function ChartBox({ data }) {
 /* ===================================== EQUIPO (ADMIN) ===================================== */
 /* ===================================== ACCESO POR PROYECTO ===================================== */
 function ProjectAccess({ project, users, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina" || u.role === "monitor_oficina"));
   const [sel, setSel] = useState(new Set(project.allowedUsers || []));
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -3870,7 +3912,7 @@ function ProjectAccess({ project, users, onClose, onSave }) {
 
 /* ===================================== DUPLICAR PROYECTO ===================================== */
 function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const people = users.filter((u) => u.active && u.role !== "monitor_oficina");
   const suggestKey = (project.key || "PRJ");
   const [name, setName] = useState(`${project.name} (copia)`);
@@ -4038,7 +4080,7 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
 }
 
 function ClientEditor({ value, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [form, setForm] = useState({ name: value.name || "", cuit: value.cuit || "", ivaCondition: value.ivaCondition || "", address: value.address || "", locality: value.locality || "", phone: value.phone || "", email: value.email || "", contactName: value.contactName || "", saleCondition: value.saleCondition || "", logoDataUrl: value.logoDataUrl || "", sites: value.sites?.length ? value.sites.map((s) => ({ ...s })) : [{ code: value.code || "", name: value.site || "" }] });
   const [logoError, setLogoError] = useState("");
   const mouseDownOnBackdrop = useRef(false);
@@ -4104,7 +4146,7 @@ function Suppliers({ suppliers, purchaseOrders, onAdd, onPatch, onRemove, onErr 
 }
 
 function SupplierEditor({ value, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [form, setForm] = useState({ name: value.name || "", code: value.code || "", cuit: value.cuit || "", address: value.address || "", locality: value.locality || "", phone: value.phone || "", email: value.email || "", contactName: value.contactName || value.contact || "", ivaCondition: value.ivaCondition || "", saleCondition: value.saleCondition || "", paymentTermsDays: value.paymentTermsDays ?? 30, active: value.active !== false });
   const mouseDownOnBackdrop = useRef(false);
   const set = (field, val) => setForm((current) => ({ ...current, [field]: val }));
@@ -4227,7 +4269,7 @@ function WhiteboardTextEditor({ note, projects, saving, onClose, onSave }) {
   const [form, setForm] = useState({ title: note.title || "", content: note.content || "", color: note.color || WHITEBOARD_NOTE_COLORS[0], projectId: note.projectId || "" });
   const set = (field, val) => setForm((current) => ({ ...current, [field]: val }));
   const mouseDownOnBackdrop = useRef(false);
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -4250,7 +4292,7 @@ function WhiteboardShareDialog({ note, users, me, onClose, onSave }) {
   const toggle = (id) => setSel((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const candidates = users.filter((u) => u.active && u.id !== me.id);
   const mouseDownOnBackdrop = useRef(false);
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const submit = async () => { setSaving(true); try { await onSave([...sel]); } finally { setSaving(false); } };
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
@@ -4275,7 +4317,7 @@ function WhiteboardViewDialog({ note, projects, onClose }) {
   const project = projects.find((p) => p.id === note.projectId);
   const mouseDownOnBackdrop = useRef(false);
   const [zoomed, setZoomed] = useState(false);
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const isDrawing = note.type === "drawing";
   const downloadImage = () => {
     const a = document.createElement("a");
@@ -4315,7 +4357,7 @@ function WhiteboardViewDialog({ note, projects, onClose }) {
 
 /* ===================================== PIZARRA: EDITOR DE DIBUJO ===================================== */
 function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onCancel);
   const [title, setTitle] = useState(note.title || "");
   const [projectId, setProjectId] = useState(note.projectId || "");
   const boardRef = useRef(null);
@@ -4805,7 +4847,7 @@ function Team({ users, tasks, orders, projects = [], me, onAdd, onPatch, onRemov
 }
 
 function UserProjectsDialog({ user, projects, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [sel, setSel] = useState(new Set(projects.filter((p) => (p.allowedUsers || []).includes(user.id)).map((p) => p.id)));
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const mouseDownOnBackdrop = useRef(false);
@@ -4833,7 +4875,7 @@ function UserProjectsDialog({ user, projects, onClose, onSave }) {
 }
 
 function TvScreenDialog({ user, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const s = user.settings || {};
   const [form, setForm] = useState({ screenName: s.screenName || "", tvModeEnabled: s.tvModeEnabled || false, tvCycleEnabled: s.tvCycleEnabled || false, tvCycleSeconds: s.tvCycleSeconds || 30 });
   const [saving, setSaving] = useState(false);
@@ -4856,7 +4898,7 @@ function TvScreenDialog({ user, onClose, onSave }) {
 }
 
 function PasswordResetDialog({ user, onClose, onSave }) {
-  useDialogOpenClass();
+  useDialogOpenClass(onClose);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);

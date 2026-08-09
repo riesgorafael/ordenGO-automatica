@@ -36,11 +36,26 @@ function descendantIds(taskId, tasks) {
 // navegación inferior fixed de la app — si no, queda tapando los botones de Guardar/Cancelar
 // (mismo bug ya corregido en los demás diálogos grandes de App.jsx).
 let openDialogCount = 0;
-function useDialogOpenClass() {
+// Igual que en App.jsx: si se pasa onRequestClose, el botón/gesto "atrás" del teléfono cierra el
+// modal en vez de salir de la app.
+function useDialogOpenClass(onRequestClose) {
   useEffect(() => {
     openDialogCount++;
     document.body.classList.add("dialog-open");
-    return () => { openDialogCount = Math.max(0, openDialogCount - 1); if (openDialogCount === 0) document.body.classList.remove("dialog-open"); };
+    let pushed = false;
+    let onPopState = null;
+    if (onRequestClose) {
+      window.history.pushState({ __modal: true }, "");
+      pushed = true;
+      onPopState = () => { pushed = false; onRequestClose(); };
+      window.addEventListener("popstate", onPopState);
+    }
+    return () => {
+      if (onPopState) window.removeEventListener("popstate", onPopState);
+      openDialogCount = Math.max(0, openDialogCount - 1);
+      if (openDialogCount === 0) document.body.classList.remove("dialog-open");
+      if (pushed) window.history.back();
+    };
   }, []);
 }
 
