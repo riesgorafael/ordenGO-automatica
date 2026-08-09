@@ -171,19 +171,18 @@ const T_STYLE = {
 const prioMeta = { Baja: "bg-slate-100 text-slate-500", Media: "bg-sky-50 text-sky-700", Alta: "bg-orange-100 text-orange-800 font-semibold", Urgente: "bg-rose-600 text-white font-semibold" };
 const typeMeta = { Tarea: "bg-brand-100 text-brand-700", Bug: "bg-rose-100 text-rose-700", Mejora: "bg-emerald-100 text-emerald-700", Historia: "bg-violet-100 text-violet-700" };
 
-/* ===================================== Utils / IA ===================================== */
+/* ===================================== Utils ===================================== */
 function fileToImages(file) {
   return new Promise((resolve, reject) => {
     const rd = new FileReader();
     rd.onload = () => { const img = new Image(); img.onload = () => {
       const mk = (max, q) => { const s = Math.min(1, max / Math.max(img.width, img.height)); const w = Math.round(img.width * s), h = Math.round(img.height * s);
         const c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").drawImage(img, 0, 0, w, h); return c.toDataURL("image/jpeg", q); };
-      resolve({ analysis: mk(1280, 0.82), report: mk(1600, 0.86), thumb: mk(320, 0.7) }); };
+      resolve({ report: mk(1600, 0.86), thumb: mk(320, 0.7) }); };
       img.onerror = reject; img.src = rd.result; };
     rd.onerror = reject; rd.readAsDataURL(file);
   });
 }
-async function analyzeImage(dataUrl) { return api.analyze(dataUrl.split(",")[1]); }
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const rd = new FileReader();
@@ -3151,7 +3150,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
       return;
     }
     setAnalyzing(true);
-    try { const { analysis, report, thumb } = await fileToImages(file); setPhotos((p) => [...p, { url: report, preview: thumb, cat, ts: new Date().toISOString(), kind: "image" }]); try { const r = await analyzeImage(analysis); if (!equipo && r.equipo) setEquipo(r.equipo); if (!category && r.category) setCategory(r.category); if (!solucion && r.description) setSolucion(r.description); } catch {} } finally { setAnalyzing(false); }
+    try { const { report, thumb } = await fileToImages(file); setPhotos((p) => [...p, { url: report, preview: thumb, cat, ts: new Date().toISOString(), kind: "image" }]); } finally { setAnalyzing(false); }
   };
   const addMaterial = () => setMaterials((m) => [...m, { name: "", qty: 1, price: 0, cost: 0, billable: true, partNumber: "", brand: "", model: "", serial: "", supplier: "" }]);
   const setMat = (i, patch) => setMaterials((m) => m.map((x, j) => (j === i ? { ...x, ...patch } : x)));

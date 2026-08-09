@@ -108,8 +108,6 @@ ADMIN_EMAIL = tucorreo@empresa.com
 ADMIN_PASSWORD = (tu clave de administrador)
 DEMO_PASSWORD = (clave inicial para empleados)
 DEFAULT_RATE = 0
-ANTHROPIC_API_KEY = (tu clave de Anthropic, opcional)
-ANTHROPIC_MODEL = claude-sonnet-5
 PORT = 3000
 ```
 

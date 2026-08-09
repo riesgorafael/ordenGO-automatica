@@ -2031,38 +2031,6 @@ app.delete("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   finally { db.release(); }
 });
 
-/* ------------------------------------------------ Proxy IA (clave del lado servidor) ------------------------------------------------ */
-// Nota: el OCR de comprobantes de Finanzas NO pasa por acá — corre 100% en el navegador con
-// Tesseract.js (ver web/src/receiptOcr.js) para no depender de esta clave. Esta ruta sigue
-// existiendo solo para el análisis de fotos de equipos/trabajo en las órdenes.
-app.post("/api/ai/analyze", auth, requireOrdersAccess, async (req, res) => {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return res.status(501).json({ error: "IA no configurada" });
-  const { image } = req.body || {};
-  if (!image) return res.status(400).json({ error: "Falta la imagen" });
-  const prompt =
-`Eres un técnico de automatización industrial. Analiza la imagen del equipo o trabajo y devuelve SOLO JSON válido (sin markdown):
-{"equipo":"","category":"","description":"","confidence":0}
-- equipo: nombre corto del componente. - category: etiqueta corta. - description: 1-2 frases en español. - confidence: 0 a 1.`;
-  try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5", max_tokens: 1000,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } },
-          { type: "text", text: prompt }] }],
-      }),
-    });
-    const data = await r.json();
-    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    let c = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-    const s = c.indexOf("{"), e = c.lastIndexOf("}"); if (s !== -1 && e !== -1) c = c.slice(s, e + 1);
-    res.json(JSON.parse(c));
-  } catch { res.status(502).json({ error: "No se pudo analizar la imagen" }); }
-});
-
 // Express 4 no captura por sí solo los rechazos de handlers async. Este
 // middleware evita que un error de base de datos derribe el proceso o deje la
 // petición abierta, sin filtrar detalles internos al navegador.
