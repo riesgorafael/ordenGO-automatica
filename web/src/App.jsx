@@ -1256,7 +1256,7 @@ export default function App() {
           ); })()}
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
-        {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
+        {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} projects={projects} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onSaveUserProjects={saveUserProjects} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
@@ -2097,7 +2097,7 @@ function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOr
   </div>;
 }
 
-function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }) {
+function PurchaseOrderEditor({ po, suppliers, projects, parts = [], onClose, onSave, onErr }) {
   useDialogOpenClass(onClose);
   const [form, setForm] = useState(() => ({ supplierId: "", projectId: "", stage: "Borrador", dueDate: "", supplierQuoteNumber: "", supplierInvoiceNumber: "", notes: "", ...(po || {}), items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map((item) => ({ ...item })) }));
   const [saving, setSaving] = useState(false);
@@ -2125,11 +2125,13 @@ function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }
         <Section title="Proveedor y seguimiento"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="N.º de orden"><input value={form.number || ""} onChange={(event) => set("number", event.target.value)} placeholder="Automático al guardar" className="u-input" /></L><L label="Proveedor *"><select value={form.supplierId} onChange={(event) => set("supplierId", event.target.value)} className="u-input"><option value="">Seleccionar proveedor</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></L><L label="Proyecto"><select value={form.projectId || ""} onChange={(event) => set("projectId", event.target.value)} className="u-input"><option value="">General / sin proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Estado"><select value={form.stage} onChange={(event) => set("stage", event.target.value)} className="u-input">{PO_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></L><L label="Fecha de entrega estimada"><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} className="u-input" /></L><L label="N.º de presupuesto del proveedor" help="El número de presupuesto/cotización que el proveedor te compartió al solicitarle los materiales o servicios."><input value={form.supplierQuoteNumber || ""} onChange={(event) => set("supplierQuoteNumber", event.target.value)} placeholder="Ej. 100600040730" className="u-input" /></L><div className="sm:col-span-2"><L label={form.stage === "Recibida" ? "N.º de factura del proveedor *" : "N.º de factura del proveedor"} help="Se completa cuando el proveedor envía la factura correspondiente a esta orden."><input value={form.supplierInvoiceNumber || ""} onChange={(event) => set("supplierInvoiceNumber", event.target.value)} placeholder="Ej. 0001-00001234" className={`u-input ${form.stage === "Recibida" && !form.supplierInvoiceNumber?.trim() ? "border-amber-400 bg-amber-50" : ""}`} /></L></div></div><L label="Notas"><textarea rows={2} value={form.notes || ""} onChange={(event) => set("notes", event.target.value)} placeholder="Condiciones de entrega, referencia interna, etc." className="u-input resize-none" /></L></Section>
 
         <Section title="Ítems">
+          <datalist id="po-parts">{parts.map((part) => <option key={part.id} value={part.name} />)}</datalist>
           <div className="space-y-3">{form.items.map((item, index) => { const math = poItemMath(item); return <div key={index} className="rounded-lg border border-slate-200 p-2.5">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
               <input value={item.sku || ""} onChange={(event) => setItem(index, { sku: event.target.value })} placeholder="Código" aria-label="Código" className="u-input font-mono" />
-              <input value={item.description} onChange={(event) => setItem(index, { description: event.target.value })} placeholder="Descripción del producto o servicio" aria-label="Descripción" className="u-input" />
+              <input list="po-parts" value={item.description} onChange={(event) => { const value = event.target.value; const part = parts.find((candidate) => candidate.name === value); setItem(index, part ? { description: value, partId: part.id, unit: part.unit || item.unit } : { description: value, partId: null }); }} placeholder="Descripción del producto o servicio (autocompleta si está en Inventario)" aria-label="Descripción" className="u-input" />
             </div>
+            {item.partId && <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Vinculado al inventario: al recibir la orden, sumará stock a este repuesto.</p>}
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-[5rem_5rem_6.5rem_6rem_5.5rem_auto]">
               <input type="number" min="0" step="1" value={item.qty} onChange={(event) => setItem(index, { qty: event.target.value === "" ? "" : Math.max(0, Math.round(Number(event.target.value))) })} placeholder="Cant." aria-label="Cantidad" className="u-input" />
               <select value={UNIT_OPTIONS.includes(item.unit) ? item.unit : "u"} onChange={(event) => setItem(index, { unit: event.target.value })} aria-label="Unidad" className="u-input">{UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select>
@@ -2152,7 +2154,7 @@ function PurchaseOrderEditor({ po, suppliers, projects, onClose, onSave, onErr }
   </div>;
 }
 
-function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, me, createSignal, onConsumeCreate, onSave, onDelete, onDuplicate, onMarkPaid, onAddSupplier, onPatchSupplier, onRemoveSupplier, onErr }) {
+function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, parts = [], me, createSignal, onConsumeCreate, onSave, onDelete, onDuplicate, onMarkPaid, onAddSupplier, onPatchSupplier, onRemoveSupplier, onErr }) {
   const [poTab, setPoTab] = useState("orders");
   const [editingPo, setEditingPo] = useState(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -2201,7 +2203,7 @@ function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, m
                 </div>
               ); })()}</Box>)}</div>}
     </>}
-    {editorOpen && <PurchaseOrderEditor po={editingPo} suppliers={suppliers} projects={projects} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingPo?.id))} onErr={onErr} />}
+    {editorOpen && <PurchaseOrderEditor po={editingPo} suppliers={suppliers} projects={projects} parts={parts} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingPo?.id))} onErr={onErr} />}
     {pendingDelete && <ConfirmDialog title="Eliminar orden de compra" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”. ${pendingDelete.stage === "Recibida" ? "La cuenta por pagar asociada en Finanzas también se eliminará." : "No tiene movimientos financieros asociados."}`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
   </div>;
 }
