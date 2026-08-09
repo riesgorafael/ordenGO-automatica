@@ -88,6 +88,9 @@ const LABOR_ROLES = [
 // mostrándose como mano de obra (perfil editable, costo fijado por rol) en vez de romperse.
 const LABOR_TYPES = ["Mano de obra", "Ingeniería", "Programación", "Montaje", "Puesta en marcha"];
 const ADDITIONAL_COST_CATEGORIES = ["Retrabajo", "Ingeniería adicional", "Programación adicional", "Materiales", "Viáticos", "Terceros", "Otro"];
+// Categorías fijas de pausa/interrupción, para poder filtrar y agregar en reportes en vez de
+// depender solo del texto libre que carga cada técnico.
+const PAUSE_CATEGORIES = ["Espera de repuesto", "Sin acceso al sitio", "Decisión del cliente", "Clima", "Corte de energía/servicios", "Descanso / almuerzo", "Disponibilidad del equipo/planta", "Otro"];
 const DEFAULT_ROLE_BY_TYPE = { "Mano de obra": "Ingeniero", "Ingeniería": "Ingeniero", "Programación": "Programador", "Montaje": "Tablerista", "Puesta en marcha": "Ingeniero" };
 const UNIT_OPTIONS = ["u", "hs", "mts", "gl"];
 const BUDGET_STYLE = {
@@ -334,7 +337,7 @@ const Pie = RechartsPie;
 
 const Chip = ({ children, className = "", ...rest }) => (<span {...rest} className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
 const Box = ({ children, className = "", ...rest }) => (<div {...rest} className={`motion-card rounded-xl border border-slate-200 bg-white ${className}`}>{children}</div>);
-const Panel = ({ title, children }) => (<div className="motion-card h-full rounded-xl border border-slate-200 bg-white p-4"><h3 className="mb-3 text-sm font-semibold leading-5 text-slate-900 sm:min-h-10">{title}</h3>{children}</div>);
+const Panel = ({ title, action, children }) => (<div className="motion-card h-full rounded-xl border border-slate-200 bg-white p-4"><div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold leading-5 text-slate-900 sm:min-h-10">{title}</h3>{action}</div>{children}</div>);
 const HelpHint = ({ text }) => <span tabIndex={0} aria-label={text} className="group/hint relative inline-flex cursor-help align-middle outline-none"><CircleHelp className="h-3.5 w-3.5 text-slate-400 transition-colors group-hover/hint:text-brand-600 group-focus-visible/hint:text-brand-600" /><span role="tooltip" className="pointer-events-none invisible absolute bottom-[calc(100%+0.4rem)] right-0 z-[80] w-64 rounded-lg bg-slate-900 px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white opacity-0 shadow-xl transition-opacity group-hover/hint:visible group-hover/hint:opacity-100 group-focus-visible/hint:visible group-focus-visible/hint:opacity-100">{text}</span></span>;
 const L = ({ label, children, help = "", required = false, labelClass = "" }) => <label className="block"><span className={`mb-1 flex items-center gap-1 text-[11px] ${required ? "font-semibold text-slate-700" : "font-medium text-slate-500"} ${labelClass}`}>{label}{required && <span className="text-rose-500">*</span>}{help && <HelpHint text={help} />}</span>{children}</label>;
 const ReqLabel = ({ children }) => <span className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-slate-700">{children}<span className="text-rose-500">*</span></span>;
@@ -2682,6 +2685,32 @@ function MonthlyReport({ orders }) {
     const lines = rows.map((r) => [r.client, r.count, round2(r.hours), r.labor.toFixed(2), r.mats.toFixed(2), r.total.toFixed(2), r.facturado.toFixed(2), r.pendiente.toFixed(2)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
     downloadFile(`reporte_${period}.csv`, [head.join(","), ...lines].join("\n"));
   };
+  // Análisis de pausas: cuenta y suma la duración (fin de la pausa dentro del período elegido) de
+  // cada categoría y de cada técnico, sobre todas las órdenes (no solo las ya facturables) — a
+  // diferencia de la facturación, una pausa importa para el análisis operativo aunque la orden
+  // todavía no esté cerrada.
+  const pauseByCategory = {}, pauseByTech = {};
+  orders.forEach((o) => {
+    const sessions = Array.isArray(o.technical?.workSessions) ? o.technical.workSessions : [];
+    sessions.filter((s) => s.pauseReason && s.end && String(s.end).startsWith(period)).forEach((s) => {
+      const ms = Math.max(0, new Date(s.end) - new Date(s.start));
+      const cat = s.pauseCategory || "Otro";
+      if (!pauseByCategory[cat]) pauseByCategory[cat] = { category: cat, count: 0, ms: 0 };
+      pauseByCategory[cat].count++; pauseByCategory[cat].ms += ms;
+      const tech = o.tech || "Sin asignar";
+      if (!pauseByTech[tech]) pauseByTech[tech] = { tech, count: 0, ms: 0 };
+      pauseByTech[tech].count++; pauseByTech[tech].ms += ms;
+    });
+  });
+  const pauseCategoryRows = Object.values(pauseByCategory).sort((a, b) => b.ms - a.ms);
+  const pauseTechRows = Object.values(pauseByTech).sort((a, b) => b.ms - a.ms);
+  const pauseTotal = pauseCategoryRows.reduce((s, r) => ({ count: s.count + r.count, ms: s.ms + r.ms }), { count: 0, ms: 0 });
+  const suspensionsInPeriod = orders.filter((o) => o.suspendedAt && String(o.suspendedAt).startsWith(period));
+  const exportPausesCSV = () => {
+    const head = ["Categoría", "Cantidad", "Duración total"];
+    const lines = pauseCategoryRows.map((r) => [r.category, r.count, compactDuration(r.ms)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    downloadFile(`pausas_${period}.csv`, [head.join(","), ...lines].join("\n"));
+  };
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -2732,6 +2761,39 @@ function MonthlyReport({ orders }) {
           </div>
         </>
       )}
+      <Panel title="Análisis de pausas" action={pauseCategoryRows.length > 0 && <button onClick={exportPausesCSV} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Download className="h-3.5 w-3.5" /> CSV</button>}>
+        {pauseCategoryRows.length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-400">No se registraron pausas en {monthLabel}.</p>
+        ) : (
+          <>
+            <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Metric label="Pausas" value={pauseTotal.count} icon={Square} tint="text-amber-600" />
+              <Metric label="Tiempo total pausado" value={compactDuration(pauseTotal.ms)} icon={Clock} tint="text-amber-600" />
+              <Metric label="Suspensiones de orden" value={suspensionsInPeriod.length} icon={AlertTriangle} tint="text-rose-600" description="Órdenes suspendidas por completo (clima, acceso, cliente, etc.), no pausas cortas de sesión de trabajo." />
+            </div>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div>
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Por tipo de pausa</p>
+                <div className="space-y-1.5">{pauseCategoryRows.map((r) => (
+                  <div key={r.category} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                    <span className="font-medium text-slate-700">{r.category}</span>
+                    <span className="text-slate-500">{r.count} · <b className="text-slate-700">{compactDuration(r.ms)}</b></span>
+                  </div>
+                ))}</div>
+              </div>
+              <div>
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Por técnico</p>
+                <div className="space-y-1.5">{pauseTechRows.map((r) => (
+                  <div key={r.tech} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                    <span className="font-medium text-slate-700">{r.tech}</span>
+                    <span className="text-slate-500">{r.count} · <b className="text-slate-700">{compactDuration(r.ms)}</b></span>
+                  </div>
+                ))}</div>
+              </div>
+            </div>
+          </>
+        )}
+      </Panel>
     </div>
   );
 }
@@ -2755,7 +2817,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
   const isSuspended = order.status === "Suspendida";
   const canSuspend = ["En proceso de ejecución", "Completada", "Aprobada"].includes(order.status);
   const [suspendOpen, setSuspendOpen] = useState(false);
-  const suspend = (reason) => { onUpdate(order.id, { status: "Suspendida", suspendReason: reason, suspendedFromStatus: order.status, suspendedAt: new Date().toISOString() }); setSuspendOpen(false); };
+  const suspend = ({ category, reason }) => { onUpdate(order.id, { status: "Suspendida", suspendReason: reason, suspendCategory: category, suspendedFromStatus: order.status, suspendedAt: new Date().toISOString() }); setSuspendOpen(false); };
   const resume = () => onUpdate(order.id, { status: order.suspendedFromStatus || "Borrador", suspendReason: "", suspendedFromStatus: "", resumedAt: new Date().toISOString() });
   // Reabrir una orden Completada la devuelve a "En proceso de ejecución" para poder retomarla desde
   // el asistente (botón "Retomar y finalizar trabajo") y agregar fotos u otra evidencia faltante.
@@ -2798,7 +2860,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
           {order.technical && Object.values(order.technical).some(Boolean) && <section className="rounded-lg border border-slate-200 p-3 text-sm"><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Ficha técnica</h4><div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">{order.technical.assetTag && <p><b>TAG:</b> {order.technical.assetTag}</p>}{order.technical.manufacturer && <p><b>Fabricante:</b> {order.technical.manufacturer}</p>}{order.technical.model && <p><b>Modelo:</b> {order.technical.model}</p>}{order.technical.serial && <p><b>Serie:</b> {order.technical.serial}</p>}{order.technical.finalCondition && <p><b>Estado final:</b> {order.technical.finalCondition}</p>}{order.technical.downtimeMinutes > 0 && <p><b>Parada:</b> {order.technical.downtimeMinutes} min</p>}</div>{order.technical.diagnosis && <p className="mt-2 text-xs text-slate-600"><b>Diagnóstico:</b> {order.technical.diagnosis}</p>}{order.technical.rootCause && <p className="mt-1 text-xs text-slate-600"><b>Causa raíz:</b> {order.technical.rootCause}</p>}{order.technical.testsPerformed && <p className="mt-1 text-xs text-slate-600"><b>Pruebas:</b> {order.technical.testsPerformed}</p>}{order.technical.testResult && <p className="mt-1 text-xs text-slate-600"><b>Resultado:</b> {order.technical.testResult}</p>}{order.technical.recommendations && <p className="mt-1 text-xs text-slate-600"><b>Recomendaciones:</b> {order.technical.recommendations}</p>}{ger && order.technical.internalNotes && <p className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-800"><b>Nota interna:</b> {order.technical.internalNotes}</p>}</section>}
           {ger && (order.technical?.recurrence || order.technical?.internalDisposition || order.technical?.internalOwner || (order.service === "Garantía" && order.technical?.warranty)) && <section className="rounded-lg border border-violet-200 bg-violet-50/40 p-3 text-xs text-slate-600"><h4 className="mb-2 font-semibold uppercase tracking-wide text-violet-500">Gestión interna</h4>{order.service === "Garantía" && order.technical?.warranty && <p><b>Garantía:</b> {order.technical.warranty}</p>}{order.technical?.recurrence && <p><b>Recurrencia:</b> {order.technical.recurrence}</p>}{order.technical?.internalDisposition && <p><b>Próxima acción:</b> {order.technical.internalDisposition}</p>}{order.technical?.internalOwner && <p><b>Responsable:</b> {order.technical.internalOwner}</p>}</section>}
           {order.noSignReason && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700">Cerrada sin firma. Motivo: {order.noSignReason}</div>}
-          {isSuspended && <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>Orden suspendida por causas ajenas al trabajo{order.suspendedAt ? ` · ${new Date(order.suspendedAt).toLocaleString("es-AR")}` : ""}.<br />Motivo: {order.suspendReason || "Sin especificar"}</span></div>}
+          {isSuspended && <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>Orden suspendida por causas ajenas al trabajo{order.suspendedAt ? ` · ${new Date(order.suspendedAt).toLocaleString("es-AR")}` : ""}.<br />{order.suspendCategory && <Chip className="mb-1 mt-1 bg-rose-100 text-rose-700 ring-rose-600/20">{order.suspendCategory}</Chip>}<br />Motivo: {order.suspendReason || "Sin especificar"}</span></div>}
           {order.photos && order.photos.length > 0 && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Evidencia</h4><div className="flex flex-wrap gap-2">{order.photos.map((p, i) => p.kind === "document" ? (<a key={i} href={p.url} download={p.name || "documento"} title={p.name} className="relative flex h-16 w-16 flex-col items-center justify-center rounded-lg bg-slate-100 ring-1 ring-slate-200 hover:bg-slate-200"><FileText className="h-6 w-6 text-slate-500" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span></a>) : (<button key={i} onClick={() => setZoom(p)} className="relative" aria-label={`Ampliar foto ${p.cat || ""}`}><img src={p.preview || p.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span></button>))}</div></section>)}
           <section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Mano de obra y materiales</h4><div className="rounded-lg border border-slate-200 p-3 text-sm">
             <div className="flex items-center justify-between text-slate-600"><span>Tiempo efectivo</span><span className="font-medium text-slate-800">{compactDuration((Number(order.laborHours) || 0) * 3600000)}</span></div>{ger && <div className="mt-1 flex items-center justify-between text-slate-600"><span>Horas facturables</span><span className="font-medium text-slate-800">{t.billedHours} h · {order.technicians || 1} téc. · {round2(t.billedHours * (Number(order.technicians) || 1))} h-técnico</span></div>}{Number(order.technical?.billableWaitMinutes) > 0 && <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>{ger ? "Espera facturable" : "Espera registrada"}</span><span>{order.technical.billableWaitMinutes} min</span></div>}
@@ -2854,7 +2916,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
       </div>
       {zoom && <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4" onClick={(e) => { e.stopPropagation(); setZoom(null); }}><img src={zoom.url} alt={zoom.cat} className="max-h-[90vh] max-w-full rounded-lg" /><button className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white"><X className="h-5 w-5" /></button></div>}
       {noSignOpen && <ReasonDialog onClose={() => setNoSignOpen(false)} onConfirm={(reason) => { onUpdate(order.id, { status: "Aprobada", noSignReason: reason }); setNoSignOpen(false); }} />}
-      {suspendOpen && <ReasonDialog title="Suspender orden" description="Registrá el motivo ajeno al trabajo (clima, acceso, espera de repuestos, decisión del cliente, etc.). La orden queda pausada hasta que la reanudes." placeholder="Ej. Cliente reprogramó la visita; sin acceso a planta; a la espera de un repuesto" confirmLabel="Suspender" confirmClass="bg-rose-600" onClose={() => setSuspendOpen(false)} onConfirm={suspend} />}
+      {suspendOpen && <ReasonDialog title="Suspender orden" description="Registrá el motivo ajeno al trabajo (clima, acceso, espera de repuestos, decisión del cliente, etc.). La orden queda pausada hasta que la reanudes." placeholder="Ej. Cliente reprogramó la visita; sin acceso a planta; a la espera de un repuesto" confirmLabel="Suspender" confirmClass="bg-rose-600" showCategory onClose={() => setSuspendOpen(false)} onConfirm={suspend} />}
       {reopenOpen && <ReasonDialog title="Reabrir orden" description="Registrá el motivo (fotos faltantes, corregir evidencia, etc.). La orden vuelve a 'En proceso de ejecución' y podrás retomarla con el botón 'Retomar y finalizar trabajo' para agregar imágenes u otros datos antes de completarla de nuevo." placeholder="Ej. Faltaban fotos del estado final del tablero" confirmLabel="Reabrir" confirmClass="bg-sky-600" onClose={() => setReopenOpen(false)} onConfirm={reopen} />}
     </div>
   );
@@ -2973,11 +3035,12 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
   );
 }
 
-function ReasonDialog({ onClose, onConfirm, title = "Aprobar sin firma", description = "Registrá el motivo para mantener la trazabilidad de la orden.", placeholder = "Ej. Cliente ausente; conformidad recibida por teléfono", confirmLabel = "Aprobar", confirmClass = "bg-amber-600" }) {
+function ReasonDialog({ onClose, onConfirm, title = "Aprobar sin firma", description = "Registrá el motivo para mantener la trazabilidad de la orden.", placeholder = "Ej. Cliente ausente; conformidad recibida por teléfono", confirmLabel = "Aprobar", confirmClass = "bg-amber-600", showCategory = false }) {
   useDialogOpenClass();
   const [reason, setReason] = useState("");
+  const [category, setCategory] = useState(PAUSE_CATEGORIES[0]);
   const mouseDownOnBackdrop = useRef(false);
-  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600"><AlertTriangle className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></div></div><L label="Motivo"><textarea autoFocus rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} className="u-input resize-none" /></L><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!reason.trim()} onClick={() => onConfirm(reason.trim())} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${confirmClass}`}>{confirmLabel}</button></div></div></div>;
+  return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600"><AlertTriangle className="h-5 w-5" /></span><div><h2 className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></div></div>{showCategory && <L label="Tipo de pausa"><select value={category} onChange={(e) => setCategory(e.target.value)} className="u-input">{PAUSE_CATEGORIES.map((cat) => <option key={cat}>{cat}</option>)}</select></L>}<L label="Motivo"><textarea autoFocus rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} className="u-input resize-none mt-2" /></L><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!reason.trim()} onClick={() => onConfirm(showCategory ? { category, reason: reason.trim() } : reason.trim())} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${confirmClass}`}>{confirmLabel}</button></div></div></div>;
 }
 
 /* ===================================== DICTADO POR VOZ ===================================== */
@@ -3139,7 +3202,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const minimumBillingApplied = onSiteElapsedMs > 0 && onSiteElapsedMs < 3600000;
   useEffect(() => { if (technical.startedAt) setLaborHours(round2(elapsedWorkMs / 3600000)); }, [technical.startedAt, technical.completedAt, technical.workSessions, timelineNow]);
   const profile = SERVICE_PROFILES[service] || SERVICE_PROFILES["Mantenimiento correctivo"];
-  const timelineAction = (action, pauseReason) => {
+  const timelineAction = (action, pauseDetail) => {
     if (action === "finish") {
       const missing = [];
       if (!sintoma.trim()) missing.push({ step: 1, label: "el síntoma" });
@@ -3159,7 +3222,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
       next.arrivalAt = next.arrivalAt || now; next.startedAt = next.startedAt || now; next.completedAt = "";
       if (!next.workSessions.some((session) => !session.end)) next.workSessions.push({ start: now, end: null });
     }
-    if (action === "pause" || action === "finish") next.workSessions = next.workSessions.map((session) => !session.end ? { ...session, end: now, ...(action === "pause" ? { pauseReason: pauseReason || "" } : {}) } : session);
+    if (action === "pause" || action === "finish") next.workSessions = next.workSessions.map((session) => !session.end ? { ...session, end: now, ...(action === "pause" ? { pauseReason: pauseDetail?.reason || "", pauseCategory: pauseDetail?.category || "Otro" } : {}) } : session);
     if (action === "finish") next.completedAt = now;
     setTechnical(next);
     if (action === "reopen") setStep(2);
@@ -3367,9 +3430,11 @@ function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumA
   const responseMs = technical.arrivalAt && technical.reportedAt ? new Date(technical.arrivalAt) - new Date(technical.reportedAt) : 0;
   const onSiteMs = technical.completedAt && technical.arrivalAt ? new Date(technical.completedAt) - new Date(technical.arrivalAt) : 0;
   const [pausePromptOpen, setPausePromptOpen] = useState(false);
+  const [pauseCategory, setPauseCategory] = useState(PAUSE_CATEGORIES[0]);
   const [pauseReason, setPauseReason] = useState("");
-  const confirmPause = () => { if (!pauseReason.trim()) return; onAction("pause", pauseReason.trim()); setPausePromptOpen(false); setPauseReason(""); };
+  const confirmPause = () => { if (!pauseReason.trim()) return; onAction("pause", { category: pauseCategory, reason: pauseReason.trim() }); setPausePromptOpen(false); setPauseReason(""); setPauseCategory(PAUSE_CATEGORIES[0]); };
   const pastPauses = (technical.workSessions || []).filter((session) => session.pauseReason);
+  const pauseDurationMs = (session) => { const start = new Date(session.start).getTime(); const end = new Date(session.end).getTime(); return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0; };
   return <section className="rounded-xl border border-slate-200 bg-white p-4">
     <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Cronología del servicio</h3><p className="mt-0.5 text-[11px] text-slate-500">Registra cada hito; los tiempos y horas se calculan automáticamente.</p></div>{active && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> En curso</span>}</div>
     <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">{[["Aviso", technical.reportedAt], ["Llegada", technical.arrivalAt], ["Inicio", technical.startedAt], ["Fin", technical.completedAt]].map(([label, value]) => <div key={label} className={`rounded-lg border px-2.5 py-2 ${value ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50"}`}><div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div><div className={`mt-0.5 font-semibold ${value ? "text-slate-700" : "text-slate-400"}`}>{stamp(value)}</div></div>)}</div>
@@ -3381,9 +3446,9 @@ function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumA
       {technical.startedAt && !technical.completedAt && <button disabled={disabled} onClick={() => onAction("finish")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Finalizar intervención</button>}
       {technical.completedAt && <button disabled={disabled} onClick={() => onAction("reopen")} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700 disabled:opacity-50"><RefreshCw className="h-4 w-4" /> Reabrir intervención</button>}
     </div>
-    {active && pausePromptOpen && <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3"><label className="mb-1 block text-[11px] font-medium text-amber-800">Motivo de la pausa <span className="text-rose-500">*</span></label><input autoFocus value={pauseReason} onChange={(event) => setPauseReason(event.target.value)} placeholder="Ej. corte de energía, espera de repuesto, almuerzo…" className="u-input" onKeyDown={(event) => { if (event.key === "Enter") confirmPause(); }} /><p className="mt-1 text-[10px] text-amber-700">Queda registrado en la cronología para el análisis posterior de la tarea.</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => { setPausePromptOpen(false); setPauseReason(""); }} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600">Cancelar</button><button type="button" disabled={!pauseReason.trim()} onClick={confirmPause} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">Confirmar pausa</button></div></div>}
+    {active && pausePromptOpen && <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3"><label className="mb-1 block text-[11px] font-medium text-amber-800">Tipo de pausa <span className="text-rose-500">*</span></label><select autoFocus value={pauseCategory} onChange={(event) => setPauseCategory(event.target.value)} className="u-input bg-white">{PAUSE_CATEGORIES.map((cat) => <option key={cat}>{cat}</option>)}</select><label className="mb-1 mt-2 block text-[11px] font-medium text-amber-800">Detalle <span className="text-rose-500">*</span></label><input value={pauseReason} onChange={(event) => setPauseReason(event.target.value)} placeholder="Ej. corte de energía, espera de repuesto, almuerzo…" className="u-input" onKeyDown={(event) => { if (event.key === "Enter") confirmPause(); }} /><p className="mt-1 text-[10px] text-amber-700">Queda registrado en la cronología para el análisis posterior de la tarea.</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => { setPausePromptOpen(false); setPauseReason(""); setPauseCategory(PAUSE_CATEGORIES[0]); }} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600">Cancelar</button><button type="button" disabled={!pauseReason.trim()} onClick={confirmPause} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">Confirmar pausa</button></div></div>}
     {technical.completedAt && <p className="mt-2 text-[11px] text-slate-500">Si la orden todavía está en ejecución, reabrí la intervención para continuar registrando tiempo y volver a finalizarla.</p>}
-    {pastPauses.length > 0 && <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2.5"><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Historial de pausas</p>{pastPauses.map((session, index) => <p key={index} className="text-[11px] text-slate-600"><span className="font-medium text-slate-700">{stamp(session.end)}</span> — {session.pauseReason}</p>)}</div>}
+    {pastPauses.length > 0 && <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2.5"><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Historial de pausas</p>{pastPauses.map((session, index) => <p key={index} className="text-[11px] text-slate-600"><span className="font-medium text-slate-700">{stamp(session.end)}</span> — <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20">{session.pauseCategory || "Otro"}</Chip> {session.pauseReason} · <span className="text-slate-400">{compactDuration(pauseDurationMs(session))}</span></p>)}</div>}
     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-lg bg-slate-50 px-2.5 py-2 text-xs"><span className="flex items-center gap-1 text-[10px] text-slate-400">Tiempo efectivo <HelpHint text="Tiempo real trabajado entre inicio y finalización, descontando pausas." /></span><b className="text-slate-700">{compactDuration(elapsedMs)}</b></div>{showBilling && <div className={`rounded-lg px-2.5 py-2 text-xs ${minimumApplied ? "bg-amber-50" : "bg-brand-50"}`}><span className="flex items-center gap-1 text-[10px] text-slate-400">Horas facturables <HelpHint text="Horas comerciales cobradas por técnico; puede aplicar un mínimo de dos horas cuando la visita es menor a una hora." /></span><b className={minimumApplied ? "text-amber-700" : "text-brand-700"}>{billableHours} h{minimumApplied ? " · mínimo" : ""}</b></div>}{responseMs > 0 && <div className="rounded-lg bg-slate-50 px-2.5 py-2 text-xs"><span className="flex items-center gap-1 text-[10px] text-slate-400">Respuesta <HelpHint text="Tiempo transcurrido desde el aviso recibido hasta la llegada al sitio." /></span><b className="text-slate-700">{compactDuration(responseMs)}</b></div>}{onSiteMs > 0 && <div className="rounded-lg bg-slate-50 px-2.5 py-2 text-xs"><span className="flex items-center gap-1 text-[10px] text-slate-400">Total en planta <HelpHint text="Permanencia total desde la llegada al sitio hasta la finalización, incluyendo esperas y pausas." /></span><b className="text-slate-700">{compactDuration(onSiteMs)}</b></div>}</div>
     <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2"><label className="flex h-full flex-col"><span className="mb-1 flex min-h-8 items-end gap-1 text-[11px] font-medium leading-tight text-slate-500">Espera por condiciones del sitio (minutos) <HelpHint text="Tiempo en planta sin poder intervenir por autorización, acceso, disponibilidad del equipo u otra condición atribuible al sitio. Puede incorporarse a la facturación." /></span><input type="number" min="0" step="1" value={technical.billableWaitMinutes ?? ""} onChange={(event) => onBillableWait(event.target.value)} onBlur={(event) => onBillableWait(Math.max(0, Math.round(Number(event.target.value) || 0)))} className="u-input" /></label><label className="flex h-full flex-col"><span className="mb-1 flex min-h-8 items-end gap-1 text-[11px] font-medium leading-tight text-slate-500">Parada productiva informada (minutos, independiente de la visita) <HelpHint text="Duración informada de la afectación productiva del cliente. Es un dato técnico de impacto y no aumenta automáticamente las horas del servicio." /></span><input type="number" min="0" step="1" value={technical.downtimeMinutes ?? ""} onChange={(event) => onDowntime(event.target.value)} onBlur={(event) => onDowntime(Math.max(0, Math.round(Number(event.target.value) || 0)))} className="u-input" /></label></div>
     {(Number(technical.billableWaitMinutes) || 0) > 0 && <L label="Motivo de la espera"><input value={technical.billableWaitReason || ""} onChange={(event) => onBillableWaitReason(event.target.value)} placeholder="Ej. espera de autorización, acceso o disponibilidad del equipo" className="u-input mt-2" /></L>}

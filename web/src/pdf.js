@@ -198,7 +198,7 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
     if (technical.billableWaitMinutes) para("Espera por condiciones del sitio:", `${technical.billableWaitMinutes} minutos${technical.billableWaitReason ? ` - ${technical.billableWaitReason}` : ""}`);
     if (technical.downtimeMinutes) para("Parada productiva informada:", `${technical.downtimeMinutes} minutos`);
     const pauses = sessions.filter((session) => session.pauseReason);
-    if (pauses.length) para("Pausas registradas:", pauses.map((session) => `${formatStamp(session.end)} - Motivo: ${session.pauseReason}`).join("\n"));
+    if (pauses.length) para("Pausas registradas:", pauses.map((session) => `${formatStamp(session.end)} - ${duration(Math.max(0, new Date(session.end) - new Date(session.start)))} - ${session.pauseCategory || "Otro"}: ${session.pauseReason}`).join("\n"));
   }
 
   if (technical.deviceType || technical.firmware || technical.programVersion || technical.backupRef || technical.ioVerified || technical.alarmsVerified) {
