@@ -92,6 +92,13 @@ const O_STYLE = {
   "Facturada": "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
   "Suspendida": "bg-rose-50 text-rose-700 ring-rose-600/20",
 };
+// Borde superior de cada columna en la vista "Por estado" de Órdenes — mismo lenguaje visual que
+// las columnas del Kanban de Proyectos (border-t-4 + fondo gris claro).
+const O_COLUMN_STYLE = {
+  "Borrador": "border-slate-300", "En proceso de ejecución": "border-brand-400",
+  "Completada": "border-amber-400", "Aprobada": "border-violet-400",
+  "Facturada": "border-emerald-400", "Suspendida": "border-rose-400",
+};
 const SERVICE_TYPES = ["Instalación", "Automatización", "Eléctrico", "Mantenimiento preventivo", "Mantenimiento correctivo", "Garantía", "Emergencia"];
 // No hay un campo de prioridad manual en las órdenes (a diferencia de las tareas): se deriva del
 // tipo de servicio, que ya es obligatorio y siempre está cargado, en vez de pedir un dato más.
@@ -2789,18 +2796,16 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
         </>)}
       </div>
       {view === "estado" ? (
-        <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
-          <div className="flex gap-3" style={{ minWidth: "max-content" }}>
-            {[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((status) => { const items = filtered.filter((o) => o.status === status); return (
-              <div key={status} className="w-72 shrink-0">
-                <div className="mb-2 flex items-center gap-2 px-1"><Chip className={O_STYLE[status]}>{status}</Chip><span className="text-xs text-slate-400">{items.length}</span></div>
-                <div className="space-y-2">
-                  {items.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 bg-white p-4 text-center text-xs text-slate-400">Sin órdenes</div>}
-                  {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} onOpen={onOpen} />)}
-                </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((status) => { const items = filtered.filter((o) => o.status === status); return (
+            <section key={status} className={`rounded-xl border-t-4 ${O_COLUMN_STYLE[status]} bg-slate-50/60`}>
+              <div className="flex items-center justify-between px-3 py-2"><h3 className="text-sm font-semibold text-slate-700">{status}</h3><span className="rounded-full bg-white px-2 text-xs font-medium text-slate-500 ring-1 ring-slate-200">{items.length}</span></div>
+              <div className="space-y-2 px-2 pb-3">
+                {items.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 bg-white py-8 text-center text-xs text-slate-400">Sin órdenes</div>}
+                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} onOpen={onOpen} />)}
               </div>
-            ); })}
-          </div>
+            </section>
+          ); })}
         </div>
       ) : (
         <div className="space-y-3">
