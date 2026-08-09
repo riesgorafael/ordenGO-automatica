@@ -1745,6 +1745,7 @@ app.post("/api/parts", auth, requireRole("admin", "gerente"), async (req, res) =
   const p = { ...(req.body || {}) }; if (!p.id) p.id = "sp" + Date.now();
   p.name = String(p.name || "").trim();
   if (!p.name) return res.status(400).json({ error: "El nombre del repuesto es obligatorio" });
+  p.category = MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro";
   ["price", "cost"].forEach((k) => { if (p[k] !== undefined) p[k] = wholeMoneyValue(p[k]); });
   ["stock", "minStock"].forEach((k) => { if (p[k] !== undefined) p[k] = Number(p[k]) || 0; });
   try { await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]); }
@@ -1755,6 +1756,7 @@ app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, r
   const { rows } = await pool.query("SELECT data FROM parts WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const patch = { ...(req.body || {}) };
+  if (patch.category !== undefined) patch.category = MATERIAL_LIST_DISCIPLINES.includes(patch.category) ? patch.category : "Otro";
   ["price", "cost"].forEach((k) => { if (patch[k] !== undefined) patch[k] = wholeMoneyValue(patch[k]); });
   ["stock", "minStock"].forEach((k) => { if (patch[k] !== undefined) patch[k] = Number(patch[k]) || 0; });
   const merged = { ...rows[0].data, ...patch, id: req.params.id };

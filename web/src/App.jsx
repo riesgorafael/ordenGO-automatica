@@ -3980,32 +3980,52 @@ function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) 
 
 /* ===================================== INVENTARIO / REPUESTOS ===================================== */
 function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
-  const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "" });
+  const [nf, setNf] = useState({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: MATERIAL_LIST_DISCIPLINES[0] });
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState("Todas");
+  const [selected, setSelected] = useState(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const wrap = (fn) => async (...a) => { try { await fn(...a); } catch (e) { onErr(e); } };
+  const toggleSelected = (id) => setSelected((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const bulkDelete = async () => {
+    setBulkDeleting(true);
+    try { await Promise.all([...selected].map((id) => onRemove(id))); setSelected(new Set()); setBulkDeleteOpen(false); }
+    catch (e) { onErr(e); }
+    finally { setBulkDeleting(false); }
+  };
   // Si hay un margen de venta cargado, el precio de venta se recalcula automáticamente a partir del costo.
   const applyMargin = (state) => state.margin !== "" && state.margin != null ? { ...state, price: String(wholeMoney(Number(state.cost || 0) * (1 + (Number(state.margin) || 0) / 100))) } : state;
-  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0 }); setNf({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "" }); } catch (e) { onErr(e); } };
-  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, margin: "", stock: p.stock ?? 0, minStock: p.minStock ?? 0 }); };
-  const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), unit: ef.unit.trim() || "u", price: wholeMoney(ef.price), cost: wholeMoney(ef.cost), stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0 }); setEditId(null); } catch (e) { onErr(e); } };
+  const add = async () => { if (!nf.name.trim()) return; try { await onAdd({ name: nf.name.trim(), unit: nf.unit.trim() || "u", price: wholeMoney(nf.price), cost: wholeMoney(nf.cost), stock: Number(nf.stock) || 0, minStock: Number(nf.minStock) || 0, category: nf.category }); setNf({ name: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: nf.category }); } catch (e) { onErr(e); } };
+  const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, margin: "", stock: p.stock ?? 0, minStock: p.minStock ?? 0, category: MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro" }); };
+  const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), unit: ef.unit.trim() || "u", price: wholeMoney(ef.price), cost: wholeMoney(ef.cost), stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0, category: ef.category }); setEditId(null); } catch (e) { onErr(e); } };
   const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
-  const sorted = [...parts].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const categoryOf = (p) => MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro";
+  const sorted = [...parts].filter((p) => categoryFilter === "Todas" || categoryOf(p) === categoryFilter).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // Separados por categoría (mismo criterio que ya usan los Listados de Materiales) en vez de una
+  // lista plana única, para poder ubicar y filtrar repuestos por tipo.
+  const grouped = MATERIAL_LIST_DISCIPLINES.map((category) => ({ category, items: sorted.filter((p) => categoryOf(p) === category) })).filter((group) => group.items.length > 0);
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2">
         {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} repuesto(s) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
-        <Panel title={`Repuestos (${parts.length})`}>
-          <div className="space-y-2">
+        <Panel title={`Repuestos (${parts.length})`} action={parts.length > 0 && <div className="flex flex-wrap items-center gap-2"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"><option value="Todas">Todas las categorías</option>{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select>{selected.size > 0 && <button onClick={() => setBulkDeleteOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Eliminar ({selected.size})</button>}{sorted.length > 0 && <label className="flex items-center gap-1.5 text-xs font-medium text-slate-500"><input type="checkbox" checked={selected.size > 0 && selected.size === sorted.length} onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map((p) => p.id)) : new Set())} className="h-4 w-4" /> Todos</label>}</div>}>
+          <div className="space-y-4">
             {sorted.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin repuestos cargados</div>}
-            {sorted.map((p) => {
+            {grouped.map((group) => (
+              <div key={group.category}>
+                <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.category} <span className="font-normal normal-case text-slate-300">({group.items.length})</span></h4>
+                <div className="space-y-2">
+                  {group.items.map((p) => {
               const isLow = p.stock <= p.minStock;
               const margin = p.price ? Math.round((1 - (p.cost || 0) / p.price) * 100) : null;
               if (editId === p.id) return (
                 <div key={p.id} className="rounded-lg border border-brand-300 bg-brand-50/40 p-3">
                   <L label="Nombre"><input value={ef.name} onChange={(e) => setEf({ ...ef, name: e.target.value })} className="u-input" /></L>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <L label="Categoría"><select value={ef.category} onChange={(e) => setEf({ ...ef, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
                     <L label="Unidad"><input value={ef.unit} onChange={(e) => setEf({ ...ef, unit: e.target.value })} className="u-input" /></L>
                     <L label="Stock"><input type="number" value={ef.stock} onChange={(e) => setEf({ ...ef, stock: e.target.value })} className="u-input" /></L>
                     <L label="Stock mínimo" help="Nivel que activa la alerta de reposición. El repuesto se considera crítico cuando el stock disponible es igual o menor a este valor."><input type="number" value={ef.minStock} onChange={(e) => setEf({ ...ef, minStock: e.target.value })} className="u-input" /></L>
@@ -4020,30 +4040,35 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
                 </div>
               );
               return (
-                <div key={p.id} className={`rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
-                  <div className="min-w-0">
+                <div key={p.id} className={`flex gap-2.5 rounded-lg border p-3 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                  <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} aria-label={`Seleccionar ${p.name}`} className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="min-w-0 flex-1">
                     <div className="break-words text-sm font-semibold text-slate-800">{p.name}</div>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                       <span>Venta <b className="font-medium text-slate-700">{money(p.price)}</b></span>
                       <span>Costo <b className="font-medium text-slate-700">{money(p.cost)}</b></span>
                       {margin != null && <span className="font-medium text-emerald-600">Margen {margin}%</span>}
                     </div>
-                  </div>
-                  <div className="mt-3 flex w-full flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3">
-                    <span className={`rounded-md px-2 py-1.5 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
-                    <span className="rounded-md border border-slate-200 bg-white/60 px-2 py-1.5 text-xs text-slate-500">Mín: {p.minStock}</span>
-                    <button onClick={() => startEdit(p)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
-                    <button onClick={() => setPendingDelete(p)} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                    <div className="mt-3 flex w-full flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3">
+                      <span className={`rounded-md px-2 py-1.5 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
+                      <span className="rounded-md border border-slate-200 bg-white/60 px-2 py-1.5 text-xs text-slate-500">Mín: {p.minStock}</span>
+                      <button onClick={() => startEdit(p)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
+                      <button onClick={() => setPendingDelete(p)} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                    </div>
                   </div>
                 </div>
               );
-            })}
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </Panel>
       </div>
       <div><Panel title="Nuevo repuesto">
         <div className="space-y-2">
           <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Descripción del repuesto" className="u-input" /></L>
+          <L label="Categoría"><select value={nf.category} onChange={(e) => setNf({ ...nf, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
           <div className="grid grid-cols-2 gap-2">
             <L label="Unidad"><input value={nf.unit} onChange={(e) => setNf({ ...nf, unit: e.target.value })} placeholder="u / m / kg" className="u-input" /></L>
             <L label="Stock"><input type="number" value={nf.stock} onChange={(e) => setNf({ ...nf, stock: e.target.value })} className="u-input" /></L>
@@ -4058,6 +4083,7 @@ function Inventory({ parts, onAdd, onPatch, onRemove, onErr }) {
       </Panel></div>
     </div>
     {pendingDelete && <ConfirmDialog title="Eliminar repuesto" message={`Se eliminará “${pendingDelete.name}” del catálogo. Esta acción no modifica órdenes anteriores.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
+    {bulkDeleteOpen && <ConfirmDialog title={`Eliminar ${selected.size} repuesto(s)`} message="Se eliminarán del catálogo los repuestos seleccionados. Esta acción no modifica órdenes anteriores y no se puede deshacer." confirmLabel={bulkDeleting ? "Eliminando…" : "Eliminar seleccionados"} danger onClose={() => !bulkDeleting && setBulkDeleteOpen(false)} onConfirm={bulkDelete} />}
   </>;
 }
 
