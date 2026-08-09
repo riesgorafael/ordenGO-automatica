@@ -1272,7 +1272,7 @@ export default function App() {
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} projects={projects} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onSaveUserProjects={saveUserProjects} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
 
-        {!tvMode && <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
+        {!tvMode && <footer className="relative z-10 mt-10 border-t border-slate-200 bg-slate-50 pt-4 text-xs text-slate-500">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
         </div>
       </main>
 
