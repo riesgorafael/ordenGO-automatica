@@ -1232,6 +1232,9 @@ app.delete("/api/purchase-orders/:id", auth, requireRole("admin"), async (req, r
 // Documento que Automática entrega al cliente para que este cotice los materiales con su
 // proveedor (columnas de precio quedan siempre en blanco; las completa quien cotiza).
 const MATERIAL_LIST_DISCIPLINES = ["Eléctricos", "Mecánicos", "Instrumentación", "Neumáticos", "Automatización", "Otro"];
+// Seguimiento del ciclo del listado después de generado (a diferencia de Presupuestos/Compras,
+// antes no tenía ningún estado: era solo un documento para exportar y listo).
+const MATERIAL_LIST_STAGES = ["Borrador", "Enviado al cliente", "Cotizado", "Comprado", "Recibido"];
 const MATERIAL_LIST_DEFAULT_NOTES = [
   "Los datos de cómputos y unidades presentados en este documento son provistos solo a efectos orientativos, pudiendo presentar cierto grado de incerteza producto de la calidad y metodología de la medición empleada. Es responsabilidad de los oferentes verificar las cantidades a suministrar de la mejor manera que consideren pertinente y ajustarlos o asumirlos como verdaderos.",
   "El formato aquí suministrado es a los efectos de facilitar la comparación y ecualización de ofertas. Se ruega no alterar la estructura de los ítems mayores que componen el alcance del trabajo y en caso de considerar necesario acrecentar el grado de apertura para brindar mayor detalle sobre algún ítem en particular, favor de hacerlo agregando líneas debajo de la línea al final. En caso de opcionales y/o variantes a lo especificado cotizar por separado dejándolo expresamente indicado.",
@@ -1257,6 +1260,7 @@ function normalizeMaterialList(input, previous = {}) {
   ml.site = String(ml.site || "").trim();
   ml.audience = ml.audience === "interno" ? "interno" : "cliente";
   ml.discipline = MATERIAL_LIST_DISCIPLINES.includes(ml.discipline) ? ml.discipline : "Eléctricos";
+  ml.stage = MATERIAL_LIST_STAGES.includes(ml.stage) ? ml.stage : "Borrador";
   ml.notes = Array.isArray(ml.notes) ? ml.notes.map((note) => String(note || "").trim().slice(0, 600)).filter(Boolean) : MATERIAL_LIST_DEFAULT_NOTES;
   ml.sections = (Array.isArray(ml.sections) ? ml.sections : [])
     .map((section) => ({
