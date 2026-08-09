@@ -17,7 +17,7 @@ const upload = multer({
   },
 });
 
-export function registerGanttRoutes(app, pool, { auth, requireRole }) {
+export function registerGanttRoutes(app, pool, { auth, requireRole, tecCanProject }) {
   // Importar un cronograma de MS Project a un proyecto existente.
   app.post(
     "/api/projects/:id/import-mpp",
@@ -45,6 +45,7 @@ export function registerGanttRoutes(app, pool, { auth, requireRole }) {
 
   // Leer las tareas del Gantt de un proyecto (para renderizar el diagrama).
   app.get("/api/projects/:id/gantt-tasks", auth, async (req, res) => {
+    if (!(await tecCanProject(req.user, req.params.id))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
     const { rows } = await pool.query(
       "SELECT data FROM gantt_tasks WHERE project_id = $1 ORDER BY data->>'wbs'",
       [req.params.id]

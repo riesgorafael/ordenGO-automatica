@@ -563,7 +563,7 @@ async function auth(req, res, next) {
   } catch { res.status(401).json({ error: "Token inválido" }); }
 }
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: "No autorizado" });
-registerGanttRoutes(app, pool, { auth, requireRole });
+registerGanttRoutes(app, pool, { auth, requireRole, tecCanProject });
 // Roles "técnicos" (campo u oficina): nunca ven importes ni el estado "Facturada"
 const isTec = (r) => r === "tecnico" || r === "tecnico_oficina";
 const isMonitor = (r) => r === "monitor_oficina";
@@ -1233,7 +1233,12 @@ function normalizeMaterialList(input, previous = {}) {
 }
 app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC");
-  res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+  const materialLists = rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at }));
+  // Un técnico de campo solo debe ver los listados de los proyectos que tiene habilitados (o los
+  // de uso interno sin proyecto asociado); admin y gerente ven todos.
+  if (req.user.role !== "tecnico") return res.json(materialLists);
+  const allowedProjectIds = new Set((await pool.query("SELECT id FROM projects WHERE data->'allowedUsers' ? $1", [req.user.id])).rows.map((row) => row.id));
+  res.json(materialLists.filter((ml) => !ml.projectId || allowedProjectIds.has(ml.projectId)));
 });
 app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const ml = normalizeMaterialList(req.body);
@@ -1870,7 +1875,12 @@ const TASK_TYPES = new Set(["Tarea", "Bug", "Mejora", "Historia"]);
 const TECH_TASK_PATCH = new Set(["title", "desc", "status", "priority", "type", "due", "participants"]);
 app.get("/api/tasks", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC");
-  res.json(rows.map((row) => ({ ...row.data, _updatedAt: row.updated_at })));
+  const tasks = rows.map((row) => ({ ...row.data, _updatedAt: row.updated_at }));
+  // Igual que en /api/bootstrap: técnicos (campo u oficina) y monitores solo ven tareas de los
+  // proyectos que el administrador les habilitó explícitamente (allowedUsers).
+  if (!isProjectScoped(req.user.role)) return res.json(tasks);
+  const allowedProjectIds = new Set((await pool.query("SELECT id FROM projects WHERE data->'allowedUsers' ? $1", [req.user.id])).rows.map((row) => row.id));
+  res.json(tasks.filter((t) => allowedProjectIds.has(t.project)));
 });
 app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
