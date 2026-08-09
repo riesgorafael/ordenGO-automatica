@@ -76,7 +76,14 @@ function useDialogOpenClass(onRequestClose) {
       if (onPopState) window.removeEventListener("popstate", onPopState);
       openDialogCount = Math.max(0, openDialogCount - 1);
       if (openDialogCount === 0) document.body.classList.remove("dialog-open");
-      if (pushed) window.history.back();
+      // El history.back() de acá abajo también dispara un evento popstate (async) — sin este
+      // aviso, el listener global de navegación entre módulos (que escucha el mismo evento en
+      // toda la página) lo confundía con un "atrás" real del usuario y navegaba solo, cada vez
+      // que se cerraba CUALQUIER modal por un botón normal (Cancelar, Guardar, detectar un
+      // código, etc.), no solo con el gesto de atrás. window.__ogSuppressPopState en vez de una
+      // variable de módulo porque GanttChart.jsx tiene su propia copia de este hook en otro
+      // archivo y ambos escriben/leen la misma pila de historial del navegador.
+      if (pushed) { window.__ogSuppressPopState = (window.__ogSuppressPopState || 0) + 1; window.history.back(); }
     };
   }, []);
 }
@@ -519,6 +526,10 @@ export default function App() {
   useEffect(() => {
     window.history.replaceState({ __module: module }, "");
     const onPopState = (event) => {
+      // Un modal (de acá o de GanttChart.jsx) que se cierra por un botón normal, no por "atrás",
+      // igual dispara un history.back() de limpieza propio — este aviso lo distingue de un "atrás"
+      // real para no navegar de módulo por accidente cada vez que se cierra cualquier diálogo.
+      if (window.__ogSuppressPopState > 0) { window.__ogSuppressPopState--; return; }
       if (openDialogCount > 0) return;
       const targetModule = event.state?.__module;
       if (targetModule) { isPoppingRef.current = true; navigateModuleRef.current(targetModule); }
@@ -3988,7 +3999,9 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState("Todas");
   const [query, setQuery] = useState("");
-  const [scannerOpen, setScannerOpen] = useState(false);
+  // null | "search" | "new" | "edit": a qué campo va el código escaneado, ya que hay tres lugares
+  // distintos donde puede servir (buscar, cargar SKU de un repuesto nuevo, o del que se está editando).
+  const [scannerTarget, setScannerTarget] = useState(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
@@ -4072,12 +4085,12 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
       <div className="lg:col-span-2">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row">
           <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nombre o SKU…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
-          <button onClick={() => setScannerOpen(true)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><ScanLine className="h-4 w-4" /> Escanear</button>
+          <button onClick={() => setScannerTarget("search")} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><ScanLine className="h-4 w-4" /> Escanear</button>
           <button onClick={exportCSV} disabled={!parts.length} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
           <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">{importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Importar CSV<input type="file" accept=".csv,text/csv" className="hidden" disabled={importBusy} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) importCSV(file); }} /></label>
         </div>
         {importResult && <div className="mb-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />Importación terminada: {importResult.created} de {importResult.total} repuesto(s) cargado(s){importResult.failed > 0 ? `, ${importResult.failed} con error` : ""}.<button onClick={() => setImportResult(null)} className="ml-auto text-emerald-600 hover:text-emerald-800"><X className="h-4 w-4" /></button></div>}
-        {scannerOpen && <BarcodeScannerDialog onClose={() => setScannerOpen(false)} onDetect={(value) => { setQuery(value); setScannerOpen(false); }} />}
+        {scannerTarget && <BarcodeScannerDialog onClose={() => setScannerTarget(null)} onDetect={(value) => { if (scannerTarget === "search") setQuery(value); else if (scannerTarget === "new") setNf((current) => ({ ...current, sku: value })); else if (scannerTarget === "edit") setEf((current) => ({ ...current, sku: value })); setScannerTarget(null); }} />}
         {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} repuesto(s) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
         <Panel title={`Repuestos (${parts.length})`} action={parts.length > 0 && <div className="flex flex-wrap items-center gap-2"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"><option value="Todas">Todas las categorías</option>{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select>{sorted.length > 0 && <button onClick={() => setBulkDeleteOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Eliminar visibles ({sorted.length})</button>}</div>}>
           <div className="space-y-4">
@@ -4092,7 +4105,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
               if (editId === p.id) return (
                 <div key={p.id} className="rounded-lg border border-brand-300 bg-brand-50/40 p-3">
                   <L label="Nombre"><input value={ef.name} onChange={(e) => setEf({ ...ef, name: e.target.value })} className="u-input" /></L>
-                  <L label="SKU / código" help="Código de barras o QR del repuesto, opcional. Se usa para encontrarlo con el botón Escanear."><input value={ef.sku} onChange={(e) => setEf({ ...ef, sku: e.target.value })} className="u-input mt-1" /></L>
+                  <L label="SKU / código" help="Código de barras o QR del repuesto, opcional. Se usa para encontrarlo con el botón Escanear."><div className="mt-1 flex gap-1.5"><input value={ef.sku} onChange={(e) => setEf({ ...ef, sku: e.target.value })} className="u-input" /><button type="button" onClick={() => setScannerTarget("edit")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <L label="Categoría"><select value={ef.category} onChange={(e) => setEf({ ...ef, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
                     <L label="Unidad"><input value={ef.unit} onChange={(e) => setEf({ ...ef, unit: e.target.value })} className="u-input" /></L>
@@ -4137,7 +4150,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
       <div><Panel title="Nuevo material">
         <div className="space-y-2">
           <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Descripción del repuesto" className="u-input" /></L>
-          <L label="SKU / código" help="Código de barras o QR del repuesto, opcional. Se usa para encontrarlo con el botón Escanear."><input value={nf.sku} onChange={(e) => setNf({ ...nf, sku: e.target.value })} placeholder="Opcional" className="u-input" /></L>
+          <L label="SKU / código" help="Código de barras o QR del repuesto, opcional. Se usa para encontrarlo con el botón Escanear."><div className="flex gap-1.5"><input value={nf.sku} onChange={(e) => setNf({ ...nf, sku: e.target.value })} placeholder="Opcional" className="u-input" /><button type="button" onClick={() => setScannerTarget("new")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
           <L label="Categoría"><select value={nf.category} onChange={(e) => setNf({ ...nf, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
           <div className="grid grid-cols-2 gap-2">
             <L label="Unidad"><input value={nf.unit} onChange={(e) => setNf({ ...nf, unit: e.target.value })} placeholder="u / m / kg" className="u-input" /></L>

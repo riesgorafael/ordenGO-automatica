@@ -54,7 +54,10 @@ function useDialogOpenClass(onRequestClose) {
       if (onPopState) window.removeEventListener("popstate", onPopState);
       openDialogCount = Math.max(0, openDialogCount - 1);
       if (openDialogCount === 0) document.body.classList.remove("dialog-open");
-      if (pushed) window.history.back();
+      // Avisa por window (no una variable de este módulo) porque App.jsx escucha popstate a nivel
+      // de página para su navegación entre módulos, y sin este aviso confundía este history.back()
+      // de limpieza con un "atrás" real del usuario cada vez que se cerraba un modal del Gantt.
+      if (pushed) { window.__ogSuppressPopState = (window.__ogSuppressPopState || 0) + 1; window.history.back(); }
     };
   }, []);
 }
