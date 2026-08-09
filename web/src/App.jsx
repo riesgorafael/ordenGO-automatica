@@ -75,6 +75,15 @@ const O_STYLE = {
   "Suspendida": "bg-rose-50 text-rose-700 ring-rose-600/20",
 };
 const SERVICE_TYPES = ["Instalación", "Automatización", "Eléctrico", "Mantenimiento preventivo", "Mantenimiento correctivo", "Garantía", "Emergencia"];
+// No hay un campo de prioridad manual en las órdenes (a diferencia de las tareas): se deriva del
+// tipo de servicio, que ya es obligatorio y siempre está cargado, en vez de pedir un dato más.
+const URGENT_SERVICES = new Set(["Emergencia", "Garantía"]);
+const isUrgentOrder = (o) => URGENT_SERVICES.has(o.service);
+// Una orden "espera respuesta" mientras no se registró la llegada al sitio y todavía no se cerró
+// por otra vía (completada/aprobada/facturada/suspendida). RESPONSE_SLA_MS es el umbral desde que
+// se generó el aviso (technical.reportedAt, cargado automáticamente al crear la orden).
+const RESPONSE_SLA_MS = 2 * 60 * 60 * 1000;
+const isResponseOverdue = (o) => !o.technical?.arrivalAt && !!o.technical?.reportedAt && !["Completada", "Aprobada", "Facturada", "Suspendida"].includes(o.status) && (Date.now() - new Date(o.technical.reportedAt).getTime()) > RESPONSE_SLA_MS;
 const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Rechazado"];
 const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Rechazado": 0 };
 const LABOR_ROLES = [
@@ -670,7 +679,25 @@ export default function App() {
       updateQueuedOrder(id, patch); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return updated;
     }
     if (!online) { queueOfflineOperation("order:update", { id, patch }); setOfflineCount(offlineQueueSize()); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio guardado para sincronizar", "success"); return updated; }
-    try { const u = await api.updateOrder(id, patch); setOrders((p) => p.map((o) => (o.id === id ? u : o))); return u; } catch (e) { err(e); return false; }
+    try {
+      const u = await api.updateOrder(id, patch);
+      setOrders((p) => p.map((o) => (o.id === id ? u : o)));
+      // Mantenimiento preventivo con recurrencia: al completar la orden (recién en esta llamada,
+      // no en cada guardado posterior mientras ya está Completada) se genera automáticamente el
+      // próximo borrador para el mismo cliente/planta, para no depender de que alguien se acuerde
+      // de duplicarla a mano.
+      if (patch.status === "Completada" && Number(u.recurrenceMonths) > 0 && !u.recurrenceSpawnedId) {
+        try {
+          const nextDate = new Date(u.date || todayStr()); nextDate.setMonth(nextDate.getMonth() + Number(u.recurrenceMonths));
+          const next = await api.createOrder({ client: u.client, site: u.site, siteCode: u.siteCode, contact: u.contact, service: u.service, recurrenceMonths: u.recurrenceMonths, equipo: u.equipo, technicians: u.technicians, rate: u.rate, currency: "USD", laborBillable: u.laborBillable, date: nextDate.toISOString().slice(0, 10), status: "Borrador" });
+          setOrders((p) => [next, ...p]);
+          const withLink = await api.updateOrder(id, { recurrenceSpawnedId: next.id });
+          setOrders((p) => p.map((o) => (o.id === id ? withLink : o)));
+          toast(`Próximo mantenimiento preventivo generado: ${next.id} (${nextDate.toLocaleDateString("es-AR")})`, "success");
+        } catch (spawnError) { console.error("No se pudo generar el próximo mantenimiento preventivo:", spawnError); }
+      }
+      return u;
+    } catch (e) { err(e); return false; }
   };
   const deleteOrder = (id) => setConfirmDialog({ title: `Eliminar ${id}`, message: "La orden y su historial se eliminarán de forma permanente.", confirmLabel: "Eliminar orden", danger: true, action: async () => { try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } } });
   const exportCSV = (rows, name) => {
@@ -2604,15 +2631,42 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
 }
 
 
+function OrderRow({ order: o, ger, onOpen }) {
+  const t = orderTotals(o);
+  return (
+    <button onClick={() => onOpen(o)} className="block w-full text-left">
+      <Box className="p-4 transition hover:border-slate-300 hover:shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-sm font-semibold text-slate-800">{o.id}</span>
+          <Chip className={O_STYLE[o.status]}>{o.status}</Chip>
+          {isUrgentOrder(o) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Urgente</Chip>}
+          {isResponseOverdue(o) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><Clock className="h-3 w-3" />Respuesta demorada</Chip>}
+          {o._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente de sincronizar</Chip>}
+          {o.category && <Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{o.category}</Chip>}
+          {(o.quoteNumber || o.budgetNumber) && <Chip title="Presupuesto vinculado" className="bg-sky-50 text-sky-700 ring-sky-600/20"><FileText className="h-3 w-3" />{o.quoteNumber || o.budgetNumber}</Chip>}
+          <span className="ml-auto text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{compactDuration((Number(o.laborHours) || 0) * 3600000)}</span>}</span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-800"><Building2 className="h-3.5 w-3.5 text-slate-400" />{o.client}</div>
+        <div className="text-xs text-slate-500">{o.site} · {o.service} · {o.date}</div>
+        {o.equipo && <div className="mt-1 truncate text-xs text-slate-500">Equipo: {o.equipo}</div>}
+      </Box>
+    </button>
+  );
+}
 /* ===================================== ÓRDENES: HOME ===================================== */
 function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
+  const [oUrgent, setOUrgent] = useState(false);
+  const [view, setView] = useState("lista"); // "lista" | "estado"
   const pendingBill = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada");
   const unsigned = orders.filter((o) => o.status === "Completada" && !o.signatureUrl && !o.noSignReason);
+  const overdueResponse = orders.filter(isResponseOverdue);
   const monthKey = localMonthKey();
   const monthOrders = orders.filter((o) => (o.date || "").startsWith(monthKey));
   const monthTotal = monthOrders.reduce((s, o) => s + orderTotals(o).total, 0);
   const monthPending = monthOrders.filter((o) => o.status === "Completada" || o.status === "Aprobada").reduce((s, o) => s + orderTotals(o).total, 0);
-  const filtered = orders.filter((o) => (oStatus === "Todas" || o.status === oStatus) && (!oBillable || o.status === "Completada" || o.status === "Aprobada") && `${o.id} ${o.client} ${o.site} ${o.service} ${o.equipo}`.toLowerCase().includes(oQ.toLowerCase()));
+  const filtered = orders
+    .filter((o) => (oStatus === "Todas" || o.status === oStatus) && (!oBillable || o.status === "Completada" || o.status === "Aprobada") && (!oUrgent || isUrgentOrder(o)) && `${o.id} ${o.client} ${o.site} ${o.service} ${o.equipo} ${o.tech || ""} ${o.category || ""} ${o.sintoma || ""} ${o.solucion || ""}`.toLowerCase().includes(oQ.toLowerCase()))
+    .sort((a, b) => (isUrgentOrder(b) - isUrgentOrder(a)) || (isResponseOverdue(b) - isResponseOverdue(a)));
   return (
     <div>
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -2629,35 +2683,38 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
       <div className="mb-5 space-y-2">
         {ger && pendingBill.length > 0 && (<div className="flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between"><span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{pendingBill.length} orden(es) completadas pendientes de facturar.</span><button onClick={() => { setOBillable(true); setOStatus("Todas"); }} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver facturables</button></div>)}
         {unsigned.length > 0 && (<div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><FileSignature className="mt-0.5 h-4 w-4 shrink-0" />{unsigned.length} orden(es) completadas sin firma del cliente.</div>)}
+        {overdueResponse.length > 0 && (<div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><Clock className="mt-0.5 h-4 w-4 shrink-0" />{overdueResponse.length} orden(es) sin llegada registrada hace más de 2 horas desde el aviso.</div>)}
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
+        <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo, técnico, síntoma…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
         <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:flex-none"><option>Todas</option>{[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((s) => <option key={s}>{s}</option>)}</select>
+        <button onClick={() => setOUrgent((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${oUrgent ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-200 bg-white text-slate-600"}`}><AlertTriangle className="h-4 w-4" /> Urgentes</button>
+        <div className="flex rounded-lg bg-slate-200 p-0.5"><button onClick={() => setView("lista")} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${view === "lista" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Lista</button><button onClick={() => setView("estado")} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${view === "estado" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Por estado</button></div>
         {ger && (<>
           <button onClick={() => setOBillable((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${oBillable ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Filter className="h-4 w-4" /> Facturables</button>
           <button onClick={() => exportCSV(filtered, `ordenes_${monthKey}.csv`)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /> CSV</button>
         </>)}
       </div>
-      <div className="space-y-3">
-        {filtered.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No hay órdenes que coincidan.</div>}
-        {filtered.map((o) => { const t = orderTotals(o); return (
-          <button key={o.id} onClick={() => onOpen(o)} className="block w-full text-left">
-            <Box className="p-4 transition hover:border-slate-300 hover:shadow-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-sm font-semibold text-slate-800">{o.id}</span>
-                <Chip className={O_STYLE[o.status]}>{o.status}</Chip>
-                {o._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente de sincronizar</Chip>}
-                {o.category && <Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{o.category}</Chip>}
-                {(o.quoteNumber || o.budgetNumber) && <Chip title="Presupuesto vinculado" className="bg-sky-50 text-sky-700 ring-sky-600/20"><FileText className="h-3 w-3" />{o.quoteNumber || o.budgetNumber}</Chip>}
-                <span className="ml-auto text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{compactDuration((Number(o.laborHours) || 0) * 3600000)}</span>}</span>
+      {view === "estado" ? (
+        <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
+          <div className="flex gap-3" style={{ minWidth: "max-content" }}>
+            {[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((status) => { const items = filtered.filter((o) => o.status === status); return (
+              <div key={status} className="w-72 shrink-0">
+                <div className="mb-2 flex items-center gap-2 px-1"><Chip className={O_STYLE[status]}>{status}</Chip><span className="text-xs text-slate-400">{items.length}</span></div>
+                <div className="space-y-2">
+                  {items.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 bg-white p-4 text-center text-xs text-slate-400">Sin órdenes</div>}
+                  {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} onOpen={onOpen} />)}
+                </div>
               </div>
-              <div className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-800"><Building2 className="h-3.5 w-3.5 text-slate-400" />{o.client}</div>
-              <div className="text-xs text-slate-500">{o.site} · {o.service} · {o.date}</div>
-              {o.equipo && <div className="mt-1 truncate text-xs text-slate-500">Equipo: {o.equipo}</div>}
-            </Box>
-          </button>
-        ); })}
-      </div>
+            ); })}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No hay órdenes que coincidan.</div>}
+          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} onOpen={onOpen} />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -2860,6 +2917,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
           {order.technical && Object.values(order.technical).some(Boolean) && <section className="rounded-lg border border-slate-200 p-3 text-sm"><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Ficha técnica</h4><div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">{order.technical.assetTag && <p><b>TAG:</b> {order.technical.assetTag}</p>}{order.technical.manufacturer && <p><b>Fabricante:</b> {order.technical.manufacturer}</p>}{order.technical.model && <p><b>Modelo:</b> {order.technical.model}</p>}{order.technical.serial && <p><b>Serie:</b> {order.technical.serial}</p>}{order.technical.finalCondition && <p><b>Estado final:</b> {order.technical.finalCondition}</p>}{order.technical.downtimeMinutes > 0 && <p><b>Parada:</b> {order.technical.downtimeMinutes} min</p>}</div>{order.technical.diagnosis && <p className="mt-2 text-xs text-slate-600"><b>Diagnóstico:</b> {order.technical.diagnosis}</p>}{order.technical.rootCause && <p className="mt-1 text-xs text-slate-600"><b>Causa raíz:</b> {order.technical.rootCause}</p>}{order.technical.testsPerformed && <p className="mt-1 text-xs text-slate-600"><b>Pruebas:</b> {order.technical.testsPerformed}</p>}{order.technical.testResult && <p className="mt-1 text-xs text-slate-600"><b>Resultado:</b> {order.technical.testResult}</p>}{order.technical.recommendations && <p className="mt-1 text-xs text-slate-600"><b>Recomendaciones:</b> {order.technical.recommendations}</p>}{ger && order.technical.internalNotes && <p className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-800"><b>Nota interna:</b> {order.technical.internalNotes}</p>}</section>}
           {ger && (order.technical?.recurrence || order.technical?.internalDisposition || order.technical?.internalOwner || (order.service === "Garantía" && order.technical?.warranty)) && <section className="rounded-lg border border-violet-200 bg-violet-50/40 p-3 text-xs text-slate-600"><h4 className="mb-2 font-semibold uppercase tracking-wide text-violet-500">Gestión interna</h4>{order.service === "Garantía" && order.technical?.warranty && <p><b>Garantía:</b> {order.technical.warranty}</p>}{order.technical?.recurrence && <p><b>Recurrencia:</b> {order.technical.recurrence}</p>}{order.technical?.internalDisposition && <p><b>Próxima acción:</b> {order.technical.internalDisposition}</p>}{order.technical?.internalOwner && <p><b>Responsable:</b> {order.technical.internalOwner}</p>}</section>}
           {order.noSignReason && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700">Cerrada sin firma. Motivo: {order.noSignReason}</div>}
+          {order.recurrenceMonths > 0 && <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800"><RefreshCw className="h-4 w-4 shrink-0" />Mantenimiento preventivo recurrente cada {order.recurrenceMonths} mes(es).{order.recurrenceSpawnedId ? ` Próximo generado: ${order.recurrenceSpawnedId}.` : ""}</div>}
           {isSuspended && <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>Orden suspendida por causas ajenas al trabajo{order.suspendedAt ? ` · ${new Date(order.suspendedAt).toLocaleString("es-AR")}` : ""}.<br />{order.suspendCategory && <Chip className="mb-1 mt-1 bg-rose-100 text-rose-700 ring-rose-600/20">{order.suspendCategory}</Chip>}<br />Motivo: {order.suspendReason || "Sin especificar"}</span></div>}
           {order.photos && order.photos.length > 0 && (<section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Evidencia</h4><div className="flex flex-wrap gap-2">{order.photos.map((p, i) => p.kind === "document" ? (<a key={i} href={p.url} download={p.name || "documento"} title={p.name} className="relative flex h-16 w-16 flex-col items-center justify-center rounded-lg bg-slate-100 ring-1 ring-slate-200 hover:bg-slate-200"><FileText className="h-6 w-6 text-slate-500" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span></a>) : (<button key={i} onClick={() => setZoom(p)} className="relative" aria-label={`Ampliar foto ${p.cat || ""}`}><img src={p.preview || p.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" /><span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span></button>))}</div></section>)}
           <section><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Mano de obra y materiales</h4><div className="rounded-lg border border-slate-200 p-3 text-sm">
@@ -3166,6 +3224,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const removeAssignedTech = (name) => setAssignedTechs((current) => current.filter((t) => t !== name));
   const [quoteNumber, setQuoteNumber] = useState(initial.quoteNumber || ""); const [customerPO, setCustomerPO] = useState(initial.customerPO || "");
   const [service, setService] = useState(initial.service || "Mantenimiento preventivo");
+  const [recurrenceMonths, setRecurrenceMonths] = useState(initial.recurrenceMonths || 0);
   const [equipo, setEquipo] = useState(initial.equipo || ""); const [sintoma, setSintoma] = useState(initial.sintoma || ""); const [solucion, setSolucion] = useState(initial.solucion || ""); const [category, setCategory] = useState(initial.category || "");
   const [linkedBudgetId] = useState(initial.budgetId || ""); const [linkedBudgetNumber] = useState(initial.budgetNumber || initial.quoteNumber || ""); const [linkedProjectId] = useState(initial.projectId || "");
   const [technical, setTechnical] = useState(() => ({ ...EMPTY_TECHNICAL, ...(initial.technical || {}), reportedAt: initial.technical?.reportedAt || new Date().toISOString() }));
@@ -3291,7 +3350,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
     const savedLocation = location ? { ...location, label: resolvedSite } : null;
     const completionStamp = new Date().toISOString();
     const timelineHours = technicalOverride.startedAt ? round2(timelineWorkMs(technicalOverride, Date.now()) / 3600000) : automaticLaborHours;
-    const o = { client: client.name, site: resolvedSite, siteCode: siteCode.trim(), contact, tech, assignedTechs, quoteNumber: quoteNumber.trim(), customerPO: customerPO.trim(), budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId, service, date: todayStr(), createdAt: completionStamp, equipo, sintoma, solucion, category, technical: { ...technicalOverride, signerCompany: client.name, downtimeMinutes: Number(technicalOverride.downtimeMinutes) || 0, billableWaitMinutes: Number(technicalOverride.billableWaitMinutes) || 0 }, location: savedLocation, photos, signatureUrl, signedAt: signatureUrl ? completionStamp : null, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), technicianSignatureUrl, technicianSignedAt: technicianSignatureUrl ? completionStamp : null, technicianSignedBy: tech || me.name, laborHours: timelineHours, billableHours: projectedBillableHours, technicians: Math.max(1, Math.round(Number(technicians) || 1)), rate: normalizedRate(rate), currency: "USD", laborBillable, materials: materials.map((m) => ({ ...m, qty: m.unit === "u" ? Math.max(1, Math.round(Number(m.qty) || 1)) : (Number(m.qty) || 0), price: wholeMoney(m.price), cost: wholeMoney(m.cost) })), status };
+    const o = { client: client.name, site: resolvedSite, siteCode: siteCode.trim(), contact, tech, assignedTechs, quoteNumber: quoteNumber.trim(), customerPO: customerPO.trim(), budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId, service, recurrenceMonths: Number(recurrenceMonths) || 0, date: todayStr(), createdAt: completionStamp, equipo, sintoma, solucion, category, technical: { ...technicalOverride, signerCompany: client.name, downtimeMinutes: Number(technicalOverride.downtimeMinutes) || 0, billableWaitMinutes: Number(technicalOverride.billableWaitMinutes) || 0 }, location: savedLocation, photos, signatureUrl, signedAt: signatureUrl ? completionStamp : null, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), technicianSignatureUrl, technicianSignedAt: technicianSignatureUrl ? completionStamp : null, technicianSignedBy: tech || me.name, laborHours: timelineHours, billableHours: projectedBillableHours, technicians: Math.max(1, Math.round(Number(technicians) || 1)), rate: normalizedRate(rate), currency: "USD", laborBillable, materials: materials.map((m) => ({ ...m, qty: m.unit === "u" ? Math.max(1, Math.round(Number(m.qty) || 1)) : (Number(m.qty) || 0), price: wholeMoney(m.price), cost: wholeMoney(m.cost) })), status };
     if (clientMode === "new" && newClient.name) o._newClient = { id: "c" + Date.now(), name: newClient.name, site: resolvedSite, sites: resolvedSite ? [{ code: "", name: resolvedSite }] : [] };
     const saved = await onSave(o, currentOrderId, { stayOpen });
     if (saved?.id && !currentOrderId) setCurrentOrderId(saved.id);
@@ -3346,10 +3405,13 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           <div className="mt-2 flex flex-wrap items-center gap-2">{!location && <button onClick={captureLocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><MapPin className="h-3.5 w-3.5" /> Vincular GPS manualmente</button>}{location && <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">GPS vinculado a “{siteLabel || location.label || "Sitio de intervención"}”</span>}{geoMsg && <span className="text-xs text-slate-500">{geoMsg}</span>}</div>
           {!location && <p className="mt-1 text-[11px] text-slate-400">La ubicación se captura automáticamente al pulsar “Iniciar orden”. Si tu navegador bloqueó el permiso, usá el botón manual.</p>}
         </Section>
-        <Section title="Tipo de servicio"><div className="flex flex-wrap gap-2">{SERVICE_TYPES.map((s) => (<button key={s} onClick={() => setService(s)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${service === s ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}>{s}</button>))}</div></Section>
+        <Section title="Tipo de servicio"><div className="flex flex-wrap gap-2">{SERVICE_TYPES.map((s) => (<button key={s} onClick={() => setService(s)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${service === s ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}>{s}</button>))}</div>
+          {service === "Mantenimiento preventivo" && <L label="Repetir cada (meses)" help="Al completar esta orden, se crea automáticamente el próximo borrador de mantenimiento preventivo para este cliente/planta con esa cantidad de meses de anticipación. Dejalo en 0 para no repetir." labelClass="mt-3"><input type="number" min="0" step="1" value={recurrenceMonths} onChange={(e) => setRecurrenceMonths(Math.max(0, Math.round(Number(e.target.value) || 0)))} placeholder="Ej. 3" className="u-input mt-1 w-32" /></L>}
+        </Section>
         <Section title="Identificación del activo">
           <ReqLabel>Equipo / sistema intervenido</ReqLabel>
           <input value={equipo} onChange={(e) => setEquipo(e.target.value)} placeholder="Ej. Tablero principal, línea 2" className={`u-input mt-1 ${errCls(!(equipo || technical.assetTag))}`} />
+          <L label="Categoría" help="Etiqueta corta y libre para agrupar el tipo de falla o intervención (ej. Sobrecalentamiento, Falla eléctrica, Programación)."><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Sobrecalentamiento" className="u-input mt-1" /></L>
           <div className="mt-2 grid grid-cols-2 gap-2"><L label="TAG del activo"><div className="flex gap-1.5"><input value={technical.assetTag} onChange={(e) => setTechnicalField("assetTag", e.target.value)} placeholder="Ej. VFD-L2-03" className="u-input" /><button type="button" onClick={() => setScannerOpen(true)} title="Escanear código del equipo" aria-label="Escanear código del equipo" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L><L label="Fabricante"><input value={technical.manufacturer} onChange={(e) => setTechnicalField("manufacturer", e.target.value)} className="u-input" /></L><L label="Modelo"><input value={technical.model} onChange={(e) => setTechnicalField("model", e.target.value)} className="u-input" /></L><L label="N° de serie"><input value={technical.serial} onChange={(e) => setTechnicalField("serial", e.target.value)} className="u-input" /></L></div>
           {assetHistory.length > 0 && (
             <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3">

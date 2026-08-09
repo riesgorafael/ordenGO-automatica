@@ -1763,8 +1763,8 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt"];
-const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt", "recurrenceMonths", "recurrenceSpawnedId"];
+const MANAGEMENT_PATCH = ["rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt", "recurrenceMonths", "recurrenceSpawnedId"];
 const sanitizeAssignedTechs = (value) => Array.isArray(value) ? [...new Set(value.map((name) => String(name || "").trim()).filter(Boolean))].slice(0, 8) : [];
 
 app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
