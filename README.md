@@ -68,8 +68,7 @@ docker compose up --build
 ```
 
 Abre **http://localhost:3000**.
-Entra con el admin que pusiste en `.env` (`ADMIN_EMAIL` / `ADMIN_PASSWORD`).
-Usuarios de demo: `ana@empresa.com`, `luis@empresa.com`, `maria@empresa.com` (contraseña = `DEMO_PASSWORD`).
+Entra con el admin que pusiste en `.env` (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). Desde ahí creás el resto de los usuarios (Equipo → Nuevo empleado).
 
 Para desarrollo con recarga en caliente (dos terminales):
 
@@ -105,8 +104,7 @@ En la pestaña **Environment** de la app, agrega:
 DATABASE_URL = (la cadena de conexión del paso 1)
 JWT_SECRET = (una cadena larga y aleatoria)
 ADMIN_EMAIL = tucorreo@empresa.com
-ADMIN_PASSWORD = (tu clave de administrador)
-DEMO_PASSWORD = (clave inicial para empleados)
+ADMIN_PASSWORD = (tu clave de administrador; si la dejás vacía, se genera una temporal y queda en el log de arranque)
 DEFAULT_RATE = 0
 PORT = 3000
 ```
@@ -126,9 +124,8 @@ PORT = 3000
 
 ## Notas de seguridad (para producción real)
 
-- **Cambia** `JWT_SECRET`, `ADMIN_PASSWORD` y `DEMO_PASSWORD` por valores propios y fuertes.
+- **Cambia** `JWT_SECRET` y `ADMIN_PASSWORD` por valores propios y fuertes.
 - Pídele a cada empleado que cambie su contraseña inicial: cada usuario puede hacerlo desde el botón de la **llave (🔑)** en el encabezado. El admin también puede reasignar contraseñas desde **Equipo**.
-- La clave de Anthropic vive solo en el servidor; el navegador nunca la ve.
 - Los montos (tarifas, precios, totales) se filtran en el backend para el rol Técnico: aunque alguien inspeccione la red, no los recibe.
 
 ## Panel de dirección (gerencia/admin)
