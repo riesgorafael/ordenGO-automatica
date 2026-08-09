@@ -4106,7 +4106,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
               if (editId === p.id) return (
                 <div key={p.id} className="rounded-lg border border-brand-300 bg-brand-50/40 p-3">
                   <L label="Nombre"><input value={ef.name} onChange={(e) => setEf({ ...ef, name: e.target.value })} className="u-input" /></L>
-                  <L label="SKU / código" help="Código de barras o QR del repuesto, opcional. Se usa para encontrarlo con el botón Escanear."><div className="mt-1 flex gap-1.5"><input value={ef.sku} onChange={(e) => setEf({ ...ef, sku: e.target.value })} className="u-input" /><button type="button" onClick={() => setScannerTarget("edit")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
+                  <L label="SKU / código" help="Código de barras o QR del material, opcional. Se usa para encontrarlo con el botón Escanear."><div className="mt-1 flex gap-1.5"><input value={ef.sku} onChange={(e) => setEf({ ...ef, sku: e.target.value })} className="u-input" /><button type="button" onClick={() => setScannerTarget("edit")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <L label="Categoría"><select value={ef.category} onChange={(e) => setEf({ ...ef, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
                     <L label="Unidad"><input value={ef.unit} onChange={(e) => setEf({ ...ef, unit: e.target.value })} className="u-input" /></L>
@@ -4150,8 +4150,8 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
       </div>
       <div><Panel title="Nuevo material">
         <div className="space-y-2">
-          <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Descripción del repuesto" className="u-input" /></L>
-          <L label="SKU / código" help="Código de barras o QR del repuesto, opcional. Se usa para encontrarlo con el botón Escanear."><div className="flex gap-1.5"><input value={nf.sku} onChange={(e) => setNf({ ...nf, sku: e.target.value })} placeholder="Opcional" className="u-input" /><button type="button" onClick={() => setScannerTarget("new")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
+          <L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Descripción del material" className="u-input" /></L>
+          <L label="SKU / código" help="Código de barras o QR del material, opcional. Se usa para encontrarlo con el botón Escanear."><div className="flex gap-1.5"><input value={nf.sku} onChange={(e) => setNf({ ...nf, sku: e.target.value })} placeholder="Opcional" className="u-input" /><button type="button" onClick={() => setScannerTarget("new")} title="Escanear código" aria-label="Escanear código" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L>
           <L label="Categoría"><select value={nf.category} onChange={(e) => setNf({ ...nf, category: e.target.value })} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select></L>
           <div className="grid grid-cols-2 gap-2">
             <L label="Unidad"><input value={nf.unit} onChange={(e) => setNf({ ...nf, unit: e.target.value })} placeholder="u / m / kg" className="u-input" /></L>
@@ -4161,13 +4161,13 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
             <L label="Precio venta"><input type="number" min="0" step="1" value={nf.price} onChange={(e) => setNf({ ...nf, price: e.target.value, margin: "" })} onBlur={(e) => setNf({ ...nf, price: wholeMoney(e.target.value) })} className="u-input" /></L>
             <L label="Stock mínimo" help="Nivel que activa la alerta de reposición. El material se considera crítico cuando el stock disponible es igual o menor a este valor."><input type="number" value={nf.minStock} onChange={(e) => setNf({ ...nf, minStock: e.target.value })} className="u-input" /></L>
           </div>
-          <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar repuesto</button>
+          <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar material</button>
           <p className="text-[11px] text-slate-400">El catálogo autocompleta los materiales al crear una orden. Cuando el stock llega al mínimo, aparece un aviso en esta pestaña.</p>
         </div>
       </Panel></div>
     </div>
-    {pendingDelete && <ConfirmDialog title="Eliminar repuesto" message={`Se eliminará “${pendingDelete.name}” del catálogo. Esta acción no modifica órdenes anteriores.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
-    {bulkDeleteOpen && <ConfirmDialog title={`Eliminar ${sorted.length} repuesto(s)`} message={`Se eliminarán del catálogo los ${sorted.length} repuesto(s) que quedaron visibles con el filtro actual${categoryFilter !== "Todas" ? ` (categoría "${categoryFilter}")` : ""}. Esta acción no modifica órdenes anteriores y no se puede deshacer.`} confirmLabel={bulkDeleting ? "Eliminando…" : "Eliminar visibles"} danger onClose={() => !bulkDeleting && setBulkDeleteOpen(false)} onConfirm={bulkDelete} />}
+    {pendingDelete && <ConfirmDialog title="Eliminar material" message={`Se eliminará “${pendingDelete.name}” del catálogo. Esta acción no modifica órdenes anteriores.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
+    {bulkDeleteOpen && <ConfirmDialog title={`Eliminar ${sorted.length} material(es)`} message={`Se eliminarán del catálogo los ${sorted.length} material(es) que quedaron visibles con el filtro actual${categoryFilter !== "Todas" ? ` (categoría "${categoryFilter}")` : ""}. Esta acción no modifica órdenes anteriores y no se puede deshacer.`} confirmLabel={bulkDeleting ? "Eliminando…" : "Eliminar visibles"} danger onClose={() => !bulkDeleting && setBulkDeleteOpen(false)} onConfirm={bulkDelete} />}
   </>;
 }
 
