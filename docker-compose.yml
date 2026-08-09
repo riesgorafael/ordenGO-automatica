@@ -25,9 +25,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET de al menos 32 caracteres en el archivo .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@empresa.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en el archivo .env}
-      DEMO_PASSWORD: ${DEMO_PASSWORD:-ordengo123}
       MONITOR_EMAIL: ${MONITOR_EMAIL:-monitor.oficina@empresa.com}
-      MONITOR_PASSWORD: ${MONITOR_PASSWORD:-ordengo123}
+      MONITOR_PASSWORD: ${MONITOR_PASSWORD:-}
       DEFAULT_RATE: ${DEFAULT_RATE:-50}
       PORT: 3000
     ports:
