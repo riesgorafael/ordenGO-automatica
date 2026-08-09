@@ -1252,6 +1252,9 @@ app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico")
   } else {
     ml.projectName = "";
   }
+  // Un técnico de campo solo puede crear listados para proyectos que tiene habilitados (los de
+  // uso interno, sin proyecto asociado, quedan afuera de este chequeo).
+  if (ml.projectId && !(await tecCanProject(req.user, ml.projectId))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   if (!ml.sections.length) return res.status(400).json({ error: "Agregá al menos una sección con un ítem." });
   if (!ml.id) {
     const siteCode = String(project?.key || "INT").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "INT";
@@ -1272,9 +1275,12 @@ app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico")
 app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const current = (await pool.query("SELECT data FROM material_lists WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
+  // Necesita acceso tanto al proyecto donde está hoy el listado como, si lo mueve, al de destino.
+  if (current.projectId && !(await tecCanProject(req.user, current.projectId))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   const ml = normalizeMaterialList(req.body, current);
   ml.id = req.params.id; ml.number = ml.id;
   if (ml.audience !== "interno" && !ml.projectId) return res.status(400).json({ error: "El proyecto es obligatorio" });
+  if (ml.projectId && !(await tecCanProject(req.user, ml.projectId))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   if (ml.projectId && ml.projectId !== current.projectId) {
     const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [ml.projectId])).rows[0]?.data;
     if (!project) return res.status(400).json({ error: "El proyecto seleccionado ya no existe." });
