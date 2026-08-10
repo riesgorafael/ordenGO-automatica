@@ -3992,10 +3992,48 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
         overdue: isOverdue(t), color: isOverdue(t) ? "#e11d48" : isDueSoon(t) ? "#f59e0b" : "#0ea5e9",
       }));
 
-    // Cierre por mes según la fecha real del cambio de estado a "Hecho" registrada en el historial.
-    const closedDates = tasks.filter((t) => t.status === "Hecho")
-      .map((t) => [...(t.activity || [])].reverse().find((a) => a.type === "status" && /Hecho/i.test(a.text || ""))?.at)
-      .filter(Boolean);
+    // Fecha real de cierre: último cambio de estado a "Hecho" registrado en el historial de la tarea.
+    const closedAt = (t) => t.status !== "Hecho" ? null
+      : [...(t.activity || [])].reverse().find((a) => a.type === "status" && /Hecho/i.test(a.text || ""))?.at || null;
+
+    // Cumplimiento de plazos: por mes de vencimiento, cuántas se planificaron y cuántas cerraron en
+    // fecha. Solo meses ya transcurridos — incluir meses futuros daría 0% de cumplimiento falso.
+    const thisMonth = todayStr().slice(0, 7);
+    const scheduleBuckets = {};
+    tasks.filter((t) => t.due && t.due.slice(0, 7) <= thisMonth).forEach((t) => {
+      const key = t.due.slice(0, 7);
+      if (!scheduleBuckets[key]) scheduleBuckets[key] = { planned: 0, met: 0 };
+      scheduleBuckets[key].planned++;
+      const closed = closedAt(t);
+      if (closed && String(closed).slice(0, 10) <= t.due) scheduleBuckets[key].met++;
+    });
+    const schedule = Object.keys(scheduleBuckets).sort().slice(-6)
+      .map((key) => ({ name: monthLabelShort(key), planned: scheduleBuckets[key].planned, met: scheduleBuckets[key].met }));
+    const scheduleNote = `Para cada mes: cuántas tareas tenían vencimiento (planificado) y cuántas se cerraron en esa fecha o antes. El mes en curso está incompleto por definición. No hay una línea base original guardada, así que "planificado" refleja la fecha límite vigente de cada tarea, no la fecha comprometida inicialmente.`;
+
+    // Riesgos derivados por reglas fijas: impacto según prioridad, probabilidad según cercanía al
+    // vencimiento y actividad reciente. No es un registro de riesgos cargado a mano.
+    const risks = pending.map((t) => {
+      const impact = ["Urgente", "Alta"].includes(t.priority) ? "Alto" : t.priority === "Media" ? "Medio" : "Bajo";
+      let level = null, probability = "", reason = "";
+      if (isOverdue(t)) { level = impact === "Alto" ? "rojo" : "ambar"; probability = "Materializado"; reason = `Vencida hace ${daysLate(t.due)} d`; }
+      else if (isDueSoon(t) && t.status === "Por hacer") { level = impact === "Alto" ? "rojo" : "ambar"; probability = "Alta"; reason = `${dueLabel(t.due)} · sin iniciar`; }
+      else if (isDueSoon(t)) { level = "ambar"; probability = "Media"; reason = `${dueLabel(t.due)} · en curso`; }
+      else if (isStale(t)) { level = "ambar"; probability = "Media"; reason = `Sin cambios ${daysSince(t._updatedAt)} d`; }
+      return level ? { level, title: t.title, assignee: nameOf(t.assignee), impact, probability, reason } : null;
+    }).filter(Boolean)
+      .sort((a, b) => (a.level === "rojo" ? 0 : 1) - (b.level === "rojo" ? 0 : 1))
+      .slice(0, 10);
+    const riskNote = `Impacto = prioridad de la tarea (Urgente/Alta → Alto, Media → Medio, Baja → Bajo). Probabilidad: "Materializado" si ya venció; "Alta" si vence en 4 días y sigue sin iniciarse; "Media" si vence en 4 días ya en curso, o si lleva ${STALE_DAYS}+ días sin movimiento. Derivado del tablero, no es un registro de riesgos curado.`;
+
+    // Logros: cierres de los últimos 30 días, con su fecha real de cierre.
+    const achievements = tasks.map((t) => ({ task: t, at: closedAt(t) }))
+      .filter((row) => row.at && Date.now() - new Date(row.at).getTime() <= 30 * 86400000)
+      .sort((a, b) => new Date(b.at) - new Date(a.at))
+      .slice(0, 10)
+      .map(({ task, at }) => ({ title: task.title, assignee: nameOf(task.assignee), closed: new Date(at).toLocaleDateString("es-AR", { day: "2-digit", month: "short" }) }));
+
+    const closedDates = tasks.map(closedAt).filter(Boolean);
     const byMonth = closedDates.reduce((acc, iso) => { const key = String(iso).slice(0, 7); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
     const monthKeys = Object.keys(byMonth).sort().slice(-6);
     const completionTrend = monthKeys.map((key) => ({ name: monthLabelShort(key), value: byMonth[key] }));
@@ -4018,13 +4056,26 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
     }
     if (!recommendations.length) recommendations.push({ color: "#10b981", title: "Sin desvíos detectados", text: "No hay tareas vencidas ni próximas a vencer, y todas las pendientes tienen fecha límite asignada." });
 
+    // Veredicto general por regla fija, para que el semáforo signifique lo mismo en cada emisión.
+    const criticalOverdue = overdueAll.some((t) => ["Urgente", "Alta"].includes(t.priority));
+    const stalled = pending.filter(isStale).length;
+    const verdict = overdue > 0 && (overdue >= 3 || criticalOverdue)
+      ? { level: "rojo", title: "Requiere intervención", text: `${overdue} tarea(s) vencida(s)${criticalOverdue ? ", al menos una de prioridad alta o urgente" : ""}. Avance ${pctComplete}% (${done}/${tasks.length}).` }
+      : overdue > 0 || dueSoonCount > 0 || stalled > 0
+        ? { level: "ambar", title: "En seguimiento", text: `${overdue} vencida(s), ${dueSoonCount} por vencer en 4 días y ${stalled} sin movimiento hace ${STALE_DAYS}+ días. Avance ${pctComplete}% (${done}/${tasks.length}).` }
+        : { level: "verde", title: "En curso sin desvíos", text: `Sin tareas vencidas ni vencimientos inminentes. Avance ${pctComplete}% (${done}/${tasks.length}).` };
+
     projectStatusReportPDF({
       projectLabel: projectLabelText,
       generatedBy: me?.name || "",
+      verdict,
       progress: { done, total: tasks.length, pct: pctComplete },
       kpis,
       byStatus: byStatus.map((s) => ({ name: s.name, value: s.value, color: s.fill })),
       workload: workloadRows,
+      schedule, scheduleNote,
+      risks, riskNote,
+      achievements,
       timeline,
       upcoming, upcomingTotal: upcomingAll.length,
       overdueList: overdueRows, overdueTotal: overdueAll.length,
@@ -4036,7 +4087,10 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
         "El avance general es la proporción de tareas en estado Hecho sobre el total del alcance: cuenta tareas, no pondera esfuerzo ni duración.",
         "La carga por responsable considera únicamente tareas pendientes donde la persona figura como responsable; las tareas en las que participa sin ser responsable no suman a su carga.",
         "Las tareas sin fecha límite quedan fuera del cronograma y de los conteos de vencimiento.",
-        "Los puntos de atención se generan automáticamente a partir de los datos de este mismo reporte; no incluyen apreciaciones cualitativas ni información externa al tablero.",
+        "El semáforo de estado general es rojo con 3 o más tareas vencidas o si alguna vencida es de prioridad Alta o Urgente; ámbar con cualquier tarea vencida, por vencer o estancada; verde en el resto de los casos.",
+        `El sistema no guarda una línea base de fechas comprometidas: el gráfico de cumplimiento compara contra la fecha límite vigente de cada tarea. Si una fecha se reprogramó, el gráfico refleja la última, no la original.`,
+        "No hay registro de dependencias entre tareas ni comparativos con otros proyectos o regiones: el reporte se limita al alcance indicado y no incluye proyecciones a futuro.",
+        "Los puntos de atención y los riesgos se generan automáticamente a partir de los datos de este mismo reporte; no incluyen apreciaciones cualitativas ni información externa al tablero.",
       ],
     });
   };
