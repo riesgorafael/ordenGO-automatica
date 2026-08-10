@@ -292,6 +292,12 @@ const startOfCalendarWeek = (date) => addCalendarDays(date, -((date.getDay() + 6
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
 // Vence en los próximos N días (por defecto 2), sin contar las que ya están vencidas.
 const isDueSoon = (t, days = 4) => t.due && t.status !== "Hecho" && t.due >= todayStr() && t.due <= localDateKey(addCalendarDays(new Date(), days));
+// Urgencia de un proyecto calculada a partir de sus tareas (vencidas / por vencer), en vez de un campo
+// manual de prioridad: así no depende de que alguien la actualice y siempre refleja el estado real.
+const projectUrgency = (tasks, projectId) => {
+  const ts = tasks.filter((t) => t.project === projectId);
+  return { overdue: ts.filter(isOverdue).length, dueSoon: ts.filter(isDueSoon).length };
+};
 const dueLabel = (due) => {
   if (!due) return "Sin fecha";
   const today = new Date(`${todayStr()}T12:00:00`);
@@ -1219,7 +1225,7 @@ export default function App() {
                 })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
-                <option value="all">Todos los proyectos</option>{projects.filter((p) => p.active !== false || p.id === pProj).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}</option>)}
+                <option value="all">Todos los proyectos</option>{projects.filter((p) => p.active !== false || p.id === pProj).map((p) => { const urgency = projectUrgency(tasks, p.id); const flag = urgency.overdue > 0 ? ` ⚠ ${urgency.overdue} vencida(s)` : urgency.dueSoon > 0 ? ` ⏰ ${urgency.dueSoon} por vencer` : ""; return <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}{flag}</option>; })}
               </select>
               {projects.some((p) => p.active === false) && (
                 <div ref={finishedMenuRef} className="relative shrink-0">
@@ -3922,7 +3928,7 @@ function Reports({ tasks, users, projects, proj, whiteboardNotes = [], onOpenNot
           </div>
         )}
       </Panel>
-      <Panel title="Progreso por proyecto"><div className="space-y-3">{projList.map((p) => { const ts = tasks.filter((t) => t.project === p.id); const d = ts.filter((t) => t.status === "Hecho").length; const pct = ts.length ? Math.round((d / ts.length) * 100) : 0; const linkedNotes = whiteboardNotes.filter((n) => n.projectId === p.id).length; return (<div key={p.id}><div className="mb-1 flex items-center justify-between text-sm"><span className="font-medium text-slate-700"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}{linkedNotes > 0 && <button onClick={() => onOpenNotes?.(p.id)} title={`${linkedNotes} nota(s)/dibujo(s) vinculados`} className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-amber-700 hover:bg-amber-100"><StickyNote className="h-3 w-3" /> {linkedNotes}</button>}</span><span className="text-slate-500">{d}/{ts.length} · {pct}%</span></div><HealthBar v={pct} color={p.color} /></div>); })}</div></Panel>
+      <Panel title="Progreso por proyecto"><div className="space-y-3">{[...projList].map((p) => { const ts = tasks.filter((t) => t.project === p.id); const overdueCount = ts.filter(isOverdue).length; const dueSoonCount = ts.filter(isDueSoon).length; return { p, ts, overdueCount, dueSoonCount }; }).sort((a, b) => b.overdueCount - a.overdueCount || b.dueSoonCount - a.dueSoonCount).map(({ p, ts, overdueCount, dueSoonCount }) => { const d = ts.filter((t) => t.status === "Hecho").length; const pct = ts.length ? Math.round((d / ts.length) * 100) : 0; const linkedNotes = whiteboardNotes.filter((n) => n.projectId === p.id).length; return (<div key={p.id}><div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-sm"><span className="font-medium text-slate-700"><span className="font-mono text-xs" style={{ color: p.color }}>{p.key}</span> {p.name}{linkedNotes > 0 && <button onClick={() => onOpenNotes?.(p.id)} title={`${linkedNotes} nota(s)/dibujo(s) vinculados`} className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-amber-700 hover:bg-amber-100"><StickyNote className="h-3 w-3" /> {linkedNotes}</button>}{overdueCount > 0 ? <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-rose-700"><AlertTriangle className="h-3 w-3" /> {overdueCount} vencida{overdueCount > 1 ? "s" : ""}</span> : dueSoonCount > 0 && <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-amber-700"><Clock className="h-3 w-3" /> {dueSoonCount} por vencer</span>}</span><span className="text-slate-500">{d}/{ts.length} · {pct}%</span></div><HealthBar v={pct} color={p.color} /></div>); })}</div></Panel>
     </div>
   );
 }
