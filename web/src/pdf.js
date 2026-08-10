@@ -1022,17 +1022,61 @@ export function projectStatusReportPDF({
   });
   y += Math.ceil(kpis.length / 3) * (cardH + 3) + 3;
 
-  /* ---------- Avance general ---------- */
+  /* ---------- Avance general: bloque protagonista ---------- */
+  // En vez de una barra de un solo color con el % al costado, el avance se muestra como la
+  // composición completa del trabajo: cada tramo es un estado del tablero, así se lee de un vistazo
+  // no solo cuánto se completó sino cuánto está en curso y cuánto ni siquiera arrancó.
   const pct = Math.max(0, Math.min(100, Math.round(progress?.pct || 0)));
-  doc.setFont("helvetica", "bold"); doc.setFontSize(7.6); doc.setTextColor(71, 85, 105);
-  doc.text("AVANCE GENERAL", M, y);
-  doc.setFontSize(7.6); doc.setTextColor(15, 23, 42);
-  doc.text(`${pct}%  ·  ${progress?.done || 0} de ${progress?.total || 0} tareas completadas`, W - M, y, { align: "right" });
-  y += 2.5;
-  doc.setFillColor(226, 232, 240); doc.roundedRect(M, y, CW, 5, 2.5, 2.5, "F");
-  const fillW = (pct / 100) * CW;
-  if (fillW > 0.4) { doc.setFillColor(16, 185, 129); doc.roundedRect(M, y, fillW, 5, Math.min(2.5, fillW / 2), 2.5, "F"); }
-  y += 11;
+  const pctColor = LIGHT[verdict?.level] || LIGHT.neutro;
+  const stackTotal = byStatus.reduce((sum, s) => sum + s.value, 0);
+  const heroH = stackTotal ? 34 : 24;
+  brk(heroH + 6);
+  doc.setFillColor(250, 251, 252); doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(M, y, CW, heroH, 2, 2, "FD");
+
+  const heroPad = 6;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(148, 163, 184);
+  doc.text("AVANCE GENERAL", M + heroPad, y + 7);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(30); doc.setTextColor(...hexRgb(pctColor));
+  doc.text(`${pct}%`, M + heroPad, y + 22);
+  const pctW = doc.getTextWidth(`${pct}%`);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+  doc.text(`${progress?.done || 0} de ${progress?.total || 0} tareas`, M + heroPad, y + 28);
+
+  const stackX = M + heroPad + Math.max(pctW + 10, 42), stackW = W - M - heroPad - stackX;
+  if (stackTotal) {
+    const barY = y + 11, barH = 9;
+    // Los tramos se dibujan de "Hecho" hacia "Por hacer": el avance crece de izquierda a derecha.
+    const segments = [...byStatus].reverse().filter((s) => s.value > 0);
+    const gap = 1;
+    let cursor = stackX;
+    segments.forEach((segment) => {
+      const segW = (segment.value / stackTotal) * stackW;
+      const drawW = Math.max(1, segW - gap);
+      doc.setFillColor(...hexRgb(segment.color));
+      doc.roundedRect(cursor, barY, drawW, barH, 1.2, 1.2, "F");
+      // El número va dentro del tramo cuando entra; si es angosto, queda solo en la leyenda.
+      if (drawW >= 7) {
+        doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.setTextColor(255, 255, 255);
+        doc.text(String(segment.value), cursor + drawW / 2, barY + 6, { align: "center" });
+      }
+      cursor += segW;
+    });
+    // Leyenda: nombre, cantidad y porcentaje de cada estado, repartida a lo ancho de la barra.
+    const legendSlot = stackW / segments.length;
+    segments.forEach((segment, index) => {
+      const lx = stackX + legendSlot * index;
+      dot(lx + 1, y + 25.5, segment.color, 1.1);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.2); doc.setTextColor(71, 85, 105);
+      doc.text(fit(segment.name, legendSlot - 5), lx + 3.4, y + 26.4);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6.2); doc.setTextColor(15, 23, 42);
+      doc.text(`${segment.value} · ${Math.round((segment.value / stackTotal) * 100)}%`, lx + 3.4, y + 30.2);
+    });
+  }
+  y += heroH + 3;
+  caption(stackTotal
+    ? `El porcentaje es la proporción de tareas en estado Hecho sobre las ${stackTotal} del alcance. La barra descompone ese total por estado del tablero, de lo terminado (izquierda) a lo no iniciado (derecha).`
+    : "Sin tareas cargadas en el alcance del reporte.");
 
   /* ---------- Cumplimiento de plazos: planificado vs. cumplido en fecha ---------- */
   if (schedule.length) {
@@ -1063,41 +1107,6 @@ export function projectStatusReportPDF({
     doc.text("Completado en fecha o antes", M + 82.5, y + 2.5);
     y += 8;
     caption(scheduleNote || "Compara, para cada mes, cuántas tareas tenían vencimiento y cuántas se completaron dentro de ese plazo.");
-  }
-
-  /* ---------- Distribución por estado ---------- */
-  brk(60);
-  heading("DISTRIBUCIÓN DE TAREAS POR ESTADO");
-  const totalStatus = byStatus.reduce((sum, s) => sum + s.value, 0);
-  if (!totalStatus) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(148, 163, 184);
-    doc.text("Sin tareas cargadas en el alcance del reporte.", M, y); y += 8;
-  } else {
-    const chartH = 40, axisW = 9;
-    const plotX = M + axisW, plotW = CW - axisW, plotBottom = y + chartH;
-    const axisMax = niceCeil(Math.max(...byStatus.map((s) => s.value)));
-    doc.setFontSize(6.4); doc.setFont("helvetica", "normal");
-    for (let i = 0; i <= 4; i++) {
-      const gy = plotBottom - (chartH * i) / 4;
-      doc.setDrawColor(i === 0 ? 203 : 233, i === 0 ? 213 : 238, i === 0 ? 225 : 244);
-      doc.line(plotX, gy, plotX + plotW, gy);
-      doc.setTextColor(148, 163, 184);
-      doc.text(String(Math.round((axisMax * i) / 4)), plotX - 1.5, gy + 1, { align: "right" });
-    }
-    const slot = plotW / byStatus.length, barW = Math.min(22, slot * 0.5);
-    byStatus.forEach((s, index) => {
-      const bx = plotX + slot * index + (slot - barW) / 2;
-      const bh = (s.value / axisMax) * chartH;
-      if (bh > 0.3) { doc.setFillColor(...hexRgb(s.color)); doc.roundedRect(bx, plotBottom - bh, barW, bh, 0.6, 0.6, "F"); }
-      doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.setTextColor(15, 23, 42);
-      doc.text(String(s.value), bx + barW / 2, plotBottom - bh - 1.8, { align: "center" });
-      doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
-      doc.text(fit(s.name, slot - 1), bx + barW / 2, plotBottom + 4, { align: "center" });
-      doc.setTextColor(148, 163, 184); doc.setFontSize(6);
-      doc.text(`${Math.round((s.value / totalStatus) * 100)}%`, bx + barW / 2, plotBottom + 7.4, { align: "center" });
-    });
-    y = plotBottom + 12;
-    caption(`Cantidad de tareas en cada estado del tablero. El porcentaje es sobre el total de ${totalStatus} tarea(s) del alcance. Los colores replican los del tablero en pantalla.`);
   }
 
   /* ---------- Carga y cumplimiento por responsable ---------- */
