@@ -500,6 +500,7 @@ export default function App() {
   const [financeCreateSignal, setFinanceCreateSignal] = useState(0);
   const [purchaseOrderCreateSignal, setPurchaseOrderCreateSignal] = useState(0);
   const [materialListCreateSignal, setMaterialListCreateSignal] = useState(0);
+  const [projectReportSignal, setProjectReportSignal] = useState(0);
   const [toasts, setToasts] = useState([]);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [offlineCount, setOfflineCount] = useState(() => offlineQueueSize());
@@ -515,7 +516,7 @@ export default function App() {
   const isPoppingRef = useRef(false);
   const navigateModule = (nextModule) => {
     if (nextModule !== module) {
-      setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0); setMaterialListCreateSignal(0);
+      setBudgetCreateSignal(0); setFinanceCreateSignal(0); setPurchaseOrderCreateSignal(0); setMaterialListCreateSignal(0); setProjectReportSignal(0);
       setODetail(null); setEditingOrder(null); setEditing(undefined); setPrefill(null); setOrderPrefill(null);
       setProjectEditor(null); setAccessProj(null); setDupProj(null); setWhiteboardProjectFilter("");
       setConfirmDialog(null); setGlobalSearchOpen(false); setNotifOpen(false); setUtilMenuOpen(false); setBizMenuOpen(false); setFinishedMenuOpen(false); setMobileMoreOpen(false);
@@ -1185,7 +1186,7 @@ export default function App() {
       {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online && offlineSyncFailed ? "bg-rose-600" : online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{!online ? <WifiOff className="h-4 w-4" /> : syncingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}{!online ? `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.` : offlineSyncFailed ? <><span>{offlineCount} cambio(s) pendientes por un error.</span><button type="button" onClick={() => setOfflineRetry((value) => value + 1)} className="inline-flex items-center gap-1 rounded border border-white/40 px-2 py-1 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button></> : `Sincronizando ${offlineCount} cambio(s)…`}</div>}
       <main className={`mx-auto px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5 ${tvMode ? "max-w-none lg:px-7 lg:py-4" : "max-w-6xl"}`}>
         <div key={activeModule} className="motion-page">
-        {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} ger={isMgr} />}
+        {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} projects={projects} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} onGoToProject={(projectId) => { navigateModule("projects"); setPTab("board"); setPProj(projectId); }} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} finances={finances} clients={clients} parts={parts} projects={projects} users={users} orders={orders} onOpenOrder={setODetail} me={me} createSignal={budgetCreateSignal} onConsumeCreate={() => setBudgetCreateSignal(0)} onSave={saveBudget} onDelete={deleteBudget} onDuplicate={duplicateBudget} onConvert={convertBudget} onCreateOrder={createOrderFromBudget} onInvoice={saveFinance} />}
         {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} branding={branding} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
@@ -1241,6 +1242,11 @@ export default function App() {
                   )}
                 </div>
               )}
+              {activeProjectView === "reports" && (isMgr || isMonitor) && (
+                <button onClick={() => setProjectReportSignal((v) => v + 1)} title="Genera un PDF con el estado actual y los próximos pasos, listo para compartir con gerencia" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                  <FileText className="h-4 w-4" /> Reporte de estado (PDF)
+                </button>
+              )}
               {pProj !== "all" && whiteboardNotes.filter((n) => n.projectId === pProj).length > 0 && (
                 <button onClick={() => { navigateModule("whiteboard"); setWhiteboardProjectFilter(pProj); }} title="Ver notas y dibujos vinculados a este proyecto" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100">
                   <StickyNote className="h-4 w-4" /> {whiteboardNotes.filter((n) => n.projectId === pProj).length} nota(s)
@@ -1261,7 +1267,7 @@ export default function App() {
             {(() => {
               const finishedProjectIds = new Set(projects.filter((p) => p.active === false).map((p) => p.id));
               const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
-              if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} whiteboardNotes={whiteboardNotes} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
+              if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} me={me} whiteboardNotes={whiteboardNotes} reportSignal={projectReportSignal} onConsumeReport={() => setProjectReportSignal(0)} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
               if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
@@ -2589,7 +2595,16 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
 const Empty = ({ text }) => <div className="grid h-[200px] place-items-center text-center text-xs text-slate-400">{text}</div>;
 
 /* ===================================== INICIO: MI DÍA ===================================== */
-function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets = [], userById, onOpenTask, onOpenOrder, onGoToPurchaseOrders, onGoToBudgets, ger }) {
+// Etiqueta compacta de proyecto para los avisos: además de dar contexto, funciona como acceso
+// directo al tablero ya filtrado por ese proyecto, sin pasar por el selector.
+const ProjectTag = ({ project, onGo }) => {
+  const inner = <><span className="font-mono" style={{ color: project.color }}>{project.key}</span> {project.name}</>;
+  const className = "inline-flex max-w-full items-center gap-1 truncate rounded bg-white/70 px-1.5 py-0.5 text-[11px] font-medium text-slate-600";
+  return onGo
+    ? <button onClick={() => onGo(project.id)} title="Ver este proyecto en el tablero" className={`${className} hover:bg-white`}>{inner}</button>
+    : <span className={className}>{inner}</span>;
+};
+function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets = [], projects = [], userById, onOpenTask, onOpenOrder, onGoToPurchaseOrders, onGoToBudgets, onGoToProject, ger }) {
   const myTasks = tasks.filter((t) => t.assignee === me.id && t.status !== "Hecho")
     .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
   // Incluye "Suspendida": si no, una orden pausada desaparece por completo de la vista del técnico
@@ -2597,6 +2612,19 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
   const myOrders = orders.filter((o) => (o.tech === me.name || o.assignedTechs?.includes(me.name)) && ["Borrador", "En progreso", "En proceso de ejecución", "Suspendida"].includes(o.status));
   const overdue = myTasks.filter(isOverdue).length;
   const dueSoon = myTasks.filter((t) => !isOverdue(t) && isDueSoon(t));
+  // Se listan hasta 6 tareas, agrupadas por proyecto conservando el orden por vencimiento. Cuando
+  // queda un solo grupo, el proyecto se muestra en el encabezado del aviso y no fila por fila.
+  const dueSoonShown = dueSoon.slice(0, 6);
+  const dueSoonHidden = dueSoon.length - dueSoonShown.length;
+  const dueSoonGroups = (() => {
+    const order = [], byProject = new Map();
+    dueSoonShown.forEach((task) => {
+      const key = task.project || "";
+      if (!byProject.has(key)) { byProject.set(key, []); order.push(key); }
+      byProject.get(key).push(task);
+    });
+    return order.map((key) => ({ project: projects.find((p) => p.id === key) || null, items: byProject.get(key) }));
+  })();
   const pend = ger ? orders.filter((o) => o.status === "Completada" || o.status === "Aprobada") : [];
   // La gerencia necesita anticiparse a las tareas vencidas de todo el equipo, no solo a las propias.
   const teamOverdue = ger ? tasks.filter((t) => isOverdue(t) && t.assignee !== me.id) : [];
@@ -2620,15 +2648,33 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
       )}
       {dueSoon.length > 0 && (
         <div className="motion-banner rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><b>{dueSoon.length === 1 ? "Tenés una tarea por vencer" : `Tenés ${dueSoon.length} tareas por vencer`}</b></span>
-          <div className="mt-2 space-y-1">
-            {dueSoon.slice(0, 6).map((t) => (
-              <button key={t.id} onClick={() => onOpenTask(t)} className="flex w-full items-center justify-between gap-2 rounded-md bg-white/70 px-2.5 py-1.5 text-left text-xs font-medium hover:bg-white">
-                <span className="truncate">{t.title}</span>
-                <span className="shrink-0 rounded bg-amber-200/70 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">{dueLabel(t.due)}</span>
-              </button>
+          <span className="flex flex-wrap items-start gap-x-2 gap-y-1">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <b>{dueSoon.length === 1 ? "Tenés una tarea por vencer" : `Tenés ${dueSoon.length} tareas por vencer`}</b>
+            {/* Si todas pertenecen al mismo proyecto, el contexto se muestra una sola vez acá en vez
+                de repetirse en cada fila; con varios proyectos se agrupa por encabezado más abajo. */}
+            {dueSoonGroups.length === 1 && dueSoonGroups[0].project && <ProjectTag project={dueSoonGroups[0].project} onGo={onGoToProject} />}
+          </span>
+          <div className="mt-2 space-y-2">
+            {dueSoonGroups.map((group) => (
+              <div key={group.project?.id || "sin-proyecto"}>
+                {dueSoonGroups.length > 1 && (
+                  <div className="mb-1 flex items-center gap-1.5">
+                    {group.project ? <ProjectTag project={group.project} onGo={onGoToProject} /> : <span className="text-[11px] font-medium text-amber-700">Sin proyecto</span>}
+                    <span className="text-[11px] text-amber-600">{group.items.length}</span>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  {group.items.map((t) => (
+                    <button key={t.id} onClick={() => onOpenTask(t)} className="flex w-full items-center justify-between gap-2 rounded-md bg-white/70 px-2.5 py-1.5 text-left text-xs font-medium hover:bg-white">
+                      <span className="truncate">{t.title}</span>
+                      <span className="shrink-0 rounded bg-amber-200/70 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">{dueLabel(t.due)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
-            {dueSoon.length > 6 && <p className="text-xs text-amber-700">+{dueSoon.length - 6} más</p>}
+            {dueSoonHidden > 0 && <p className="text-xs text-amber-700">+{dueSoonHidden} más</p>}
           </div>
           <p className="mt-1.5 text-[11px] text-amber-700">Vencen en los próximos 4 días. El aviso se mantiene hasta que las marques como Hecho.</p>
         </div>
@@ -3871,7 +3917,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
 }
 
 /* ===================================== PROYECTOS: REPORTES ===================================== */
-function Reports({ tasks, users, projects, proj, whiteboardNotes = [], onOpenNotes }) {
+function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpenNotes, reportSignal = 0, onConsumeReport }) {
   const [staffQuery, setStaffQuery] = useState("");
   const done = tasks.filter((t) => t.status === "Hecho").length;
   const wip = tasks.filter((t) => t.status === "En progreso" || t.status === "En revisión").length;
@@ -3900,39 +3946,105 @@ function Reports({ tasks, users, projects, proj, whiteboardNotes = [], onOpenNot
   const exportStatusReport = () => {
     const project = proj === "all" ? null : projects.find((p) => p.id === proj);
     const projectLabelText = project ? `${project.key} · ${project.name}` : "Todos los proyectos activos";
+    const pending = tasks.filter((t) => t.status !== "Hecho");
     const pctComplete = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+    const noDueDate = pending.filter((t) => !t.due).length;
+    const owners = new Set(pending.map((t) => t.assignee).filter(Boolean));
+
     const kpis = [
-      { label: "Tareas totales", value: tasks.length },
-      { label: "Completadas", value: `${done} (${pctComplete}%)` },
-      { label: "En curso", value: wip },
-      { label: "Vencidas", value: overdue },
-      { label: "Por vencer (4 días)", value: dueSoonCount },
-      { label: "Personas con tareas asignadas", value: staffWorkloadAll.filter((row) => row.items.some((i) => i.role === "Responsable")).length },
+      { label: "Tareas en el alcance", value: tasks.length, hint: `${pending.length} pendiente(s)`, accent: "#0ea5e9" },
+      { label: "Completadas", value: done, hint: `${pctComplete}% del total`, accent: "#10b981" },
+      { label: "En curso", value: wip, hint: "En progreso o en revisión", accent: "#8b5cf6" },
+      { label: "Vencidas", value: overdue, hint: overdue ? "Requieren acción inmediata" : "Sin atrasos", accent: overdue ? "#e11d48" : "#94a3b8" },
+      { label: "Por vencer (4 días)", value: dueSoonCount, hint: "Ventana de riesgo próxima", accent: dueSoonCount ? "#f59e0b" : "#94a3b8" },
+      { label: "Responsables activos", value: owners.size, hint: noDueDate ? `${noDueDate} pendiente(s) sin fecha` : "Todas con fecha límite", accent: "#F18700" },
     ];
-    const shorten = (text, max = 42) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text || "—");
-    const upcoming = tasks
-      .filter((t) => t.status !== "Hecho" && !isOverdue(t))
-      .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority))
-      .slice(0, 12)
-      .map((t) => ({ title: shorten(t.title), assignee: nameOf(t.assignee).split(" ")[0], due: dueLabel(t.due) }));
-    const overdueRows = tasks
-      .filter(isOverdue)
-      .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"))
-      .slice(0, 12)
-      .map((t) => ({ title: shorten(t.title), assignee: nameOf(t.assignee).split(" ")[0], due: dueLabel(t.due) }));
+
+    // Carga = tareas pendientes de las que la persona es responsable (los participantes no suman).
     const workloadRows = staffWorkloadAll
-      .map(({ user, items }) => { const owned = items.filter((i) => i.role === "Responsable"); return { name: user.name, total: owned.length, overdue: owned.filter(isOverdue).length }; })
+      .map(({ user, items }) => {
+        const owned = items.filter((i) => i.role === "Responsable" && i.status !== "Hecho");
+        return { name: user.name, total: owned.length, overdue: owned.filter(isOverdue).length };
+      })
       .filter((row) => row.total > 0)
-      .sort((a, b) => b.total - a.total);
-    projectStatusReportPDF(projectLabelText, kpis, byStatus.map((s) => ({ name: s.name, value: s.value })), upcoming, overdueRows, workloadRows);
+      .sort((a, b) => b.overdue - a.overdue || b.total - a.total);
+
+    const daysLate = (due) => Math.max(0, Math.round((new Date(`${todayStr()}T12:00:00`) - new Date(`${due}T12:00:00`)) / 86400000));
+    const upcomingAll = pending.filter((t) => !isOverdue(t))
+      .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
+    const overdueAll = tasks.filter(isOverdue).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+
+    const upcoming = upcomingAll.slice(0, 14).map((t) => ({
+      title: t.title, assignee: nameOf(t.assignee), priority: t.priority || "—", status: t.status,
+      due: dueLabel(t.due), soon: isDueSoon(t), _flag: isDueSoon(t) ? "#f59e0b" : null,
+    }));
+    const overdueRows = overdueAll.slice(0, 14).map((t) => ({
+      title: t.title, assignee: nameOf(t.assignee), priority: t.priority || "—", status: t.status,
+      due: `${daysLate(t.due)} día(s)`, _flag: "#e11d48",
+    }));
+
+    // Cronograma: solo tareas pendientes con fecha límite cargada, las 14 más próximas.
+    const timeline = pending.filter((t) => t.due)
+      .sort((a, b) => a.due.localeCompare(b.due))
+      .slice(0, 14)
+      .map((t) => ({
+        title: t.title, dueTime: new Date(`${t.due}T12:00:00`).getTime(), dueLabel: dueLabel(t.due),
+        overdue: isOverdue(t), color: isOverdue(t) ? "#e11d48" : isDueSoon(t) ? "#f59e0b" : "#0ea5e9",
+      }));
+
+    // Cierre por mes según la fecha real del cambio de estado a "Hecho" registrada en el historial.
+    const closedDates = tasks.filter((t) => t.status === "Hecho")
+      .map((t) => [...(t.activity || [])].reverse().find((a) => a.type === "status" && /Hecho/i.test(a.text || ""))?.at)
+      .filter(Boolean);
+    const byMonth = closedDates.reduce((acc, iso) => { const key = String(iso).slice(0, 7); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
+    const monthKeys = Object.keys(byMonth).sort().slice(-6);
+    const completionTrend = monthKeys.map((key) => ({ name: monthLabelShort(key), value: byMonth[key] }));
+    const trendCoverage = closedDates.length < done
+      ? `Tareas cerradas por mes, según la fecha del cambio de estado a Hecho. ${closedDates.length} de ${done} tarea(s) completadas tienen esa fecha registrada; las restantes se cerraron antes de que se llevara historial y no figuran en el gráfico.`
+      : "Tareas cerradas en cada mes, según la fecha del cambio de estado a Hecho registrada en el historial.";
+
+    // Puntos de atención derivados por reglas fijas sobre los mismos datos del reporte.
+    const recommendations = [];
+    if (overdue > 0) {
+      const worst = workloadRows.filter((r) => r.overdue > 0).slice(0, 2).map((r) => `${r.name} (${r.overdue})`).join(", ");
+      recommendations.push({ color: "#e11d48", title: `${overdue} tarea(s) vencida(s)`, text: `Concentradas en: ${worst || "sin responsable asignado"}. La más atrasada acumula ${overdueAll.length ? daysLate(overdueAll[0].due) : 0} día(s). Requieren replanificación de fecha o reasignación.` });
+    }
+    if (dueSoonCount > 0) recommendations.push({ color: "#f59e0b", title: `${dueSoonCount} tarea(s) vencen en los próximos 4 días`, text: "Confirmar disponibilidad de los responsables antes del vencimiento para evitar que pasen a atraso." });
+    if (noDueDate > 0) recommendations.push({ color: "#f59e0b", title: `${noDueDate} tarea(s) pendientes sin fecha límite`, text: "Al no tener fecha no entran en el cronograma ni en los indicadores de vencimiento: el avance real puede estar subestimado hasta que se les asigne plazo." });
+    const topLoad = workloadRows[0];
+    const totalPendingOwned = workloadRows.reduce((sum, r) => sum + r.total, 0);
+    if (topLoad && totalPendingOwned > 0 && workloadRows.length > 1 && topLoad.total / totalPendingOwned >= 0.4) {
+      recommendations.push({ color: "#0ea5e9", title: "Concentración de carga", text: `${topLoad.name} concentra ${topLoad.total} de ${totalPendingOwned} tarea(s) pendientes (${Math.round((topLoad.total / totalPendingOwned) * 100)}%). Evaluar redistribución para reducir el riesgo de cuello de botella.` });
+    }
+    if (!recommendations.length) recommendations.push({ color: "#10b981", title: "Sin desvíos detectados", text: "No hay tareas vencidas ni próximas a vencer, y todas las pendientes tienen fecha límite asignada." });
+
+    projectStatusReportPDF({
+      projectLabel: projectLabelText,
+      generatedBy: me?.name || "",
+      progress: { done, total: tasks.length, pct: pctComplete },
+      kpis,
+      byStatus: byStatus.map((s) => ({ name: s.name, value: s.value, color: s.fill })),
+      workload: workloadRows,
+      timeline,
+      upcoming, upcomingTotal: upcomingAll.length,
+      overdueList: overdueRows, overdueTotal: overdueAll.length,
+      completionTrend, trendCoverage,
+      recommendations,
+      notes: [
+        `Alcance: ${project ? `proyecto ${projectLabelText}` : "todos los proyectos activos"}. Fuente: tablero de proyectos de OrdenGO.`,
+        "Una tarea se considera vencida cuando su fecha límite es anterior a hoy y su estado no es Hecho. «Por vencer» abarca los próximos 4 días corridos.",
+        "El avance general es la proporción de tareas en estado Hecho sobre el total del alcance: cuenta tareas, no pondera esfuerzo ni duración.",
+        "La carga por responsable considera únicamente tareas pendientes donde la persona figura como responsable; las tareas en las que participa sin ser responsable no suman a su carga.",
+        "Las tareas sin fecha límite quedan fuera del cronograma y de los conteos de vencimiento.",
+        "Los puntos de atención se generan automáticamente a partir de los datos de este mismo reporte; no incluyen apreciaciones cualitativas ni información externa al tablero.",
+      ],
+    });
   };
+  useEffect(() => { if (reportSignal > 0) { exportStatusReport(); onConsumeReport?.(); } }, [reportSignal]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="space-y-5">
       <div>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Proyectos</h3>
-          <button onClick={exportStatusReport} title="Genera un PDF con el estado actual y los próximos pasos, listo para compartir con gerencia" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-3.5 w-3.5" /> Reporte de estado (PDF)</button>
-        </div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Proyectos</h3>
         <div className="grid grid-cols-3 gap-3"><Metric label="Total" value={projList.length} icon={Folder} tint="text-brand-600" /><Metric label="Activos" value={activeProjects} icon={Clock} tint="text-violet-600" /><Metric label="Finalizados" value={finishedProjects} icon={CheckCircle2} tint="text-emerald-600" /></div>
       </div>
       <div>

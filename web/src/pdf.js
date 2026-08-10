@@ -874,53 +874,346 @@ export function financeReportPDF(period, kpis, insights) {
   doc.save(`finanzas_${period}.pdf`);
 }
 
-// Reporte de estado de proyecto para compartir con gerencia: foto del avance actual (indicadores,
-// tareas por estado, carga por persona) más los próximos pasos y lo vencido, sin armar nada a mano.
-export function projectStatusReportPDF(projectLabel, kpis, byStatus, upcoming, overdueList, workload) {
-  const doc = new jsPDF("p", "mm", "a4");
-  const W = 210, M = 15;
-  let y = 20;
-  let drawHead = () => {};
-  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+const hexRgb = (hex) => {
+  const raw = String(hex || "").replace("#", "");
+  const full = raw.length === 3 ? raw.split("").map((c) => c + c).join("") : raw;
+  const n = parseInt(full, 16);
+  return Number.isNaN(n) || full.length !== 6 ? [148, 163, 184] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+// Redondea el tope del eje a un valor "redondo" (1, 2, 5, 10, 20, 50…) para que las marcas de la
+// grilla caigan en números enteros legibles en vez de decimales arbitrarios.
+const niceCeil = (value) => {
+  if (!(value > 0)) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const base = Math.pow(10, exponent);
+  const scaled = value / base;
+  const step = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
+  return step * base;
+};
 
+// Reporte de estado de proyecto para dirección: resumen ejecutivo, gráficos con sus valores
+// impresos, cronograma y recomendaciones derivadas por reglas explícitas. Todo sale de las tareas
+// cargadas — no hay estimaciones ni datos inventados, y cada criterio queda documentado al final.
+export function projectStatusReportPDF({
+  projectLabel, generatedBy = "", progress, kpis = [], byStatus = [], workload = [],
+  timeline = [], upcoming = [], upcomingTotal = 0, overdueList = [], overdueTotal = 0,
+  completionTrend = [], trendCoverage = null, recommendations = [], notes = [],
+}) {
+  const doc = new jsPDF("p", "mm", "a4");
+  const W = 210, M = 15, CW = W - 2 * M;
+  const stamp = new Date().toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  let y = 20;
+  const drawHead = () => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+    doc.text("REPORTE DE ESTADO DE PROYECTO", M, 14);
+    doc.setFont("helvetica", "normal");
+    doc.text(projectLabel, W - M, 14, { align: "right" });
+    doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17);
+    y = 26;
+  };
+  const brk = (need = 8) => { if (y + need > 272) { doc.addPage(); drawHead(); return true; } return false; };
+
+  const heading = (text) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(241, 135, 0);
+    doc.text(text, M, y);
+    doc.setDrawColor(241, 135, 0); doc.setLineWidth(0.4); doc.line(M, y + 1.6, M + doc.getTextWidth(text), y + 1.6); doc.setLineWidth(0.2);
+    y += 7;
+  };
+  // El estilo se vuelve a aplicar en cada línea porque un salto de página redibuja el encabezado
+  // y deja la fuente en negrita: sin esto, la línea siguiente al corte saldría con otro formato.
+  const caption = (text) => {
+    const lines = (() => { doc.setFont("helvetica", "italic"); doc.setFontSize(6.8); return doc.splitTextToSize(text, CW); })();
+    lines.forEach((line) => {
+      brk(5);
+      doc.setFont("helvetica", "italic"); doc.setFontSize(6.8); doc.setTextColor(148, 163, 184);
+      doc.text(line, M, y); y += 3.2;
+    });
+    doc.setFont("helvetica", "normal");
+    y += 1.5;
+  };
+  // Trunca al ancho real disponible (medido con la fuente activa) en vez de un límite fijo de
+  // caracteres: así aprovecha todo el ancho de columna y no corta el texto antes de tiempo.
+  const fit = (text, maxWidth) => {
+    const str = String(text ?? "—");
+    if (!maxWidth || doc.getTextWidth(str) <= maxWidth) return str;
+    let lo = 0, hi = str.length;
+    while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (doc.getTextWidth(str.slice(0, mid) + "…") <= maxWidth) lo = mid; else hi = mid - 1; }
+    return str.slice(0, lo) + "…";
+  };
+  const table = (rows, cols, emptyText) => {
+    if (!rows.length) {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+      doc.text(emptyText, M, y); y += 8; return;
+    }
+    const header = () => {
+      doc.setFillColor(241, 245, 249); doc.rect(M, y - 3.6, CW, 5.6, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.setTextColor(71, 85, 105);
+      cols.forEach((c) => doc.text(c.label, M + c.x, y, { align: c.align || "left" }));
+      y += 5;
+    };
+    header();
+    rows.forEach((row, index) => {
+      if (brk(9)) header();
+      if (index % 2 === 1) { doc.setFillColor(250, 251, 252); doc.rect(M, y - 3.4, CW, 5.4, "F"); }
+      if (row._flag) { doc.setFillColor(...hexRgb(row._flag)); doc.rect(M - 1.6, y - 3.4, 1, 5.4, "F"); }
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(15, 23, 42);
+      cols.forEach((c) => {
+        if (c.color) doc.setTextColor(...hexRgb(c.color(row))); else doc.setTextColor(15, 23, 42);
+        if (c.bold?.(row)) doc.setFont("helvetica", "bold"); else doc.setFont("helvetica", "normal");
+        doc.text(fit(c.value(row), c.maxWidth), M + c.x, y, { align: c.align || "left" });
+      });
+      y += 5.4;
+    });
+    doc.setDrawColor(226, 232, 240); doc.line(M, y - 3.2, W - M, y - 3.2);
+    y += 2;
+  };
+
+  /* ---------- Portada ---------- */
   drawLogo(doc, M, 12);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text("REPORTE DE ESTADO DE PROYECTO", W - M, 16, { align: "right" });
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
-  doc.text(projectLabel, W - M, 23, { align: "right" });
-  doc.setDrawColor(203, 213, 225); doc.line(M, 32, W - M, 32);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
+  doc.text(fit(projectLabel, 120), W - M, 22.5, { align: "right" });
+  doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Corte de datos: ${stamp}${generatedBy ? ` · Emitido por ${generatedBy}` : ""}`, W - M, 27.5, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 33, W - M, 33);
   y = 42;
 
-  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
-  const table = (rows, cols, emptyText) => {
-    if (!rows.length) { doc.setFont("helvetica", "normal"); doc.setFontSize(8.2); doc.setTextColor(148, 163, 184); doc.text(emptyText, M, y); y += 9; return; }
-    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
-    cols.forEach((c) => doc.text(c.label, M + c.x, y, { align: c.align || "left" }));
-    y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
-    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(8.2);
-    rows.forEach((row) => { brk(7); cols.forEach((c) => doc.text(String(c.value(row)), M + c.x, y, { align: c.align || "left" })); y += 5.5; });
-    y += 4;
-  };
+  /* ---------- Resumen ejecutivo: tarjetas de KPI ---------- */
+  heading("RESUMEN EJECUTIVO");
+  const cardW = (CW - 2 * 3) / 3, cardH = 17;
+  kpis.forEach((kpi, index) => {
+    const col = index % 3, row = Math.floor(index / 3);
+    const cx = M + col * (cardW + 3), cy = y + row * (cardH + 3);
+    doc.setFillColor(250, 251, 252); doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(cx, cy, cardW, cardH, 1.5, 1.5, "FD");
+    doc.setFillColor(...hexRgb(kpi.accent || "#F18700"));
+    doc.rect(cx, cy + 1.5, 1.2, cardH - 3, "F");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
+    doc.text(fit(kpi.label, cardW - 8), cx + 4, cy + 5);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+    doc.text(String(kpi.value), cx + 4, cy + 11.8);
+    if (kpi.hint) {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.2); doc.setTextColor(148, 163, 184);
+      doc.text(fit(kpi.hint, cardW - 8), cx + 4, cy + 15);
+    }
+  });
+  y += Math.ceil(kpis.length / 3) * (cardH + 3) + 3;
 
-  heading("INDICADORES CLAVE", y); y += 8;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
-  kpis.forEach((kpi) => { brk(7); doc.setFont("helvetica", "bold"); doc.text(kpi.label + ":", M, y); doc.setFont("helvetica", "normal"); doc.text(String(kpi.value), M + 65, y); y += 5.5; });
-  y += 4;
+  /* ---------- Avance general ---------- */
+  const pct = Math.max(0, Math.min(100, Math.round(progress?.pct || 0)));
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.6); doc.setTextColor(71, 85, 105);
+  doc.text("AVANCE GENERAL", M, y);
+  doc.setFontSize(7.6); doc.setTextColor(15, 23, 42);
+  doc.text(`${pct}%  ·  ${progress?.done || 0} de ${progress?.total || 0} tareas completadas`, W - M, y, { align: "right" });
+  y += 2.5;
+  doc.setFillColor(226, 232, 240); doc.roundedRect(M, y, CW, 5, 2.5, 2.5, "F");
+  const fillW = (pct / 100) * CW;
+  if (fillW > 0.4) { doc.setFillColor(16, 185, 129); doc.roundedRect(M, y, fillW, 5, Math.min(2.5, fillW / 2), 2.5, "F"); }
+  y += 11;
 
-  brk(20); heading("TAREAS POR ESTADO", y); y += 8;
-  table(byStatus, [{ label: "Estado", x: 0, value: (r) => r.name }, { label: "Cantidad", x: 150, align: "right", value: (r) => r.value }], "Sin tareas cargadas.");
+  /* ---------- Gráfico 1: distribución por estado ---------- */
+  brk(60);
+  heading("DISTRIBUCIÓN DE TAREAS POR ESTADO");
+  const totalStatus = byStatus.reduce((sum, s) => sum + s.value, 0);
+  if (!totalStatus) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+    doc.text("Sin tareas cargadas en el alcance del reporte.", M, y); y += 8;
+  } else {
+    const chartH = 40, axisW = 9;
+    const plotX = M + axisW, plotW = CW - axisW, plotBottom = y + chartH;
+    const axisMax = niceCeil(Math.max(...byStatus.map((s) => s.value)));
+    doc.setFontSize(6.4); doc.setFont("helvetica", "normal");
+    for (let i = 0; i <= 4; i++) {
+      const gy = plotBottom - (chartH * i) / 4;
+      doc.setDrawColor(i === 0 ? 203 : 233, i === 0 ? 213 : 238, i === 0 ? 225 : 244);
+      doc.line(plotX, gy, plotX + plotW, gy);
+      doc.setTextColor(148, 163, 184);
+      doc.text(String(Math.round((axisMax * i) / 4)), plotX - 1.5, gy + 1, { align: "right" });
+    }
+    const slot = plotW / byStatus.length, barW = Math.min(22, slot * 0.5);
+    byStatus.forEach((s, index) => {
+      const bx = plotX + slot * index + (slot - barW) / 2;
+      const bh = (s.value / axisMax) * chartH;
+      if (bh > 0.3) { doc.setFillColor(...hexRgb(s.color)); doc.roundedRect(bx, plotBottom - bh, barW, bh, 0.6, 0.6, "F"); }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.setTextColor(15, 23, 42);
+      doc.text(String(s.value), bx + barW / 2, plotBottom - bh - 1.8, { align: "center" });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
+      doc.text(fit(s.name, slot - 1), bx + barW / 2, plotBottom + 4, { align: "center" });
+      doc.setTextColor(148, 163, 184); doc.setFontSize(6);
+      doc.text(`${Math.round((s.value / totalStatus) * 100)}%`, bx + barW / 2, plotBottom + 7.4, { align: "center" });
+    });
+    y = plotBottom + 12;
+    caption(`Cantidad de tareas en cada estado del tablero. El porcentaje es sobre el total de ${totalStatus} tarea(s) del alcance. Los colores replican los del tablero en pantalla.`);
+  }
 
-  brk(20); heading("PRÓXIMOS PASOS", y); y += 8;
-  table(upcoming, [{ label: "Tarea", x: 0, value: (r) => r.title }, { label: "Responsable", x: 100, value: (r) => r.assignee }, { label: "Vence", x: 150, align: "right", value: (r) => r.due }], "No hay tareas pendientes cargadas.");
+  /* ---------- Gráfico 2: carga y cumplimiento por responsable ---------- */
+  brk(30 + workload.length * 6);
+  heading("CARGA Y CUMPLIMIENTO POR RESPONSABLE");
+  if (!workload.length) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+    doc.text("No hay tareas pendientes asignadas.", M, y); y += 8;
+  } else {
+    const labelW = 42, valueW = 26, barMax = CW - labelW - valueW;
+    const maxTotal = niceCeil(Math.max(...workload.map((r) => r.total)));
+    doc.setFontSize(7.2);
+    workload.forEach((row) => {
+      brk(8);
+      doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+      doc.text(fit(row.name, labelW - 2), M, y + 2.6);
+      const onTime = Math.max(0, row.total - row.overdue);
+      const onTimeW = (onTime / maxTotal) * barMax, overdueW = (row.overdue / maxTotal) * barMax;
+      if (onTimeW > 0.3) { doc.setFillColor(14, 165, 233); doc.rect(M + labelW, y, onTimeW, 3.8, "F"); }
+      if (overdueW > 0.3) { doc.setFillColor(225, 29, 72); doc.rect(M + labelW + onTimeW, y, overdueW, 3.8, "F"); }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.2); doc.setTextColor(15, 23, 42);
+      doc.text(String(row.total), M + labelW + barMax + 6, y + 2.8, { align: "right" });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
+      doc.setTextColor(row.overdue > 0 ? 225 : 148, row.overdue > 0 ? 29 : 163, row.overdue > 0 ? 72 : 184);
+      doc.text(row.overdue > 0 ? `${row.overdue} vencida(s)` : "al día", M + labelW + barMax + 8, y + 2.8);
+      doc.setFontSize(7.2);
+      y += 6;
+    });
+    y += 1;
+    doc.setFillColor(14, 165, 233); doc.rect(M, y, 3, 3, "F");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
+    doc.text("Pendientes en plazo", M + 4.5, y + 2.5);
+    doc.setFillColor(225, 29, 72); doc.rect(M + 42, y, 3, 3, "F");
+    doc.text("Pendientes vencidas", M + 46.5, y + 2.5);
+    y += 8;
+    caption("Tareas pendientes (excluye las marcadas como Hecho) de las que cada persona es responsable. El largo total de la barra es la carga; el tramo rojo, la parte ya vencida.");
+  }
 
-  brk(20); heading("TAREAS VENCIDAS", y); y += 8;
-  table(overdueList, [{ label: "Tarea", x: 0, value: (r) => r.title }, { label: "Responsable", x: 100, value: (r) => r.assignee }, { label: "Venció", x: 150, align: "right", value: (r) => r.due }], "No hay tareas vencidas.");
+  /* ---------- Gráfico 3: cronograma de vencimientos ---------- */
+  if (timeline.length) {
+    brk(28 + timeline.length * 5.4);
+    heading("CRONOGRAMA DE VENCIMIENTOS");
+    const labelW = 74, trackX = M + labelW, trackW = CW - labelW - 28;
+    const times = timeline.map((t) => t.dueTime);
+    const minT = Math.min(...times, Date.now()), maxT = Math.max(...times, Date.now());
+    const span = Math.max(1, maxT - minT);
+    const posOf = (time) => trackX + ((time - minT) / span) * trackW;
+    const todayX = posOf(Date.now());
+    doc.setDrawColor(226, 232, 240); doc.line(trackX, y - 1, trackX + trackW, y - 1);
+    doc.setDrawColor(241, 135, 0); doc.setLineDashPattern([1, 1], 0);
+    doc.line(todayX, y - 1, todayX, y + timeline.length * 5.4 + 1);
+    doc.setLineDashPattern([], 0);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(241, 135, 0);
+    doc.text("HOY", todayX, y - 2.5, { align: "center" });
+    timeline.forEach((item) => {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
+      doc.text(fit(item.title, labelW - 3), M, y + 2.6);
+      const px = posOf(item.dueTime);
+      const barStart = item.overdue ? px : Math.min(px, todayX);
+      const barEnd = item.overdue ? todayX : px;
+      const barW = Math.max(1.2, Math.abs(barEnd - barStart));
+      doc.setFillColor(...hexRgb(item.color));
+      doc.roundedRect(Math.min(barStart, barEnd), y, barW, 3.2, 0.6, 0.6, "F");
+      doc.setFontSize(6.2); doc.setTextColor(100, 116, 139);
+      doc.text(item.dueLabel, trackX + trackW + 2, y + 2.5);
+      y += 5.4;
+    });
+    y += 3;
+    caption("Distancia entre hoy y la fecha límite de cada tarea pendiente, ordenadas por vencimiento. Las barras rojas se extienden hacia atrás: son tareas cuya fecha ya pasó.");
+  }
 
-  brk(20); heading("CARGA DE TRABAJO POR PERSONA", y); y += 8;
-  table(workload, [{ label: "Responsable", x: 0, value: (r) => r.name }, { label: "Tareas", x: 130, align: "right", value: (r) => r.total }, { label: "Vencidas", x: 170, align: "right", value: (r) => r.overdue }], "Sin tareas asignadas.");
+  /* ---------- Tendencia de cierre ---------- */
+  if (completionTrend.length >= 2) {
+    brk(52);
+    heading("TAREAS COMPLETADAS POR MES");
+    const chartH = 30, axisW = 9;
+    const plotX = M + axisW, plotW = CW - axisW, plotBottom = y + chartH;
+    const axisMax = niceCeil(Math.max(...completionTrend.map((p) => p.value)));
+    doc.setFontSize(6.4);
+    for (let i = 0; i <= 2; i++) {
+      const gy = plotBottom - (chartH * i) / 2;
+      doc.setDrawColor(i === 0 ? 203 : 233, i === 0 ? 213 : 238, i === 0 ? 225 : 244);
+      doc.line(plotX, gy, plotX + plotW, gy);
+      doc.setTextColor(148, 163, 184);
+      doc.text(String(Math.round((axisMax * i) / 2)), plotX - 1.5, gy + 1, { align: "right" });
+    }
+    const slot = plotW / completionTrend.length, barW = Math.min(14, slot * 0.5);
+    completionTrend.forEach((point, index) => {
+      const bx = plotX + slot * index + (slot - barW) / 2;
+      const bh = (point.value / axisMax) * chartH;
+      if (bh > 0.3) { doc.setFillColor(16, 185, 129); doc.roundedRect(bx, plotBottom - bh, barW, bh, 0.6, 0.6, "F"); }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
+      doc.text(String(point.value), bx + barW / 2, plotBottom - bh - 1.6, { align: "center" });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.2); doc.setTextColor(100, 116, 139);
+      doc.text(point.name, bx + barW / 2, plotBottom + 3.8, { align: "center" });
+    });
+    y = plotBottom + 9;
+    caption(trendCoverage || "Tareas marcadas como Hecho en cada mes, según la fecha registrada en su historial de cambios de estado.");
+  }
 
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+  /* ---------- Próximos pasos ---------- */
+  brk(30);
+  heading("PRÓXIMOS PASOS");
+  table(upcoming, [
+    { label: "Tarea", x: 0, maxWidth: 84, value: (r) => r.title },
+    { label: "Responsable", x: 88, maxWidth: 30, value: (r) => r.assignee },
+    { label: "Prioridad", x: 121, maxWidth: 20, value: (r) => r.priority },
+    { label: "Estado", x: 143, maxWidth: 22, value: (r) => r.status },
+    { label: "Vence", x: 180, align: "right", value: (r) => r.due, color: (r) => (r.soon ? "#b45309" : "#334155"), bold: (r) => r.soon },
+  ], "No hay tareas pendientes cargadas.");
+  if (upcomingTotal > upcoming.length) caption(`Se listan las ${upcoming.length} próximas por fecha de vencimiento, de ${upcomingTotal} tarea(s) pendientes en total. En ámbar, las que vencen dentro de los próximos 4 días.`);
+  else if (upcoming.length) caption("Ordenadas por fecha de vencimiento y prioridad. En ámbar, las que vencen dentro de los próximos 4 días.");
 
-  doc.save(`reporte_proyecto_${projectLabel.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.pdf`);
+  /* ---------- Tareas vencidas ---------- */
+  brk(30);
+  heading("TAREAS VENCIDAS");
+  table(overdueList, [
+    { label: "Tarea", x: 0, maxWidth: 84, value: (r) => r.title },
+    { label: "Responsable", x: 88, maxWidth: 30, value: (r) => r.assignee },
+    { label: "Prioridad", x: 121, maxWidth: 20, value: (r) => r.priority },
+    { label: "Estado", x: 143, maxWidth: 22, value: (r) => r.status },
+    { label: "Atraso", x: 180, align: "right", value: (r) => r.due, color: () => "#e11d48", bold: () => true },
+  ], "No hay tareas vencidas. Todas las tareas pendientes están dentro de plazo.");
+  if (overdueTotal > overdueList.length) caption(`Se listan las ${overdueList.length} de mayor atraso, de ${overdueTotal} tarea(s) vencidas en total.`);
+
+  /* ---------- Recomendaciones ---------- */
+  if (recommendations.length) {
+    brk(24);
+    heading("PUNTOS DE ATENCIÓN");
+    recommendations.forEach((item) => {
+      brk(12);
+      doc.setFillColor(...hexRgb(item.color));
+      doc.circle(M + 1.2, y - 0.9, 1.2, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.8); doc.setTextColor(15, 23, 42);
+      doc.text(item.title, M + 4.5, y);
+      y += 3.8;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(71, 85, 105);
+      doc.splitTextToSize(item.text, CW - 4.5).forEach((line) => {
+        brk(6);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(71, 85, 105);
+        doc.text(line, M + 4.5, y); y += 3.4;
+      });
+      y += 2.5;
+    });
+  }
+
+  /* ---------- Notas metodológicas ---------- */
+  if (notes.length) {
+    brk(16 + notes.length * 4);
+    heading("NOTAS METODOLÓGICAS");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
+    notes.forEach((note) => {
+      doc.splitTextToSize(`•  ${note}`, CW).forEach((line, index) => {
+        brk(5);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
+        doc.text(line, M + (index ? 2.6 : 0), y); y += 3.3;
+      });
+    });
+  }
+
+  /* ---------- Pie de página en todas las hojas ---------- */
+  const pages = doc.getNumberOfPages();
+  for (let page = 1; page <= pages; page++) {
+    doc.setPage(page);
+    doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(148, 163, 184);
+    doc.text(fit(`${projectLabel}  ·  Corte de datos ${stamp}`, CW - 25), M, 289);
+    doc.text(`Página ${page} de ${pages}`, W - M, 289, { align: "right" });
+  }
+
+  doc.save(`reporte_estado_${projectLabel.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.pdf`);
 }
