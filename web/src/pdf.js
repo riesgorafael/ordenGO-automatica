@@ -873,3 +873,54 @@ export function financeReportPDF(period, kpis, insights) {
 
   doc.save(`finanzas_${period}.pdf`);
 }
+
+// Reporte de estado de proyecto para compartir con gerencia: foto del avance actual (indicadores,
+// tareas por estado, carga por persona) más los próximos pasos y lo vencido, sin armar nada a mano.
+export function projectStatusReportPDF(projectLabel, kpis, byStatus, upcoming, overdueList, workload) {
+  const doc = new jsPDF("p", "mm", "a4");
+  const W = 210, M = 15;
+  let y = 20;
+  let drawHead = () => {};
+  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+
+  drawLogo(doc, M, 12);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+  doc.text("REPORTE DE ESTADO DE PROYECTO", W - M, 16, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+  doc.text(projectLabel, W - M, 23, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 32, W - M, 32);
+  y = 42;
+
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  const table = (rows, cols, emptyText) => {
+    if (!rows.length) { doc.setFont("helvetica", "normal"); doc.setFontSize(8.2); doc.setTextColor(148, 163, 184); doc.text(emptyText, M, y); y += 9; return; }
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+    cols.forEach((c) => doc.text(c.label, M + c.x, y, { align: c.align || "left" }));
+    y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
+    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(8.2);
+    rows.forEach((row) => { brk(7); cols.forEach((c) => doc.text(String(c.value(row)), M + c.x, y, { align: c.align || "left" })); y += 5.5; });
+    y += 4;
+  };
+
+  heading("INDICADORES CLAVE", y); y += 8;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+  kpis.forEach((kpi) => { brk(7); doc.setFont("helvetica", "bold"); doc.text(kpi.label + ":", M, y); doc.setFont("helvetica", "normal"); doc.text(String(kpi.value), M + 65, y); y += 5.5; });
+  y += 4;
+
+  brk(20); heading("TAREAS POR ESTADO", y); y += 8;
+  table(byStatus, [{ label: "Estado", x: 0, value: (r) => r.name }, { label: "Cantidad", x: 150, align: "right", value: (r) => r.value }], "Sin tareas cargadas.");
+
+  brk(20); heading("PRÓXIMOS PASOS", y); y += 8;
+  table(upcoming, [{ label: "Tarea", x: 0, value: (r) => r.title }, { label: "Responsable", x: 100, value: (r) => r.assignee }, { label: "Vence", x: 150, align: "right", value: (r) => r.due }], "No hay tareas pendientes cargadas.");
+
+  brk(20); heading("TAREAS VENCIDAS", y); y += 8;
+  table(overdueList, [{ label: "Tarea", x: 0, value: (r) => r.title }, { label: "Responsable", x: 100, value: (r) => r.assignee }, { label: "Venció", x: 150, align: "right", value: (r) => r.due }], "No hay tareas vencidas.");
+
+  brk(20); heading("CARGA DE TRABAJO POR PERSONA", y); y += 8;
+  table(workload, [{ label: "Responsable", x: 0, value: (r) => r.name }, { label: "Tareas", x: 130, align: "right", value: (r) => r.total }, { label: "Vencidas", x: 170, align: "right", value: (r) => r.overdue }], "Sin tareas asignadas.");
+
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+
+  doc.save(`reporte_proyecto_${projectLabel.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.pdf`);
+}

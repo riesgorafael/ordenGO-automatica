@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
-import { budgetReportPDF, clientOrderReportPDF, dashboardReportPDF, financeReportPDF, internalOrderReportPDF, materialListReportPDF, monthlyReportPDF, purchaseOrderReportPDF, valuedClientReportPDF } from "./pdf";
+import { budgetReportPDF, clientOrderReportPDF, dashboardReportPDF, financeReportPDF, internalOrderReportPDF, materialListReportPDF, monthlyReportPDF, projectStatusReportPDF, purchaseOrderReportPDF, valuedClientReportPDF } from "./pdf";
 import { parseReceiptImage } from "./receiptOcr";
 import { warpPerspective, autoDetectCorners } from "./imagePerspective";
 import GanttChart from "./GanttChart";
@@ -3876,28 +3876,63 @@ function Reports({ tasks, users, projects, proj, whiteboardNotes = [], onOpenNot
   const done = tasks.filter((t) => t.status === "Hecho").length;
   const wip = tasks.filter((t) => t.status === "En progreso" || t.status === "En revisión").length;
   const overdue = tasks.filter(isOverdue).length;
+  const dueSoonCount = tasks.filter(isDueSoon).length;
   const byStatus = T_STATUS.map((s) => ({ name: s, value: tasks.filter((t) => t.status === s).length, fill: T_STYLE[s].bar }));
   const activeUsers = users.filter((u) => u.active && u.role !== "monitor_oficina");
   // Si dos personas comparten primer nombre, se distinguen con la inicial del apellido para no confundirlas en el gráfico.
   const firstNameCounts = activeUsers.reduce((acc, u) => { const first = u.name.split(" ")[0]; acc[first] = (acc[first] || 0) + 1; return acc; }, {});
   const byAssignee = activeUsers.map((u) => { const parts = u.name.split(" "); const first = parts[0]; const label = firstNameCounts[first] > 1 && parts[1] ? `${first} ${parts[1][0]}.` : first; return { name: label, value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }; });
   const projectLabel = (id) => { const p = projects.find((item) => item.id === id); return p ? `${p.key} · ${p.name}` : "Sin proyecto"; };
-  const staffWorkload = activeUsers
-    .map((u) => ({
-      user: u,
-      items: [
-        ...tasks.filter((t) => t.assignee === u.id).map((t) => ({ ...t, role: "Responsable" })),
-        ...tasks.filter((t) => (t.participants || []).includes(u.id)).map((t) => ({ ...t, role: "Participante" })),
-      ],
-    }))
-    .filter((row) => row.items.length > 0 && (!staffQuery || row.user.name.toLowerCase().includes(staffQuery.toLowerCase())));
+  const nameOf = (id) => users.find((u) => u.id === id)?.name || "Sin asignar";
+  // Sin el filtro de búsqueda de personal: el reporte en PDF siempre refleja a todo el equipo,
+  // sin depender de si quedó un texto cargado en el buscador de "Carga de trabajo por persona".
+  const staffWorkloadAll = activeUsers.map((u) => ({
+    user: u,
+    items: [
+      ...tasks.filter((t) => t.assignee === u.id).map((t) => ({ ...t, role: "Responsable" })),
+      ...tasks.filter((t) => (t.participants || []).includes(u.id)).map((t) => ({ ...t, role: "Participante" })),
+    ],
+  })).filter((row) => row.items.length > 0);
+  const staffWorkload = staffWorkloadAll.filter((row) => !staffQuery || row.user.name.toLowerCase().includes(staffQuery.toLowerCase()));
   const projList = proj === "all" ? projects : projects.filter((p) => p.id === proj);
   const activeProjects = projList.filter((p) => p.active !== false).length;
   const finishedProjects = projList.filter((p) => p.active === false).length;
+  const exportStatusReport = () => {
+    const project = proj === "all" ? null : projects.find((p) => p.id === proj);
+    const projectLabelText = project ? `${project.key} · ${project.name}` : "Todos los proyectos activos";
+    const pctComplete = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+    const kpis = [
+      { label: "Tareas totales", value: tasks.length },
+      { label: "Completadas", value: `${done} (${pctComplete}%)` },
+      { label: "En curso", value: wip },
+      { label: "Vencidas", value: overdue },
+      { label: "Por vencer (4 días)", value: dueSoonCount },
+      { label: "Personas con tareas asignadas", value: staffWorkloadAll.filter((row) => row.items.some((i) => i.role === "Responsable")).length },
+    ];
+    const shorten = (text, max = 42) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text || "—");
+    const upcoming = tasks
+      .filter((t) => t.status !== "Hecho" && !isOverdue(t))
+      .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority))
+      .slice(0, 12)
+      .map((t) => ({ title: shorten(t.title), assignee: nameOf(t.assignee).split(" ")[0], due: dueLabel(t.due) }));
+    const overdueRows = tasks
+      .filter(isOverdue)
+      .sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"))
+      .slice(0, 12)
+      .map((t) => ({ title: shorten(t.title), assignee: nameOf(t.assignee).split(" ")[0], due: dueLabel(t.due) }));
+    const workloadRows = staffWorkloadAll
+      .map(({ user, items }) => { const owned = items.filter((i) => i.role === "Responsable"); return { name: user.name, total: owned.length, overdue: owned.filter(isOverdue).length }; })
+      .filter((row) => row.total > 0)
+      .sort((a, b) => b.total - a.total);
+    projectStatusReportPDF(projectLabelText, kpis, byStatus.map((s) => ({ name: s.name, value: s.value })), upcoming, overdueRows, workloadRows);
+  };
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Proyectos</h3>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Proyectos</h3>
+          <button onClick={exportStatusReport} title="Genera un PDF con el estado actual y los próximos pasos, listo para compartir con gerencia" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-3.5 w-3.5" /> Reporte de estado (PDF)</button>
+        </div>
         <div className="grid grid-cols-3 gap-3"><Metric label="Total" value={projList.length} icon={Folder} tint="text-brand-600" /><Metric label="Activos" value={activeProjects} icon={Clock} tint="text-violet-600" /><Metric label="Finalizados" value={finishedProjects} icon={CheckCircle2} tint="text-emerald-600" /></div>
       </div>
       <div>
