@@ -2615,7 +2615,15 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
       {dueSoon.length > 0 && (
         <div className="motion-banner rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><b>{dueSoon.length === 1 ? "Tenés una tarea por vencer" : `Tenés ${dueSoon.length} tareas por vencer`}</b></span>
-          <div className="mt-2 flex flex-wrap gap-1.5">{dueSoon.slice(0, 6).map((t) => <button key={t.id} onClick={() => onOpenTask(t)} className="rounded-md bg-white/70 px-2 py-1 text-xs font-medium hover:bg-white">{t.title}</button>)}{dueSoon.length > 6 && <span className="self-center text-xs text-amber-700">+{dueSoon.length - 6} más</span>}</div>
+          <div className="mt-2 space-y-1">
+            {dueSoon.slice(0, 6).map((t) => (
+              <button key={t.id} onClick={() => onOpenTask(t)} className="flex w-full items-center justify-between gap-2 rounded-md bg-white/70 px-2.5 py-1.5 text-left text-xs font-medium hover:bg-white">
+                <span className="truncate">{t.title}</span>
+                <span className="shrink-0 rounded bg-amber-200/70 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">{dueLabel(t.due)}</span>
+              </button>
+            ))}
+            {dueSoon.length > 6 && <p className="text-xs text-amber-700">+{dueSoon.length - 6} más</p>}
+          </div>
           <p className="mt-1.5 text-[11px] text-amber-700">Vencen en los próximos 4 días. El aviso se mantiene hasta que las marques como Hecho.</p>
         </div>
       )}
@@ -2803,7 +2811,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
         {overdueResponse.length > 0 && (<div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><Clock className="mt-0.5 h-4 w-4 shrink-0" />{overdueResponse.length} orden(es) sin llegada registrada hace más de 2 horas desde el aviso.</div>)}
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative w-full min-w-0 sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo, técnico, síntoma…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
+        <div className="relative w-full sm:min-w-[220px] sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={oQ} onChange={(e) => setOQ(e.target.value)} placeholder="Buscar folio, cliente, equipo, técnico, síntoma…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></div>
         <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:w-auto sm:flex-none"><option>Todas</option>{[...O_STATUS.filter((s) => ger || s !== "Facturada"), "Suspendida"].map((s) => <option key={s}>{s}</option>)}</select>
         <div className="flex w-full items-center gap-1 sm:w-auto"><input type="date" value={oDateFrom} onChange={(e) => setODateFrom(e.target.value)} title="Desde" aria-label="Fecha desde" className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:w-auto" /><span className="text-xs text-slate-400">a</span><input type="date" value={oDateTo} onChange={(e) => setODateTo(e.target.value)} title="Hasta" aria-label="Fecha hasta" className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm sm:w-auto" />{(oDateFrom || oDateTo) && <button onClick={() => { setODateFrom(""); setODateTo(""); }} title="Ver todas las fechas" aria-label="Quitar filtro de fecha" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-4 w-4" /></button>}</div>
         <button onClick={() => setOUrgent((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${oUrgent ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-200 bg-white text-slate-600"}`}><AlertTriangle className="h-4 w-4" /> Urgentes</button>
