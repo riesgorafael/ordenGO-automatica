@@ -1594,19 +1594,27 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
 const FINANCE_KINDS = ["expense", "income", "invoice"];
 const FINANCE_CURRENCIES = ["ARS", "USD", "EUR"];
 let bnaRateCache = null;
-app.get("/api/exchange-rates/bna", auth, requireRole("admin", "gerente"), async (_req, res) => {
-  if (bnaRateCache && Date.now() - bnaRateCache.cachedAt < 15 * 60 * 1000) return res.json(bnaRateCache.data);
+const BNA_CACHE_MS = 60 * 60 * 1000; // 1 hora
+app.get("/api/exchange-rates/bna", auth, requireRole("admin", "gerente"), async (req, res) => {
+  // El botón de refrescar manda force=1: sin esto el pedido caía en la caché del servidor y la
+  // pantalla no cambiaba nada, dando la impresión de que la cotización no se actualizaba nunca.
+  const force = req.query.force === "1";
+  if (!force && bnaRateCache && Date.now() - bnaRateCache.cachedAt < BNA_CACHE_MS)
+    return res.json({ ...bnaRateCache.data, fetchedAt: new Date(bnaRateCache.cachedAt).toISOString() });
   try {
     const response = await fetch("https://monedapi.ar/api/v2/usd/bna", { headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const quote = await response.json();
     const sell = Number(quote.sell);
     if (!(sell > 0)) throw new Error("Cotización inválida");
+    // updatedAt es cuándo la fuente publicó la cotización; fetchedAt, cuándo la consultamos.
+    // Son cosas distintas: si el BNA no publica hace días, updatedAt queda viejo aunque
+    // nosotros estemos consultando cada hora sin problemas.
     const data = { currency: "USD", arsPerUsd: sell, buy: Number(quote.buy) || null, sell, updatedAt: quote.updatedAt || new Date().toISOString(), source: "Banco de la Nación Argentina", sourceUrl: "https://www.bna.com.ar/Personas" };
     bnaRateCache = { cachedAt: Date.now(), data };
-    res.json(data);
+    res.json({ ...data, fetchedAt: new Date().toISOString() });
   } catch (error) {
-    if (bnaRateCache?.data) return res.json({ ...bnaRateCache.data, stale: true });
+    if (bnaRateCache?.data) return res.json({ ...bnaRateCache.data, fetchedAt: new Date(bnaRateCache.cachedAt).toISOString(), stale: true });
     res.status(503).json({ error: "No fue posible obtener la cotización vendedor del dólar BNA. Intenta nuevamente." });
   }
 });

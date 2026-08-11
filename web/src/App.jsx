@@ -1747,16 +1747,16 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   const [bnaError, setBnaError] = useState("");
   const [displayCurrency, setDisplayCurrency] = useState("USD"); // solo afecta cómo se muestra, no cómo se guarda
   useEffect(() => { if (createSignal > 0) { setNewKind("expense"); setEditor({ mode: "new" }); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
-  const loadBnaQuote = async () => {
+  const loadBnaQuote = async (force = false) => {
     setBnaLoading(true);
     setBnaError("");
-    try { setBnaQuote(await api.bnaExchangeRate()); }
+    try { setBnaQuote(await api.bnaExchangeRate(force)); }
     catch (error) { setBnaError(error.message || "No se pudo consultar la cotización del BNA."); }
     finally { setBnaLoading(false); }
   };
   useEffect(() => {
     loadBnaQuote();
-    const interval = setInterval(loadBnaQuote, 15 * 60 * 1000);
+    const interval = setInterval(() => loadBnaQuote(), 60 * 60 * 1000);
     const onVisible = () => { if (document.visibilityState === "visible") loadBnaQuote(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
@@ -1839,6 +1839,12 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   const EmptyChart = ({ children = "Sin datos para este período." }) => <div className="grid h-full place-items-center text-center text-xs leading-5 text-slate-400">{projectFilter === "all" && children === "No hay presupuestos aprobados vinculados." ? "Seleccioná un proyecto para analizar su ejecución." : children}</div>;
   const chartTooltip = (value) => fmt(value);
   const bnaUpdatedAt = bnaQuote?.updatedAt ? new Date(bnaQuote.updatedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
+  const bnaFetchedAt = bnaQuote?.fetchedAt ? new Date(bnaQuote.fetchedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
+  // Días transcurridos desde que la fuente publicó la cotización. Si el BNA no publica hace
+  // varios días, el problema es de la fuente y no de nuestra consulta: hay que decirlo distinto,
+  // porque antes ambas situaciones se veían igual y parecía que la app no actualizaba.
+  const bnaQuoteAgeDays = bnaQuote?.updatedAt ? Math.floor((Date.now() - new Date(bnaQuote.updatedAt).getTime()) / 86400000) : null;
+  const bnaSourceStale = bnaQuoteAgeDays != null && bnaQuoteAgeDays >= 2;
   const exportPdf = () => {
     const kpis = [
       { label: "Ingresos cobrados", value: fmt(income) },
@@ -1863,10 +1869,18 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   return <div className="space-y-4">
     <div className="flex flex-col gap-3 lg:flex-row lg:items-end"><div><h2 className="text-lg font-semibold text-slate-900">Finanzas</h2><p className="text-xs text-slate-500">Desempeño, eficiencia y control financiero · valores comparables en {showArs ? "ARS" : "USD"}</p></div><button onClick={exportPdf} className="inline-flex h-[38px] items-center gap-1.5 self-start rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 lg:self-end"><FileText className="h-4 w-4" /> PDF</button><div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:ml-auto lg:w-auto"><L label="Proyecto"><select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="u-input w-full lg:min-w-52"><option value="all">Toda la operación</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Período de análisis"><input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="u-input w-full" /></L></div></div>
 
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sky-100 bg-sky-50/60 px-4 py-2.5 text-xs" aria-label="Cotización vendedor del dólar Banco Nación Argentina — referencia externa">
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border px-4 py-2.5 text-xs ${bnaSourceStale ? "border-amber-200 bg-amber-50/70" : "border-sky-100 bg-sky-50/60"}`} aria-label="Cotización vendedor del dólar Banco Nación Argentina — referencia externa">
       <span className="font-medium text-slate-500">Referencia · dólar BNA <span className="text-slate-400">(billete, vendedor)</span></span>
       {bnaQuote ? <b className="text-sm text-sky-700">USD 1 = {ars(bnaQuote.arsPerUsd)}</b> : bnaLoading ? <span className="flex items-center gap-1.5 text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Consultando…</span> : <span className="font-medium text-rose-600">No disponible</span>}
-      <span className="text-slate-400">{bnaError || (bnaQuote?.stale ? "Última cotización disponible" : bnaUpdatedAt ? `Actualizada ${bnaUpdatedAt} · se autoactualiza cada 15 min` : "Fuente: Banco Nación Argentina")}</span>
+      <span className="text-slate-400">
+        {bnaError ? bnaError : !bnaQuote ? "Fuente: Banco Nación Argentina" : <>
+          Cotización del {bnaUpdatedAt}
+          {bnaFetchedAt && <> · consultada {bnaFetchedAt}</>}
+          {!bnaQuote.stale && " · se reintenta cada 1 h"}
+        </>}
+      </span>
+      {bnaQuote?.stale && <span className="rounded-md bg-rose-100 px-2 py-0.5 font-medium text-rose-700">Falló la consulta · se muestra la última disponible</span>}
+      {!bnaQuote?.stale && bnaSourceStale && <span className="rounded-md bg-amber-100 px-2 py-0.5 font-medium text-amber-800">La fuente no publica hace {bnaQuoteAgeDays} día(s)</span>}
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <div className="flex rounded-lg bg-white p-0.5 ring-1 ring-sky-200" role="group" aria-label="Moneda de visualización">
           {["USD", "ARS"].map((currency) => (
@@ -1878,7 +1892,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
             </button>
           ))}
         </div>
-        <button type="button" onClick={loadBnaQuote} disabled={bnaLoading} title="Actualizar cotización del BNA" aria-label="Actualizar cotización del BNA" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-sky-600 hover:bg-sky-100 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${bnaLoading ? "animate-spin" : ""}`} /></button>
+        <button type="button" onClick={() => loadBnaQuote(true)} disabled={bnaLoading} title="Consultar la cotización ahora, sin usar la caché" aria-label="Actualizar cotización del BNA" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-sky-600 hover:bg-sky-100 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${bnaLoading ? "animate-spin" : ""}`} /></button>
       </div>
     </div>
 
@@ -4152,12 +4166,14 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
                 <div className="mb-2 flex items-center gap-2"><Avatar user={user} size={24} /><b className="text-sm text-slate-800">{user.name}</b><span className="ml-auto text-xs text-slate-400">{items.length} tarea(s)</span></div>
                 <div className="space-y-1.5">
                   {items.map((t) => (
-                    <div key={`${t.id}-${t.role}`} className="flex flex-wrap items-center gap-2 rounded-md bg-slate-50 px-2.5 py-1.5 text-xs">
+                    // La etiqueta de rol va junto al ID: con ml-auto al final, al envolverse en
+                    // pantallas angostas se iba sola a una línea propia pegada a la derecha.
+                    <div key={`${t.id}-${t.role}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-slate-50 px-2.5 py-1.5 text-xs">
                       <span className="font-mono text-slate-400">{t.id}</span>
+                      <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">{t.role}</span>
                       <span className="font-medium text-slate-700">{t.title}</span>
                       <span className="text-slate-400">· {projectLabel(t.project)}</span>
                       <Chip className={T_STYLE[t.status]?.chip}>{t.status}</Chip>
-                      <span className="ml-auto rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">{t.role}</span>
                     </div>
                   ))}
                 </div>
