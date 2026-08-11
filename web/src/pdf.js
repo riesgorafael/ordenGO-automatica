@@ -1095,8 +1095,12 @@ export function projectStatusReportPDF({
       if (metW > 0.3) doc.rect(M + labelW, y + 4, metW, 3.1, "F");
       doc.setFont("helvetica", "normal"); doc.setFontSize(6.2); doc.setTextColor(100, 116, 139);
       doc.text(`${row.planned} planificada(s)`, M + labelW + barMax + 2, y + 2.5);
-      doc.setTextColor(...hexRgb(row.met === row.planned ? LIGHT.verde : row.met === 0 ? LIGHT.rojo : LIGHT.ambar));
-      doc.text(`${row.met} en fecha · ${row.planned ? Math.round((row.met / row.planned) * 100) : 0}%`, M + labelW + barMax + 2, y + 6.5);
+      // El estado del mes se nombra, no solo se colorea.
+      const monthPct = row.planned ? Math.round((row.met / row.planned) * 100) : 0;
+      const monthLevel = row.met === row.planned ? LIGHT.verde : row.met === 0 ? LIGHT.rojo : LIGHT.ambar;
+      const monthLabel = row.met === row.planned ? "En plazo" : row.met === 0 ? "Sin cierres" : "Desviación";
+      doc.setFont("helvetica", "bold"); doc.setTextColor(...hexRgb(monthLevel));
+      doc.text(`${monthLabel} · ${monthPct}%`, M + labelW + barMax + 2, y + 6.5);
       y += 10;
     });
     y += 1;
@@ -1150,19 +1154,15 @@ export function projectStatusReportPDF({
   heading("RIESGOS Y DESVÍOS");
   table(risks, [
     { label: "", x: 0, dot: (r) => LIGHT[r.level] || LIGHT.neutro },
-    { label: "Tarea", x: 5, maxWidth: 74, value: (r) => r.title },
-    { label: "Responsable", x: 82, maxWidth: 26, value: (r) => r.assignee },
-    { label: "Impacto", x: 111, maxWidth: 16, value: (r) => r.impact },
-    { label: "Probabilidad", x: 129, maxWidth: 22, value: (r) => r.probability },
-    { label: "Situación", x: 180, align: "right", maxWidth: 26, value: (r) => r.reason, color: (r) => LIGHT[r.level] || LIGHT.neutro, bold: (r) => r.level === "rojo" },
+    // La severidad va como texto además del color: impreso en blanco y negro, o para alguien con
+    // daltonismo, el punto de color solo no comunica nada.
+    { label: "Severidad", x: 5, maxWidth: 14, value: (r) => r.severityLabel, color: (r) => LIGHT[r.level] || LIGHT.neutro, bold: (r) => r.level === "rojo" },
+    { label: "Tarea", x: 21, maxWidth: 59, value: (r) => r.title },
+    { label: "Responsable", x: 82, maxWidth: 22, value: (r) => r.assignee },
+    { label: "Impacto", x: 106, maxWidth: 13, value: (r) => r.impact },
+    { label: "Probabilidad", x: 121, maxWidth: 21, value: (r) => r.probability },
+    { label: "Situación", x: 180, align: "right", maxWidth: 26, value: (r) => r.reason, color: (r) => LIGHT[r.level] || LIGHT.neutro },
   ], "Sin riesgos detectados: ninguna tarea pendiente está vencida, estancada ni con vencimiento inminente.");
-  if (risks.length) {
-    y += 1;
-    dot(M + 1.3, y, LIGHT.rojo); doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
-    doc.text("Crítico", M + 4, y + 1);
-    dot(M + 24, y, LIGHT.ambar); doc.text("Atención", M + 26.7, y + 1);
-    y += 6;
-  }
   caption(riskNote || "Riesgos derivados automáticamente de los datos del tablero. Impacto = prioridad de la tarea. Probabilidad = cercanía al vencimiento y actividad reciente. No es un registro de riesgos curado manualmente.");
 
   /* ---------- Logros del período ---------- */
@@ -1204,7 +1204,15 @@ export function projectStatusReportPDF({
       doc.text(item.dueLabel, trackX + trackW + 2, y + 2.5);
       y += 5.4;
     });
-    y += 3;
+    y += 2;
+    // Leyenda con el significado de cada color, para no depender solo del tono de la barra.
+    [["Vencida", LIGHT.rojo], ["Por vencer", LIGHT.ambar], ["En plazo", "#0ea5e9"]].forEach(([label, color], index) => {
+      const lx = M + index * 32;
+      doc.setFillColor(...hexRgb(color)); doc.rect(lx, y, 3, 3, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
+      doc.text(label, lx + 4.5, y + 2.5);
+    });
+    y += 7;
     caption("Distancia entre hoy y la fecha límite de cada tarea pendiente, ordenadas por vencimiento. Las barras rojas se extienden hacia atrás: son tareas cuya fecha ya pasó.");
   }
 
@@ -1212,14 +1220,16 @@ export function projectStatusReportPDF({
   brk(30);
   heading("PRÓXIMOS PASOS");
   table(upcoming, [
-    { label: "Tarea", x: 0, maxWidth: 84, value: (r) => r.title },
-    { label: "Responsable", x: 88, maxWidth: 30, value: (r) => r.assignee },
-    { label: "Prioridad", x: 121, maxWidth: 20, value: (r) => r.priority },
-    { label: "Estado", x: 143, maxWidth: 22, value: (r) => r.status },
-    { label: "Vence", x: 180, align: "right", value: (r) => r.due, color: (r) => (r.soon ? "#b45309" : "#334155"), bold: (r) => r.soon },
+    { label: "Tarea", x: 0, maxWidth: 70, value: (r) => r.title },
+    { label: "Responsable", x: 73, maxWidth: 24, value: (r) => r.assignee },
+    { label: "Prioridad", x: 99, maxWidth: 16, value: (r) => r.priority },
+    // Etiqueta explícita del plazo: sin esto la urgencia se leía únicamente por el color ámbar.
+    { label: "Plazo", x: 117, maxWidth: 20, value: (r) => r.plazoLabel, color: (r) => (r.soon ? LIGHT.ambar : LIGHT.verde), bold: (r) => r.soon },
+    { label: "Estado", x: 139, maxWidth: 20, value: (r) => r.status },
+    { label: "Vence", x: 180, align: "right", value: (r) => r.due, bold: (r) => r.soon },
   ], "No hay tareas pendientes cargadas.");
-  if (upcomingTotal > upcoming.length) caption(`Se listan las ${upcoming.length} próximas por fecha de vencimiento, de ${upcomingTotal} tarea(s) pendientes en total. En ámbar, las que vencen dentro de los próximos 4 días.`);
-  else if (upcoming.length) caption("Ordenadas por fecha de vencimiento y prioridad. En ámbar, las que vencen dentro de los próximos 4 días.");
+  if (upcomingTotal > upcoming.length) caption(`Se listan las ${upcoming.length} próximas por fecha de vencimiento, de ${upcomingTotal} tarea(s) pendientes en total. "Por vencer" marca las que caen dentro de los próximos 4 días.`);
+  else if (upcoming.length) caption('Ordenadas por fecha de vencimiento y prioridad. "Por vencer" marca las que caen dentro de los próximos 4 días.');
 
   /* ---------- Tareas vencidas ---------- */
   brk(30);
