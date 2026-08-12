@@ -1633,37 +1633,40 @@ const normalizeFinancialMovement = (input, previous = {}) => {
     movement.vatAmountUsd = Math.round(movement.netAmountUsd * movement.vatRate) / 100;
     movement.grossAmountUsd = Math.round((movement.netAmountUsd + movement.vatAmountUsd) * 100) / 100;
   } else if (movement.kind === "income") {
-    // El importe es el bruto de la orden de pago (lo que cancela la deuda del cliente). Las
-    // deducciones (retenciones de Ganancias, IVA, IIBB, SUSS) no entran a la caja: se descuentan
-    // para obtener lo efectivamente acreditado, pero la deuda se cancela igual por el bruto.
-    movement.deductions = Math.max(0, Number(movement.deductions) || 0);
-    movement.deductionsUsd = movement.currency === "USD" ? movement.deductions : movement.exchangeRate > 0 ? movement.deductions / movement.exchangeRate : 0;
-    movement.deductionsUsd = Math.round(movement.deductionsUsd * 1000000) / 1000000;
-    movement.netAmountUsd = Math.round(Math.max(0, movement.amountUsd - movement.deductionsUsd) * 1000000) / 1000000;
-    // Un pago del cliente suele cancelar facturas de varios proyectos. `allocations` reparte el
-    // bruto entre ellos; si viene vacío, el movimiento se imputa entero al projectId/budgetId
-    // sueltos, que es como funcionaban todos los movimientos hasta ahora.
-    const rawAllocations = Array.isArray(movement.allocations) ? movement.allocations : [];
-    movement.allocations = rawAllocations
+    // Un aviso de pago suele cancelar varias facturas de una vez, cada una con su propia retención
+    // (ver formato de aviso ACH: Documento / Su documento / Deducciones / Importe bruto).
+    // `allocations` guarda esas partidas; el proyecto y el presupuesto se heredan de cada factura.
+    const toUsd = (value) => {
+      const usd = movement.currency === "USD" ? value : movement.exchangeRate > 0 ? value / movement.exchangeRate : 0;
+      return Math.round(usd * 1000000) / 1000000;
+    };
+    movement.allocations = (Array.isArray(movement.allocations) ? movement.allocations : [])
       .map((allocation) => {
         const amount = Math.max(0, Number(allocation?.amount) || 0);
-        const amountUsd = movement.currency === "USD" ? amount : movement.exchangeRate > 0 ? amount / movement.exchangeRate : 0;
+        const deductions = Math.max(0, Number(allocation?.deductions) || 0);
         return {
+          invoiceId: allocation?.invoiceId || "",
+          receiptNumber: String(allocation?.receiptNumber || "").trim(),
           projectId: allocation?.projectId || "",
           budgetId: allocation?.budgetId || "",
-          amount,
-          amountUsd: Math.round(amountUsd * 1000000) / 1000000,
+          amount, deductions,
+          amountUsd: toUsd(amount),
+          deductionsUsd: toUsd(deductions),
+          netAmountUsd: toUsd(Math.max(0, amount - deductions)),
         };
       })
-      .filter((allocation) => allocation.amount > 0 && (allocation.projectId || allocation.budgetId));
+      .filter((allocation) => allocation.amount > 0);
+    // Con partidas cargadas, los totales del movimiento se derivan de ellas: así el encabezado no
+    // puede quedar desincronizado del detalle por una edición parcial.
     if (movement.allocations.length) {
-      movement.allocatedAmount = Math.round(movement.allocations.reduce((sum, a) => sum + a.amount, 0) * 100) / 100;
-      // Lo que no se repartió queda explícito en vez de desaparecer: se imputa al proyecto suelto.
-      movement.unallocatedAmount = Math.round(Math.max(0, movement.amount - movement.allocatedAmount) * 100) / 100;
+      movement.amount = Math.round(movement.allocations.reduce((sum, a) => sum + a.amount, 0) * 100) / 100;
+      movement.deductions = Math.round(movement.allocations.reduce((sum, a) => sum + a.deductions, 0) * 100) / 100;
+      movement.amountUsd = toUsd(movement.amount);
     } else {
-      delete movement.allocatedAmount;
-      delete movement.unallocatedAmount;
+      movement.deductions = Math.max(0, Number(movement.deductions) || 0);
     }
+    movement.deductionsUsd = toUsd(movement.deductions);
+    movement.netAmountUsd = Math.round(Math.max(0, movement.amountUsd - movement.deductionsUsd) * 1000000) / 1000000;
   } else if (movement.kind === "expense") {
     // El importe cargado es el total pagado (IVA incluido si corresponde). Se descompone para
     // poder calcular crédito fiscal, sin alterar el monto en caja que efectivamente salió.
