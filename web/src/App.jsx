@@ -2770,17 +2770,24 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
           <div className="space-y-2">
             {myTasks.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin tareas pendientes</div>}
             {myTasks.slice(0, 8).map((t) => (
+              // El título manda: ocupa la primera línea completa y puede usar dos renglones. Antes
+              // compartía fila con la prioridad y el aviso de plazo, y en el teléfono le quedaba
+              // tan poco ancho que se cortaba en "Comisionamiento S…" — ilegible.
               <button key={t.id} onClick={() => onOpenTask(t)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
-                <div className="flex items-center gap-2">
-                  <Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip>
-                  <span className="truncate text-sm font-medium text-slate-800">{t.title}</span>
+                <div className="flex items-start gap-2">
+                  <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-5 text-slate-800">{t.title}</span>
                   {isOverdue(t)
-                    ? <Chip className="ml-auto bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>
+                    ? <Chip className="shrink-0 whitespace-nowrap bg-rose-50 text-rose-700 ring-rose-600/20">Vencida</Chip>
                     : isDueSoon(t)
-                      ? <Chip className="ml-auto bg-amber-50 text-amber-700 ring-amber-600/20">Vence pronto</Chip>
-                      : isStale(t) && <Chip className="ml-auto bg-amber-50 text-amber-700 ring-amber-600/20">Estancada</Chip>}
+                      ? <Chip className="shrink-0 whitespace-nowrap bg-amber-50 text-amber-700 ring-amber-600/20">Vence pronto</Chip>
+                      : isStale(t) && <Chip className="shrink-0 whitespace-nowrap bg-amber-50 text-amber-700 ring-amber-600/20">Estancada</Chip>}
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{t.id}</span>{t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due}</span>}<span>· {t.status}</span></div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400">
+                  <Chip className={`${prioMeta[t.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{t.priority}</Chip>
+                  <span className="font-mono">{t.id}</span>
+                  {t.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{t.due}</span>}
+                  <span>· {t.status}</span>
+                </div>
               </button>
             ))}
           </div>
@@ -2790,8 +2797,8 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             {myOrders.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin órdenes activas</div>}
             {myOrders.slice(0, 8).map((o) => (
               <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
-                <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
-                <div className="mt-0.5 text-[11px] text-slate-400">{o.site} · {o.service} · {o.date}</div>
+                <div className="flex items-start gap-2"><span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-5 text-slate-700">{o.client}</span><span className="shrink-0 font-mono text-xs font-semibold text-slate-500">{o.id}</span></div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400"><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span>{o.site} · {o.service} · {o.date}</span></div>
               </button>
             ))}
           </div>
@@ -2801,8 +2808,8 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             <div className="space-y-2">
               {teamActiveOrders.slice(0, 8).map((o) => (
                 <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
-                  <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
-                  <div className="mt-0.5 text-[11px] text-slate-400">{o.site} · {o.service} · {o.tech || "Sin técnico"}</div>
+                  <div className="flex items-start gap-2"><span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-5 text-slate-700">{o.client}</span><span className="shrink-0 font-mono text-xs font-semibold text-slate-500">{o.id}</span></div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400"><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span>{o.site} · {o.service} · {o.tech || "Sin técnico"}</span></div>
                 </button>
               ))}
             </div>
@@ -2829,8 +2836,8 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
             <div className="space-y-2">
               {unsignedTeam.slice(0, 8).map((o) => (
                 <button key={o.id} onClick={() => onOpenOrder(o)} className="block w-full rounded-lg border border-slate-200 p-2.5 text-left hover:border-slate-300">
-                  <div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{o.id}</span><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span className="truncate text-sm text-slate-700">{o.client}</span></div>
-                  <div className="mt-0.5 text-[11px] text-slate-400">{o.site} · {o.service} · {o.tech || "Sin técnico"}</div>
+                  <div className="flex items-start gap-2"><span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-5 text-slate-700">{o.client}</span><span className="shrink-0 font-mono text-xs font-semibold text-slate-500">{o.id}</span></div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400"><Chip className={O_STYLE[o.status]}>{o.status}</Chip><span>{o.site} · {o.service} · {o.tech || "Sin técnico"}</span></div>
                 </button>
               ))}
             </div>
