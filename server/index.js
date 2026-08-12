@@ -1774,6 +1774,7 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
+  if (movement.attachments.reduce((sum, item) => sum + item.url.length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
   if (movement.kind === "invoice") {
     movement.invoiceNumber = String(movement.invoiceNumber || movement.receiptNumber || "").trim();
     if (!movement.invoiceNumber) return res.status(400).json({ error: "Indica el número de factura." });

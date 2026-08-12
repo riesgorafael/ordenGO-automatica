@@ -1738,6 +1738,49 @@ function ImageCropModal({ imageUrl, onDiscard, onSkipCrop, onConfirm }) {
   </div>;
 }
 
+// Gestión de documentos de una factura. Las facturas nacen de un presupuesto, así que sus importes
+// no se editan a mano — pero sí hace falta poder guardar el comprobante fiscal real (el PDF de
+// AFIP) contra el registro, y volver a bajarlo después. Este diálogo toca únicamente `attachments`.
+function InvoiceDocsDialog({ invoice, onClose, onSave }) {
+  useDialogOpenClass(onClose);
+  const [files, setFiles] = useState(attachmentsOf(invoice));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const mouseDownOnBackdrop = useRef(false);
+  const addFile = async (file) => {
+    if (!file) return;
+    setError("");
+    const isImage = file.type.startsWith("image/");
+    if (!isImage && file.size > MAX_DOCUMENT_BYTES) { setError("El archivo supera los 5 MB permitidos."); return; }
+    // Sin OCR: acá el dato ya está en el sistema, el archivo es el respaldo del comprobante.
+    const url = isImage ? (await fileToImages(file)).report : await fileToDataUrl(file);
+    setFiles((current) => [...current, { url, name: file.name }].slice(0, MAX_MOVEMENT_DOCS));
+  };
+  const submit = async () => {
+    setSaving(true);
+    try { const saved = await onSave({ id: invoice.id, attachments: files }); if (saved) onClose(); }
+    finally { setSaving(false); }
+  };
+  return <div className="motion-backdrop fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+    <div role="dialog" aria-modal="true" className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-4 shadow-2xl sm:rounded-2xl sm:p-5" onClick={(event) => event.stopPropagation()}>
+      <div className="mb-1 flex items-start justify-between gap-3"><div><h3 className="text-base font-semibold text-slate-900">Documentos de la factura</h3><p className="text-xs text-slate-500">{invoice.receiptNumber || invoice.id} · {invoice.concept}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+      <div className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500">Guardá acá el comprobante fiscal emitido (PDF de AFIP, imagen del talonario). Los importes de la factura no se editan desde acá: se administran desde el presupuesto que la originó.</div>
+      <div className="space-y-2">
+        {files.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Todavía no hay ningún documento cargado.</div>}
+        {files.map((file, index) => <div key={index} className="flex items-center gap-3 rounded-xl border border-slate-200 p-2">
+          {file.url.startsWith("data:image") ? <img src={file.url} alt={file.name} className="h-14 w-14 rounded-lg object-cover" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500"><FileText className="h-6 w-6" /></span>}
+          <div className="min-w-0 flex-1"><b className="block truncate text-xs">{file.name || `Documento ${index + 1}`}</b><span className="text-[11px] text-emerald-600">{file.url.startsWith("data:image") ? "Imagen vinculada" : "PDF vinculado"}</span></div>
+          <button type="button" onClick={() => downloadDataUrl(receiptFileName(invoice.id, file, index, files.length), file.url)} aria-label="Descargar documento" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><Download className="h-4 w-4" /></button>
+          <button type="button" onClick={() => setFiles((current) => current.filter((_, position) => position !== index))} aria-label="Quitar documento" className="grid h-9 w-9 place-items-center rounded-lg text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+        </div>)}
+      </div>
+      {error && <p className="mt-2 text-[11px] font-medium text-rose-600">{error}</p>}
+      {files.length < MAX_MOVEMENT_DOCS && <label className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Upload className="h-4 w-4" /> {files.length ? "Agregar otro documento" : "Cargar la factura"}<input type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={(event) => { addFile(event.target.files?.[0]); event.target.value = ""; }} /></label>}
+      <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={submit} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar documentos</button></div>
+    </div>
+  </div>;
+}
+
 function FinanceEntryModal({ movement, duplicating = false, initialKind = "expense", projects, budgets, clients, invoices = [], branding, onClose, onSave }) {
   useDialogOpenClass(onClose);
   const [form, setForm] = useState(() => { const base = { kind: initialKind, concept: "", amount: "", currency: "USD", exchangeRate: 1, date: todayStr(), category: EXPENSE_CATEGORIES[0], paymentMethod: PAYMENT_METHODS[0], projectId: "", budgetId: "", clientId: "", supplier: "", receiptNumber: "", detail: "", attachments: [], vatIncluded: false, deductions: "", paymentStatus: "paid", paidAt: todayStr(), ...(movement || {}) }; return { ...base, attachments: attachmentsOf(base) }; });
@@ -1987,6 +2030,13 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   const [displayCurrency, setDisplayCurrency] = useState("USD"); // solo afecta cómo se muestra, no cómo se guarda
   const [alertFilter, setAlertFilter] = useState(null); // null | "undocumented" | "pending" — lo activa una alerta
   const [isDuplicate, setIsDuplicate] = useState(false);
+  const [invoiceDocs, setInvoiceDocs] = useState(null); // factura cuyos documentos se están gestionando
+  const openInvoiceDocs = async (movement) => {
+    setLoadingEdit(movement.id);
+    const full = onLoad ? await onLoad(movement.id) : movement;
+    setLoadingEdit("");
+    if (full) setInvoiceDocs(full);
+  };
   useEffect(() => { if (createSignal > 0) { setNewKind("expense"); setIsDuplicate(false); setEditor({ mode: "new" }); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
   const closeEditor = () => { setEditor(null); setIsDuplicate(false); };
   // Duplicar abre el formulario precargado pero sin id, así se guarda como movimiento nuevo.
@@ -2410,11 +2460,13 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
                   {/* La tarjeta entera abre la edición; los botones no deben propagar el clic. */}
                   <div className="flex shrink-0 items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
                     {(movement.hasAttachment || attachmentsOf(movement).length) ? <button type="button" disabled={downloadingId === movement.id} onClick={() => downloadAttachment(movement)} title={attachmentCountOf(movement) > 1 ? `Descargar los ${attachmentCountOf(movement)} documentos` : "Descargar comprobante"} aria-label="Descargar comprobantes" className="relative grid h-10 w-10 place-items-center rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 disabled:opacity-50">{downloadingId === movement.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{attachmentCountOf(movement) > 1 && <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-emerald-600 px-1 text-[9px] font-bold text-white">{attachmentCountOf(movement)}</span>}</button> : null}
+                    {invoice && <button type="button" disabled={loadingEdit === movement.id} onClick={() => openInvoiceDocs(movement)} title="Cargar o descargar el comprobante de esta factura" aria-label="Documentos de la factura" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:border-brand-300 hover:text-brand-600 disabled:opacity-50">{loadingEdit === movement.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}</button>}
                     {!invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <><button disabled={loadingEdit === movement.id} onClick={() => openEdit(movement)} title="Editar movimiento" aria-label="Editar movimiento" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 disabled:opacity-50">{loadingEdit === movement.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}</button><button disabled={loadingEdit === movement.id} onClick={() => duplicateMovement(movement)} title="Duplicar como movimiento nuevo" aria-label="Duplicar movimiento" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:border-brand-300 hover:text-brand-600 disabled:opacity-50"><Copy className="h-4 w-4" /></button></>}
                     {!movement.sourceBudgetId && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <button onClick={() => onDelete(movement)} className="grid h-10 w-10 place-items-center rounded-lg border border-rose-200 text-rose-500"><Trash2 className="h-4 w-4" /></button>}
                   </div>
                 </div>
               </div>; })}</div></Box></div>
+    {invoiceDocs && <InvoiceDocsDialog invoice={invoiceDocs} onClose={() => setInvoiceDocs(null)} onSave={onSave} />}
     {editor && <FinanceEntryModal movement={editor.mode === "new" ? null : editor} duplicating={isDuplicate} initialKind={newKind} projects={projects} budgets={budgets} clients={clients} invoices={movements.filter((item) => item.kind === "invoice")} branding={branding} onClose={closeEditor} onSave={onSave} />}
   </div>;
 }
