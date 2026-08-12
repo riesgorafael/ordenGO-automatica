@@ -77,7 +77,7 @@ export const api = {
   updateFinance: (id, patch) => req("/finances/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteFinance: (id) => req("/finances/" + id, { method: "DELETE" }),
   // force omite la caché del servidor: lo usa el botón de refrescar manual.
-  bnaExchangeRate: (force = false) => req("/exchange-rates/bna" + (force ? "?force=1" : "")),
+  wholesaleExchangeRate: (force = false) => req("/exchange-rates/wholesale" + (force ? "?force=1" : "")),
 
   tasks: () => req("/tasks"),
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),

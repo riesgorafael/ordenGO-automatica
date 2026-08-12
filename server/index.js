@@ -1038,10 +1038,10 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   const duplicate = (await db.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 AND ($2::text IS NULL OR id<>$2) LIMIT 1", [invoiceNumber, existing?.id || null])).rows[0];
   if (duplicate) throw new Error("DUPLICATE_INVOICE");
   const id = existing?.id || `INV-${budget.id}`;
-  // Referencia informativa en ARS al tipo de cambio BNA disponible al momento de facturar.
+  // Referencia informativa en ARS al tipo de cambio mayorista A 3500 disponible al facturar.
   // No cambia la moneda de registro (USD): es solo trazabilidad para el circuito fiscal local.
-  const arsQuote = bnaRateCache?.data?.arsPerUsd || null;
-  const arsReference = arsQuote ? { arsPerUsd: arsQuote, source: "BNA dólar billete vendedor", quotedAt: bnaRateCache?.data?.updatedAt || null, netArs: Math.round(net * arsQuote * 100) / 100, vatArs: Math.round(vatAmount * arsQuote * 100) / 100, grossArs: Math.round(grossAmount * arsQuote * 100) / 100 } : (existing?.data?.arsReference || null);
+  const arsQuote = wholesaleRateCache?.data?.arsPerUsd || null;
+  const arsReference = arsQuote ? { arsPerUsd: arsQuote, source: "BCRA dólar mayorista · Comunicación A 3500", quotedAt: wholesaleRateCache?.data?.updatedAt || null, netArs: Math.round(net * arsQuote * 100) / 100, vatArs: Math.round(vatAmount * arsQuote * 100) / 100, grossArs: Math.round(grossAmount * arsQuote * 100) / 100 } : (existing?.data?.arsReference || null);
   const invoice = { ...(existing?.data || {}), id, kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vatAmount, grossAmountUsd: grossAmount, arsReference, currency: "USD", exchangeRate: 1, date: invoiceDate, dueDate: budget.invoiceDueDate || "", invoiceNumber, receiptNumber: invoiceNumber, detail: budget.invoiceDetail || "", projectId: budget.projectId || "", budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || "", clientName: budget.client || "", sourceBudgetId: budget.id, paymentStatus: existing?.data?.paymentStatus || "pending", createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name, updatedAt: new Date().toISOString() };
   await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, invoice]);
   return invoice;
@@ -1654,29 +1654,28 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
 /* ------------------------------------------------ Finanzas ------------------------------------------------ */
 const FINANCE_KINDS = ["expense", "income", "invoice"];
 const FINANCE_CURRENCIES = ["ARS", "USD", "EUR"];
-let bnaRateCache = null;
-const BNA_CACHE_MS = 60 * 60 * 1000; // 1 hora
-app.get("/api/exchange-rates/bna", auth, requireRole("admin", "gerente"), async (req, res) => {
+let wholesaleRateCache = null;
+const WHOLESALE_RATE_CACHE_MS = 60 * 60 * 1000; // 1 hora
+app.get("/api/exchange-rates/wholesale", auth, requireRole("admin", "gerente"), async (req, res) => {
   // El botón de refrescar manda force=1: sin esto el pedido caía en la caché del servidor y la
   // pantalla no cambiaba nada, dando la impresión de que la cotización no se actualizaba nunca.
   const force = req.query.force === "1";
-  if (!force && bnaRateCache && Date.now() - bnaRateCache.cachedAt < BNA_CACHE_MS)
-    return res.json({ ...bnaRateCache.data, fetchedAt: new Date(bnaRateCache.cachedAt).toISOString() });
+  if (!force && wholesaleRateCache && Date.now() - wholesaleRateCache.cachedAt < WHOLESALE_RATE_CACHE_MS)
+    return res.json({ ...wholesaleRateCache.data, fetchedAt: new Date(wholesaleRateCache.cachedAt).toISOString() });
   try {
-    const response = await fetch("https://monedapi.ar/api/v2/usd/bna", { headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } });
+    const response = await fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/5?limit=1", { headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const quote = await response.json();
-    const sell = Number(quote.sell);
-    if (!(sell > 0)) throw new Error("Cotización inválida");
-    // updatedAt es cuándo la fuente publicó la cotización; fetchedAt, cuándo la consultamos.
-    // Son cosas distintas: si el BNA no publica hace días, updatedAt queda viejo aunque
-    // nosotros estemos consultando cada hora sin problemas.
-    const data = { currency: "USD", arsPerUsd: sell, buy: Number(quote.buy) || null, sell, updatedAt: quote.updatedAt || new Date().toISOString(), source: "Banco de la Nación Argentina", sourceUrl: "https://www.bna.com.ar/Personas" };
-    bnaRateCache = { cachedAt: Date.now(), data };
+    const payload = await response.json();
+    const quote = payload?.results?.[0]?.detalle?.[0];
+    const value = Number(quote?.valor);
+    if (!(value > 0) || !quote?.fecha) throw new Error("Cotización inválida");
+    // updatedAt identifica el día hábil publicado; fetchedAt, cuándo se realizó la consulta.
+    const data = { currency: "USD", arsPerUsd: value, buy: null, sell: value, updatedAt: `${quote.fecha}T00:00:00-03:00`, source: "Banco Central de la República Argentina", sourceLabel: "Dólar mayorista · Comunicación A 3500", sourceUrl: "https://www.bcra.gob.ar/principales-variables/", variableId: 5 };
+    wholesaleRateCache = { cachedAt: Date.now(), data };
     res.json({ ...data, fetchedAt: new Date().toISOString() });
   } catch (error) {
-    if (bnaRateCache?.data) return res.json({ ...bnaRateCache.data, fetchedAt: new Date(bnaRateCache.cachedAt).toISOString(), stale: true });
-    res.status(503).json({ error: "No fue posible obtener la cotización vendedor del dólar BNA. Intenta nuevamente." });
+    if (wholesaleRateCache?.data) return res.json({ ...wholesaleRateCache.data, fetchedAt: new Date(wholesaleRateCache.cachedAt).toISOString(), stale: true });
+    res.status(503).json({ error: "No fue posible obtener el tipo de cambio mayorista A 3500 del BCRA. Intenta nuevamente." });
   }
 });
 const MAX_MOVEMENT_ATTACHMENTS = 8;
