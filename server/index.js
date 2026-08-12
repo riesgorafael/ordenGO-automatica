@@ -797,8 +797,10 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     projects: visibleProjects,
     budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
     finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => {
-      const { attachmentUrl, ...summary } = r.data;
-      return { ...summary, hasAttachment: Boolean(attachmentUrl), _updatedAt: r.updated_at };
+      // Los adjuntos no viajan en el listado (son data: URIs pesados): solo cuántos hay.
+      const { attachmentUrl, attachments, ...summary } = r.data;
+      const count = Array.isArray(attachments) ? attachments.length : (attachmentUrl ? 1 : 0);
+      return { ...summary, hasAttachment: count > 0, attachmentCount: count, _updatedAt: r.updated_at };
     }),
     orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.filter((row) => orderVisibleToUser(req.user, row.data)).map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
@@ -1618,9 +1620,21 @@ app.get("/api/exchange-rates/bna", auth, requireRole("admin", "gerente"), async 
     res.status(503).json({ error: "No fue posible obtener la cotización vendedor del dólar BNA. Intenta nuevamente." });
   }
 });
+const MAX_MOVEMENT_ATTACHMENTS = 8;
+const MAX_MOVEMENT_ATTACHMENT_CHARS = 18 * 1024 * 1024; // el body de express admite 24 MB
 const normalizeFinancialMovement = (input, previous = {}) => {
   const movement = { ...previous, ...(input || {}) };
   delete movement._updatedAt;
+  // Un gasto suele necesitar más de un respaldo (factura + cupón de tarjeta + remito). Se guardan
+  // en `attachments`; los movimientos viejos traen un único adjunto suelto y se migran acá, y se
+  // sigue publicando el primero en attachmentUrl/attachmentName por compatibilidad.
+  const legacy = movement.attachmentUrl ? [{ url: movement.attachmentUrl, name: movement.attachmentName || "Comprobante" }] : [];
+  movement.attachments = (Array.isArray(movement.attachments) ? movement.attachments : legacy)
+    .filter((item) => typeof item?.url === "string" && item.url.startsWith("data:"))
+    .slice(0, MAX_MOVEMENT_ATTACHMENTS)
+    .map((item, index) => ({ url: item.url, name: String(item.name || `Documento ${index + 1}`).slice(0, 120) }));
+  movement.attachmentUrl = movement.attachments[0]?.url || "";
+  movement.attachmentName = movement.attachments[0]?.name || "";
   movement.kind = FINANCE_KINDS.includes(movement.kind) ? movement.kind : "expense";
   movement.currency = FINANCE_CURRENCIES.includes(movement.currency) ? movement.currency : "USD";
   movement.amount = Math.max(0, Number(movement.amount) || 0);
@@ -1711,6 +1725,7 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
+  if (movement.attachments.reduce((sum, item) => sum + item.url.length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
   if (movement.kind === "invoice" && !String(movement.invoiceNumber || movement.receiptNumber || "").trim()) return res.status(400).json({ error: "Indica el número de factura." });
   if (movement.kind === "invoice") {
     movement.invoiceNumber = String(movement.invoiceNumber || movement.receiptNumber).trim();
