@@ -392,6 +392,16 @@ async function initDb() {
     }
     await pool.query("INSERT INTO app_settings(key,value) VALUES('billing_minimum_2h_under_1h_v1',$1)", [{ thresholdHours: 1, minimumHours: 2 }]);
   }
+
+  // Recalcula presupuestos facturados ya existentes con la nueva distinción entre efectivo
+  // ingresado y factura cancelada. Es idempotente y permite que cobros anteriores con retenciones
+  // aparezcan en el filtro Pagado inmediatamente después de desplegar esta versión.
+  const paymentReconcileMigration = await pool.query("SELECT 1 FROM app_settings WHERE key='budget_payment_settlement_v2'");
+  if (paymentReconcileMigration.rowCount === 0) {
+    const budgetIds = (await pool.query("SELECT id FROM budgets WHERE data->>'stage' IN ('Facturado','Pagado')")).rows.map((row) => row.id);
+    await syncBudgetPaymentStatuses(budgetIds, pool, null);
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('budget_payment_settlement_v2',$1)", [{ reconciled: budgetIds.length, paymentStates: ["paid", "partial"] }]);
+  }
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
@@ -1069,20 +1079,37 @@ async function syncBudgetPaymentStatuses(budgetIds, db = pool, user = null) {
     const invoices = (await db.query("SELECT id,data FROM financial_movements WHERE data->>'kind'='invoice' AND (data->>'budgetId'=$1 OR data->>'sourceBudgetId'=$1)", [budgetId])).rows;
     const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
     const billedGross = invoices.reduce((sum, invoice) => sum + (Number(invoice.data.grossAmountUsd) || (Number(invoice.data.amountUsd) || 0) + (Number(invoice.data.vatAmountUsd) || 0)), 0);
+    const invoiceGrossById = new Map(invoices.map((invoice) => [invoice.id, Number(invoice.data.grossAmountUsd) || (Number(invoice.data.amountUsd) || 0) + (Number(invoice.data.vatAmountUsd) || 0)]));
     let collected = 0;
+    let settled = 0;
     let lastPaymentDate = "";
     for (const income of incomes) {
       const allocations = (income.allocations || []).filter((allocation) => Number(allocation.amountUsd) > 0);
-      let contribution = 0;
-      if (allocations.length) contribution = allocations.filter((allocation) => allocation.budgetId === budgetId || invoiceIds.has(allocation.invoiceId)).reduce((sum, allocation) => sum + Number(allocation.amountUsd), 0);
-      else if (income.budgetId === budgetId) contribution = Number(income.amountUsd) || 0;
-      if (contribution > 0) {
-        collected += contribution;
+      const matched = allocations.filter((allocation) => allocation.budgetId === budgetId || invoiceIds.has(allocation.invoiceId));
+      let cashContribution = 0;
+      let settlementContribution = 0;
+      if (matched.length) {
+        cashContribution = matched.reduce((sum, allocation) => sum + (Number(allocation.netAmountUsd) || Math.max(0, (Number(allocation.amountUsd) || 0) - (Number(allocation.deductionsUsd) || 0))), 0);
+        // Una partida identificada como cancelación total salda la factura aunque el depósito sea
+        // menor por retenciones. En un anticipo se aplica el bruto informado, distinguiéndolo del
+        // efectivo neto que realmente ingresó al banco.
+        settlementContribution = income.paymentStatus === "partial"
+          ? matched.reduce((sum, allocation) => sum + Number(allocation.amountUsd), 0)
+          : [...new Set(matched.map((allocation) => allocation.invoiceId).filter((id) => invoiceGrossById.has(id)))].reduce((sum, invoiceId) => sum + invoiceGrossById.get(invoiceId), 0) || matched.reduce((sum, allocation) => sum + Number(allocation.amountUsd), 0);
+      } else if (income.budgetId === budgetId) {
+        cashContribution = Number(income.netAmountUsd) || Math.max(0, (Number(income.amountUsd) || 0) - (Number(income.deductionsUsd) || 0));
+        settlementContribution = income.paymentStatus === "partial" ? (Number(income.amountUsd) || 0) : billedGross;
+      }
+      if (cashContribution > 0 || settlementContribution > 0) {
+        collected += cashContribution;
+        settled += settlementContribution;
         if (String(income.date || "") > lastPaymentDate) lastPaymentDate = String(income.date || "").slice(0, 10);
       }
     }
     collected = Math.round(collected * 100) / 100;
-    const outstanding = Math.round(Math.max(0, billedGross - collected) * 100) / 100;
+    settled = Math.round(Math.min(billedGross, settled) * 100) / 100;
+    const outstanding = Math.round(Math.max(0, billedGross - settled) * 100) / 100;
+    const settlementDifference = Math.round(Math.max(0, settled - collected) * 100) / 100;
     const fullyPaid = billedGross > 0 && outstanding <= 0.01;
     const nextStage = fullyPaid ? "Pagado" : "Facturado";
     const stageChanged = budget.stage !== nextStage;
@@ -1091,13 +1118,15 @@ async function syncBudgetPaymentStatuses(budgetIds, db = pool, user = null) {
       stage: nextStage,
       probability: 100,
       collectedAmountUsd: collected,
+      settledAmountUsd: settled,
+      settlementDifferenceUsd: settlementDifference,
       outstandingAmountUsd: outstanding,
-      collectionProgress: billedGross > 0 ? Math.min(100, Math.round((collected / billedGross) * 100)) : 0,
+      collectionProgress: billedGross > 0 ? Math.min(100, Math.round((settled / billedGross) * 100)) : 0,
       paidAt: fullyPaid ? (lastPaymentDate || budget.paidAt || new Date().toISOString().slice(0, 10)) : "",
     };
-    if (stageChanged) next.activity = [...(budget.activity || []), { type: fullyPaid ? "paid" : "payment_reopened", text: fullyPaid ? `Pago completo registrado: USD ${collected.toFixed(2)}` : `Cobro modificado: saldo pendiente USD ${outstanding.toFixed(2)}`, by: user?.id || "system", byName: user?.name || "Sistema", at: new Date().toISOString() }];
+    if (stageChanged) next.activity = [...(budget.activity || []), { type: fullyPaid ? "paid" : "payment_reopened", text: fullyPaid ? `Pago completo registrado: USD ${collected.toFixed(2)} ingresados${settlementDifference ? ` · USD ${settlementDifference.toFixed(2)} en retenciones/ajustes` : ""}` : `Cobro modificado: saldo pendiente USD ${outstanding.toFixed(2)}`, by: user?.id || "system", byName: user?.name || "Sistema", at: new Date().toISOString() }];
     await db.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budgetId, next]);
-    for (const invoice of invoices) await db.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [invoice.id, { ...invoice.data, paymentStatus: fullyPaid ? "paid" : collected > 0 ? "partial" : "pending", paidAmountUsd: collected, outstandingAmountUsd: outstanding, paidAt: next.paidAt }]);
+    for (const invoice of invoices) await db.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [invoice.id, { ...invoice.data, paymentStatus: fullyPaid ? "paid" : collected > 0 ? "partial" : "pending", paidAmountUsd: collected, settledAmountUsd: settled, settlementDifferenceUsd: settlementDifference, outstandingAmountUsd: outstanding, paidAt: next.paidAt }]);
     updated.push(next);
   }
   return updated;
@@ -1705,6 +1734,10 @@ const normalizeFinancialMovement = (input, previous = {}) => {
     movement.vatAmountUsd = Math.round(movement.netAmountUsd * movement.vatRate) / 100;
     movement.grossAmountUsd = Math.round((movement.netAmountUsd + movement.vatAmountUsd) * 100) / 100;
   } else if (movement.kind === "income") {
+    // "paid" declara cancelación total de la factura/presupuesto; "partial" registra un anticipo.
+    // La distinción es necesaria porque las retenciones pueden hacer que el banco reciba menos que
+    // el total facturado sin que exista saldo comercial pendiente.
+    movement.paymentStatus = movement.paymentStatus === "partial" ? "partial" : "paid";
     // Un aviso de pago suele cancelar varias facturas de una vez, cada una con su propia retención
     // (ver formato de aviso ACH: Documento / Su documento / Deducciones / Importe bruto).
     // `allocations` guarda esas partidas; el proyecto y el presupuesto se heredan de cada factura.
