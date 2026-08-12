@@ -267,6 +267,31 @@ function downloadFile(name, text) {
     const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
   } catch { alert("La descarga no está disponible en este navegador."); }
 }
+// Descarga un adjunto guardado como data: URI (imagen o PDF). Se pasa por Blob porque un <a download>
+// apuntando directo a un data: URI largo falla en varios navegadores.
+function downloadDataUrl(name, dataUrl) {
+  try {
+    const [meta, base64] = String(dataUrl || "").split(",");
+    if (!base64) return false;
+    const mime = (meta.match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const link = document.createElement("a");
+    link.href = url; link.download = name; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    return true;
+  } catch { return false; }
+}
+// Nombre de archivo trazable: empieza por el id del movimiento para que, al bajar varios juntos,
+// se pueda saber a cuál corresponde cada uno sin abrirlos.
+const receiptFileName = (movement) => {
+  const mime = (String(movement.attachmentUrl || "").match(/data:([^;]+)/) || [])[1] || "";
+  const ext = mime.includes("pdf") ? "pdf" : mime.includes("png") ? "png" : mime.includes("image") ? "jpg" : "bin";
+  const base = String(movement.attachmentName || "comprobante").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[\\/:*?"<>|]+/g, "-").trim();
+  return `${movement.id}_${base || "comprobante"}.${ext}`;
+};
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const localDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localMonthKey = (date = new Date()) => localDateKey(date).slice(0, 7);
@@ -2047,6 +2072,16 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   };
   const visible = movements.filter((movement) => (projectFilter === "all" || movement.projectId === projectFilter) && (kindFilter === "all" || movement.kind === kindFilter) && matchesAlertFilter(movement) && (!query || `${movement.id} ${movement.concept} ${movement.supplier || ""} ${movement.receiptNumber || ""}`.toLowerCase().includes(query.toLowerCase()))).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const openEdit = async (movement) => { setLoadingEdit(movement.id); const full = onLoad ? await onLoad(movement.id) : movement; setLoadingEdit(""); if (full) { setIsDuplicate(false); setEditor(full); } };
+  // El listado no trae el adjunto (se strippea del payload para no inflarlo): hay que pedir el
+  // movimiento completo antes de poder descargarlo.
+  const [downloadingId, setDownloadingId] = useState("");
+  const [bulkProgress, setBulkProgress] = useState(null); // {done, total} mientras baja en lote
+  const fetchWithAttachment = async (movement) => (movement.attachmentUrl ? movement : (onLoad ? await onLoad(movement.id) : null));
+  const downloadAttachment = async (movement) => {
+    setDownloadingId(movement.id);
+    try { const full = await fetchWithAttachment(movement); if (full?.attachmentUrl) downloadDataUrl(receiptFileName(full), full.attachmentUrl); }
+    finally { setDownloadingId(""); }
+  };
   const Kpi =({ label, value, alt: altValue, comparison, icon: Icon, tint, detail, description, size = "sm" }) => <div tabIndex={0} aria-label={`${label}: ${value}${altValue ? ` (equivale a ${altValue})` : ""}. ${description}`} className={`motion-card group relative grid cursor-help grid-rows-[auto_auto_auto_1fr] rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-200/40 outline-none hover:z-40 focus-visible:z-40 focus-visible:ring-2 focus-visible:ring-brand-500/40 ${size === "lg" ? "min-h-32 p-5" : "min-h-24 p-3.5"}`}>
     <div className="flex items-center justify-between gap-3"><span className={`font-medium leading-4 text-slate-500 ${size === "lg" ? "text-sm" : "text-[11px]"}`}>{label}</span><span className={`grid shrink-0 place-items-center rounded-lg bg-slate-50 ${size === "lg" ? "h-10 w-10" : "h-7 w-7"}`}><Icon className={`${size === "lg" ? "h-5 w-5" : "h-3.5 w-3.5"} ${tint}`} /></span></div>
     <b className={`mt-2 block whitespace-nowrap text-slate-900 ${size === "lg" ? "text-2xl sm:text-3xl" : "text-base sm:text-lg"}`}>{value}</b>
