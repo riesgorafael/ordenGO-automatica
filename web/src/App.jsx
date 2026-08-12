@@ -2325,7 +2325,9 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
     <div className={`mt-1 self-end leading-4 ${size === "lg" ? "text-[11px]" : "text-[9px]"} ${comparison != null && comparison < 0 ? "text-rose-600" : "text-slate-400"}`}>{detail || fmtDelta(comparison)}</div>
     <div role="tooltip" className="pointer-events-none invisible absolute left-2 right-2 top-[calc(100%+0.45rem)] z-50 rounded-lg bg-slate-900 px-3 py-2 text-[11px] font-normal leading-relaxed text-white opacity-0 shadow-xl transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100">{description}</div>
   </div>;
-  const EmptyChart = ({ children = "Sin datos para este período." }) => <div className="grid h-full place-items-center text-center text-xs leading-5 text-slate-400">{projectFilter === "all" && children === "No hay presupuestos aprobados vinculados." ? "Seleccioná un proyecto para analizar su ejecución." : children}</div>;
+  // min-h: con las tarjetas ya no estiradas al alto de la fila, un panel vacío se colapsaba a una
+  // sola línea pegada al título. El mínimo le da aire sin volver a inflarlo como antes.
+  const EmptyChart = ({ children = "Sin datos para este período." }) => <div className="grid h-full min-h-24 place-items-center px-2 text-center text-xs leading-5 text-slate-400">{projectFilter === "all" && children === "No hay presupuestos aprobados vinculados." ? "Seleccioná un proyecto para analizar su ejecución." : children}</div>;
   const chartTooltip = (value) => fmt(value);
   const bnaUpdatedAt = bnaQuote?.updatedAt ? new Date(bnaQuote.updatedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
   const bnaFetchedAt = bnaQuote?.fetchedAt ? new Date(bnaQuote.fetchedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
@@ -2406,7 +2408,9 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
 
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Distribución de costos"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[11px] text-slate-400">Comparación por categoría · {showArs ? "ARS" : "USD"}</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs"><option value="all">Todas las categorías</option>{EXPENSE_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></div><div className="h-64">{costDistribution.length ? <ResponsiveContainer><BarChart data={costDistribution} layout="vertical" margin={{ top: 4, right: 18, left: 10, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} /><XAxis type="number" tickFormatter={axisFmt} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="name" width={125} tick={{ fontSize: 10, fill: "#475569" }} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Bar dataKey="value" name="Costo" fill="#F18700" radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer> : <EmptyChart />}</div></Panel><Panel title="Rentabilidad por proyecto"><div className="mb-2 text-[11px] text-slate-400">Ingresos menos egresos imputados en el período · {showArs ? "ARS" : "USD"}</div><div className="h-64">{projectProfitability.length ? <ResponsiveContainer><BarChart data={projectProfitability} layout="vertical" margin={{ top: 4, right: 18, left: 8, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} /><XAxis type="number" tickFormatter={axisFmt} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="name" width={85} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Bar dataKey="Resultado" name="Resultado" radius={[0, 5, 5, 0]}>{projectProfitability.map((row) => <Cell key={row.name} fill={row.Resultado >= 0 ? "#10b981" : "#ef4444"} />)}</Bar></BarChart></ResponsiveContainer> : <EmptyChart>Asociá ingresos y egresos a proyectos para medir rentabilidad.</EmptyChart>}</div></Panel></div>
 
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+    {/* items-start: sin esto todas las tarjetas de la fila toman el alto de la más alta, y un panel
+        vacío ("Sin facturas en el período") quedaba estirado ocupando media pantalla. */}
+    <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Panel title="Facturación por cliente">
         <div className="space-y-2">{billedByClient.length ? billedByClient.map((row) => <div key={row.name} className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
           <div className="flex items-start justify-between gap-3"><span className="min-w-0 truncate text-xs font-semibold text-slate-700" title={row.name}>{row.name}</span><div className="shrink-0 text-right"><span className="block text-[9px] uppercase tracking-wide text-sky-600">Total c/IVA</span><b className="text-sm text-sky-700">{fmt(row.gross)}</b></div></div>
@@ -2416,13 +2420,14 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
       <Panel title="Ejecución del presupuesto">
         <div className="space-y-2">{budgetExecution.length ? budgetExecution.map((budget) => <div key={budget.id} className="rounded-xl border border-slate-100 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="truncate font-semibold">{budget.number || budget.id} · {budget.title}</span><b className={budget.progress > 100 ? "text-rose-600" : "text-slate-700"}>{budget.baseline ? `${budget.progress.toFixed(0)}%` : "Sin costo estimado"}</b></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budget.progress > 100 ? "bg-rose-500" : budget.progress > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, budget.progress)}%` }} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-400"><span>Real <b className="text-slate-600">{fmt(budget.actual)}</b></span><span>{budget.baseline ? <>Plan <b className="text-slate-600">{fmt(budget.baseline)}</b></> : "Completar costo estimado"}</span></div></div>) : <EmptyChart>No hay presupuestos aprobados vinculados.</EmptyChart>}{unbudgetedExpense > 0 && <p className="text-[10px] text-amber-600">{fmt(unbudgetedExpense)} en gastos del proyecto sin presupuesto asignado: no se computan en ninguna barra.</p>}</div>
       </Panel>
-      <Panel title="Antigüedad de la deuda">
+      <Panel title={<>Antigüedad de la deuda <HelpHint text="Saldo en bruto (con IVA), que es lo que paga el cliente. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente." /></>}>
         {!openInvoices.length ? <EmptyChart>Sin facturas pendientes de cobro.</EmptyChart> : <div className="space-y-3">
           <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
             {aging.map((bucket) => bucket.value > 0 && <div key={bucket.label} className={bucket.tone} style={{ width: `${agingTotal ? (bucket.value / agingTotal) * 100 : 0}%` }} title={`${bucket.label}: ${fmt(bucket.value)}`} />)}
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {aging.map((bucket) => <div key={bucket.label} className="flex items-center gap-1.5 text-[10px]"><span className={`h-2 w-2 shrink-0 rounded-full ${bucket.tone}`} /><span className="min-w-0 flex-1 truncate text-slate-500">{bucket.label}</span><b className="shrink-0 text-slate-700">{fmt(bucket.value)}</b></div>)}
+          {/* Una fila por tramo: en dos columnas, "0-30 días" se cortaba a "0-30 …". */}
+          <div className="space-y-1">
+            {aging.filter((bucket) => bucket.value > 0).map((bucket) => <div key={bucket.label} className="flex items-center gap-1.5 text-[11px]"><span className={`h-2 w-2 shrink-0 rounded-full ${bucket.tone}`} /><span className="flex-1 whitespace-nowrap text-slate-500">{bucket.label}</span><span className="shrink-0 text-slate-400">{bucket.count}</span><b className="shrink-0 tabular-nums text-slate-700">{fmt(bucket.value)}</b></div>)}
           </div>
           <div className="space-y-1.5 border-t border-slate-100 pt-2">
             {openInvoices.slice(0, 5).map((invoice) => <button key={invoice.id} onClick={() => openEdit(invoice)} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-slate-50">
@@ -2432,7 +2437,6 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
             </button>)}
             {openInvoices.length > 5 && <p className="text-[10px] text-slate-400">+{openInvoices.length - 5} factura(s) más.</p>}
           </div>
-          <p className="text-[10px] leading-relaxed text-slate-400">Saldo en bruto (con IVA), que es lo que paga el cliente. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente.</p>
         </div>}
       </Panel>
       <Panel title="Concentración por proveedor">
