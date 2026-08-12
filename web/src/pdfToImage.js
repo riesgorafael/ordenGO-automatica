@@ -9,6 +9,32 @@ import * as pdfjsLib from "pdfjs-dist";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
 
+// Extrae el texto embebido del PDF, sin pasar por OCR. Sirve para los PDF generados por sistema
+// (avisos de pago, liquidaciones): el texto ya está adentro, reconocerlo con OCR sería reintroducir
+// errores en un dato exacto. Devuelve "" si el PDF es un escaneo sin capa de texto.
+export async function pdfExtractText(file) {
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const pages = [];
+  for (let number = 1; number <= pdf.numPages; number++) {
+    const content = await (await pdf.getPage(number)).getTextContent();
+    // pdf.js entrega fragmentos sueltos con su posición; se reagrupan por coordenada Y para
+    // reconstruir las filas de la tabla, que es lo que después se parsea.
+    const rows = new Map();
+    content.items.forEach((item) => {
+      if (!item.str?.trim()) return;
+      const y = Math.round(item.transform[5]);
+      const key = [...rows.keys()].find((existing) => Math.abs(existing - y) <= 2) ?? y;
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key).push({ x: item.transform[4], text: item.str });
+    });
+    [...rows.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .forEach(([, items]) => pages.push(items.sort((a, b) => a.x - b.x).map((item) => item.text).join(" ").replace(/\s+/g, " ").trim()));
+  }
+  return pages.join("\n");
+}
+
 export async function pdfFirstPageToImage(file) {
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;

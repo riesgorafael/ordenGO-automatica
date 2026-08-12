@@ -292,6 +292,34 @@ const receiptFileName = (movement) => {
   const base = String(movement.attachmentName || "comprobante").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[\\/:*?"<>|]+/g, "-").trim();
   return `${movement.id}_${base || "comprobante"}.${ext}`;
 };
+// Parser del aviso de pago del cliente (formato ACH: Documento / Su documento / Fecha /
+// Deducciones / Importe bruto). El PDF trae el texto embebido, así que los importes salen exactos
+// en vez de reconocidos por OCR.
+const parseArNumber = (text) => {
+  const clean = String(text || "").replace(/\./g, "").replace(",", ".").replace(/[^\d.-]/g, "");
+  const value = Number(clean);
+  return Number.isFinite(value) ? value : 0;
+};
+// Se comparan los últimos 8 dígitos: el aviso del cliente y el sistema escriben el punto de venta
+// distinto ("00004A00000118" vs "0004-00000118"), pero el número de comprobante es el mismo.
+const receiptKey = (value) => { const digits = String(value || "").replace(/\D/g, ""); return digits.length >= 8 ? digits.slice(-8) : digits; };
+function parsePaymentAdvice(text) {
+  const rows = [];
+  let total = null;
+  String(text || "").split("\n").forEach((line) => {
+    const clean = line.trim();
+    if (/^total\s+general/i.test(clean)) {
+      const numbers = clean.match(/[\d.]+,\d{2}/g) || [];
+      if (numbers.length >= 2) total = { deductions: parseArNumber(numbers[numbers.length - 2]), gross: parseArNumber(numbers[numbers.length - 1]) };
+      return;
+    }
+    // documento · su documento · fecha · deducciones · importe bruto
+    const match = clean.match(/^(\S+)\s+(\S+)\s+(\d{2}[./-]\d{2}[./-]\d{4})\s+([\d.]*\d,\d{2})\s+([\d.]*\d,\d{2})$/);
+    if (!match) return;
+    rows.push({ document: match[1], receipt: match[2], date: match[3], deductions: parseArNumber(match[4]), gross: parseArNumber(match[5]) });
+  });
+  return { rows, total };
+}
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const localDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localMonthKey = (date = new Date()) => localDateKey(date).slice(0, 7);
@@ -1804,6 +1832,35 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
   const addAllocation = () => setForm((current) => ({ ...current, allocations: [...(current.allocations || []), { invoiceId: "", receiptNumber: "", projectId: "", budgetId: "", amount: "", deductions: "" }] }));
   const removeAllocation = (index) => setForm((current) => ({ ...current, allocations: (current.allocations || []).filter((_, i) => i !== index) }));
   const allocTotals = allocations.reduce((acc, row) => ({ gross: acc.gross + (Number(row.amount) || 0), deductions: acc.deductions + (Number(row.deductions) || 0) }), { gross: 0, deductions: 0 });
+  // Importación del aviso de pago: evita recargar a mano fila por fila lo que el PDF ya trae exacto.
+  const [adviceBusy, setAdviceBusy] = useState(false);
+  const [adviceNotice, setAdviceNotice] = useState(null);
+  const importPaymentAdvice = async (file) => {
+    if (!file) return;
+    setAdviceBusy(true); setAdviceNotice(null);
+    try {
+      const { pdfExtractText } = await import("./pdfToImage");
+      const { rows, total } = parsePaymentAdvice(await pdfExtractText(file));
+      if (!rows.length) { setAdviceNotice({ ok: false, text: "No se reconoció ninguna fila con el formato Documento · Su documento · Fecha · Deducciones · Importe bruto. Si el PDF es un escaneo sin texto, cargá las partidas a mano." }); return; }
+      const byReceipt = new Map(invoices.map((invoice) => [receiptKey(invoice.receiptNumber), invoice]));
+      let matched = 0;
+      const parsed = rows.map((row) => {
+        const invoice = byReceipt.get(receiptKey(row.receipt));
+        if (invoice) matched++;
+        return { invoiceId: invoice?.id || "", receiptNumber: invoice?.receiptNumber || row.receipt, projectId: invoice?.projectId || "", budgetId: invoice?.budgetId || "", amount: row.gross, deductions: row.deductions };
+      });
+      const sumGross = parsed.reduce((sum, row) => sum + row.amount, 0);
+      // Si el PDF trae "Total general", se contrasta contra la suma de las filas leídas: si no
+      // coinciden, alguna fila no se reconoció y hay que avisarlo antes de guardar.
+      const mismatch = total && Math.abs(total.gross - sumGross) > 0.01;
+      setForm((current) => ({ ...current, allocations: parsed, supplier: current.supplier || rows[0]?.document || "" }));
+      setAdviceNotice({
+        ok: !mismatch && matched === rows.length,
+        text: `Se leyeron ${rows.length} partida(s) por ${currencyAmount(sumGross, form.currency)}. ${matched === rows.length ? "Todas quedaron vinculadas a su factura." : `${matched} vinculadas automáticamente; ${rows.length - matched} no encontraron factura y hay que elegirla a mano.`}${mismatch ? ` Atención: el PDF declara un total de ${currencyAmount(total.gross, form.currency)} y las filas leídas suman ${currencyAmount(sumGross, form.currency)} — falta alguna fila.` : ""}`,
+      });
+    } catch (error) { setAdviceNotice({ ok: false, text: `No se pudo leer el PDF: ${error?.message || "formato no reconocido"}.` }); }
+    finally { setAdviceBusy(false); }
+  };
   // Resumen de a qué proyectos/presupuestos se reparte, para no tener que leer fila por fila.
   const allocationSummary = [...new Set(allocations.map((row) => {
     const project = projects.find((item) => item.id === row.projectId);
@@ -1842,7 +1899,8 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
     <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4"><div><h2 id="finance-dialog-title" className="text-lg font-semibold text-slate-900">{duplicating ? `Duplicar ${form.kind === "expense" ? "gasto" : "ingreso"}` : movement ? "Editar movimiento" : `Registrar ${form.kind === "expense" ? "gasto" : "ingreso"}`}</h2><p className="text-xs text-slate-500">{duplicating ? "Se guardará como un movimiento nuevo" : "Ingresos, gastos y comprobantes de la operación"}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
     <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button onClick={() => selectKind("expense")} className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "expense" ? "bg-white text-brand-600 shadow-sm" : "text-slate-500"}`}>Gasto</button><button onClick={() => selectKind("income")} className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "income" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}>Ingreso</button></div>
       {pickMode ? <div className="mt-4"><h3 className="text-sm font-semibold text-slate-800">¿Cómo querés cargar el comprobante?</h3><div className="mt-3 space-y-2"><button onClick={() => setPickMode(false)} className="flex min-h-16 w-full items-center gap-3 rounded-xl border border-slate-200 px-3 text-left hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><ClipboardList className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Carga manual</b><span className="text-xs text-slate-500">Completá los datos del movimiento.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /></button><label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Camera className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Tomar una foto</b><span className="text-xs text-slate-500">Usala como evidencia durante la carga.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /><input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label><label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Upload className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Elegir imagen o PDF</b><span className="text-xs text-slate-500">Seleccioná una imagen o un PDF ya existente (máx. 5 MB).</span></span><ChevronRight className="h-4 w-4 text-slate-400" /><input type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label></div>{processing && <div className="mt-3 flex items-center gap-2 rounded-lg bg-brand-50 p-3 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Leyendo el comprobante…</div>}<div className="mt-3 rounded-xl bg-gradient-to-r from-brand-50 to-violet-50 p-3 text-xs text-brand-700"><b className="block">Lectura automática (OCR local)</b>Al elegir una foto, se intenta completar concepto, importe, moneda, fecha, proveedor y N.º de comprobante. Ningún OCR es 100% exacto: siempre revisá los datos antes de guardar, y si falta algo podés verlo en el texto reconocido. Los PDF también se leen automáticamente (solo la primera página).</div></div> : <div className="mt-4 space-y-3">{duplicating && <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-700"><b className="block">Copia de un movimiento existente</b>Se copiaron el concepto, el importe y las vinculaciones. Quedaron en blanco el número de comprobante y el adjunto, y la fecha se puso en hoy. Revisá los datos antes de guardar.</div>}{aiNotice && (aiNotice.ok ? <div className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700"><b className="block">Datos completados por OCR</b>Revisá los campos, sobre todo el importe y la fecha, antes de guardar. Si falta algún dato, buscalo en el texto reconocido de abajo.</div> : <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600"><b className="block">No se pudo completar los campos automáticamente</b>La imagen quedó guardada como evidencia; completá los datos manualmente.{aiNotice.error && <span className="mt-1 block text-slate-400">Motivo: {aiNotice.error}</span>}</div>)}{aiNotice?.qualityHints?.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><b className="block">La foto puede estar afectando la lectura</b><ul className="mt-1 list-disc space-y-0.5 pl-4">{aiNotice.qualityHints.map((hint) => <li key={hint}>{hint}</li>)}</ul><p className="mt-1.5">Si tenés la factura en PDF, subila directo en vez de sacarle una foto — se lee mejor y más rápido.</p></div>}{aiNotice?.rawText && <details className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs"><summary className="cursor-pointer font-medium text-slate-600">Ver texto reconocido por OCR (para copiar lo que falte)</summary><pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 font-mono text-[10px] leading-relaxed text-slate-600">{aiNotice.rawText}</pre></details>}{form.kind === "expense" && companyMismatch && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><b className="block">Este comprobante no parece corresponder a {branding?.companyLegalName || branding?.companyName || "tu empresa"}</b>El CUIT detectado en el receptor es {formatCuit(companyMismatch.receptorCuit)}{companyMismatch.receptorName ? ` (${companyMismatch.receptorName})` : ""}, distinto al configurado ({formatCuit(branding?.companyCuit)}). Puede ser un comprobante de otra persona/empresa, o un error de lectura del OCR.<label className="mt-2 flex items-center gap-2 font-medium"><input type="checkbox" checked={mismatchConfirmed} onChange={(event) => setMismatchConfirmed(event.target.checked)} /> Confirmo que este gasto corresponde igual a mi empresa</label></div>}<L label="Concepto *"><input autoFocus value={form.concept} onChange={(event) => set("concept", event.target.value)} placeholder={form.kind === "expense" ? "Ej. Compra de sensor inductivo" : "Ej. Cobro de factura"} className="u-input" /></L><div className="grid grid-cols-2 gap-2"><L label="Importe *" help={hasAllocations ? "Con partidas cargadas, el importe es la suma de los brutos y no se edita a mano." : ""}><input type="number" min="0" step="0.01" readOnly={hasAllocations} value={hasAllocations ? grossAmount : form.amount} onChange={(event) => set("amount", event.target.value)} placeholder="0,00" className={`u-input ${hasAllocations ? "bg-slate-100 text-slate-500" : ""}`} /></L><L label="Moneda"><select value={form.currency} onChange={(event) => { const currency = event.target.value; setForm((current) => ({ ...current, currency, exchangeRate: currency === "USD" ? 1 : "", exchangeRateSource: "", exchangeRateUpdatedAt: "" })); }} className="u-input"><option value="ARS">ARS · Peso argentino</option><option value="USD">USD · Dólar estadounidense</option><option value="EUR">EUR · Euro</option></select></L></div>{form.kind === "income" && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-  <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-xs text-slate-700">Partidas del aviso de pago</b><button type="button" onClick={addAllocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600"><Plus className="h-3.5 w-3.5" /> Agregar factura</button></div>
+  <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-xs text-slate-700">Partidas del aviso de pago</b><div className="flex flex-wrap items-center gap-1.5"><label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600 ${adviceBusy ? "pointer-events-none opacity-50" : ""}`}>{adviceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Importar aviso (PDF)<input type="file" accept="application/pdf,.pdf" className="hidden" onChange={(event) => { importPaymentAdvice(event.target.files?.[0]); event.target.value = ""; }} /></label><button type="button" onClick={addAllocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600"><Plus className="h-3.5 w-3.5" /> Agregar factura</button></div></div>
+  {adviceNotice && <div className={`mt-2 rounded-lg border p-2.5 text-[11px] leading-relaxed ${adviceNotice.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{adviceNotice.text}</div>}
   {!hasAllocations
     ? <><div className="mt-2 grid grid-cols-2 gap-2"><L label="Deducciones" help="Retenciones aplicadas por el cliente (Ganancias, IVA, IIBB, SUSS). En la misma moneda que el importe."><input type="number" min="0" step="0.01" value={form.deductions ?? ""} onChange={(event) => set("deductions", event.target.value)} placeholder="0,00" className="u-input" /></L><div className="rounded-lg bg-white px-3 py-2"><span className="block text-[11px] text-slate-400">Neto acreditado</span><b className={deductionsExceed ? "text-rose-600" : "text-emerald-600"}>{currencyAmount(netAmount, form.currency)}</b></div></div><p className="mt-2 text-[11px] text-slate-500">Pago de una sola factura: cargá el <b>importe bruto</b> arriba y la retención acá. Si el aviso cancela varias facturas, usá <b>Agregar factura</b>.</p></>
     : <><div className="mt-2 space-y-2">
@@ -1979,8 +2037,56 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   const vatDebit = inMonth.filter((movement) => movement.kind === "invoice").reduce((sum, movement) => sum + (Number(movement.vatAmountUsd) || 0), 0);
   const vatCredit = inMonth.filter((movement) => movement.kind === "expense" && movement.vatIncluded).reduce((sum, movement) => sum + (Number(movement.vatAmountUsd) || 0), 0);
   const vatPayable = vatDebit - vatCredit;
-  const cumulativeBilled = sumKind(projectRows, "invoice"); const cumulativeCollected = projectRows.filter((movement) => movement.kind === "income").reduce((sum, movement) => sum + allocationsOf(movement).filter((allocation) => allocation.projectId || allocation.budgetId).reduce((share, allocation) => share + allocation.amountUsd, 0), 0); const receivable = Math.max(0, cumulativeBilled - cumulativeCollected);
+  // El cliente paga la factura con IVA, así que la deuda hay que medirla en bruto. Antes se
+  // comparaba el facturado NETO (amountUsd de la factura) contra el cobro BRUTO: cada cobro
+  // descontaba ~21% de más y "Por cobrar" quedaba subestimado — con el Math.max(0) tapando el
+  // negativo cuando la factura ya estaba saldada.
+  const invoiceGross = (movement) => (Number(movement.grossAmountUsd) || ((Number(movement.amountUsd) || 0) + (Number(movement.vatAmountUsd) || 0)));
+  const cumulativeBilled = projectRows.filter((movement) => movement.kind === "invoice").reduce((sum, movement) => sum + invoiceGross(movement), 0);
+  const cumulativeCollected = projectRows.filter((movement) => movement.kind === "income").reduce((sum, movement) => sum + allocationsOf(movement).filter((allocation) => allocation.projectId || allocation.budgetId).reduce((share, allocation) => share + allocation.amountUsd, 0), 0);
+  const receivable = Math.max(0, cumulativeBilled - cumulativeCollected);
   const payable = projectRows.filter((movement) => movement.kind === "expense" && movement.paymentStatus === "pending").reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
+  // Antigüedad de la deuda factura por factura. "Por cobrar" daba un total sin decir si eran 30 o
+  // 180 días, que es justamente el dato con el que se decide a quién reclamar.
+  // Lo cobrado se imputa a cada factura por su partida; lo que no está imputado a una factura
+  // concreta se aplica contra las más viejas del mismo cliente (criterio FIFO, declarado abajo).
+  const collectedByInvoice = {};
+  const unappliedByClient = {};
+  projectRows.filter((movement) => movement.kind === "income").forEach((movement) => {
+    const rows = (movement.allocations || []).filter((allocation) => allocation.invoiceId && Number(allocation.amountUsd) > 0);
+    const applied = rows.reduce((sum, allocation) => { collectedByInvoice[allocation.invoiceId] = (collectedByInvoice[allocation.invoiceId] || 0) + Number(allocation.amountUsd); return sum + Number(allocation.amountUsd); }, 0);
+    const rest = (Number(movement.amountUsd) || 0) - applied;
+    if (rest > 0.005) { const key = movement.clientId || movement.clientName || "—"; unappliedByClient[key] = (unappliedByClient[key] || 0) + rest; }
+  });
+  const openInvoices = projectRows.filter((movement) => movement.kind === "invoice")
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map((invoice) => {
+      const key = invoice.clientId || invoice.clientName || "—";
+      const gross = invoiceGross(invoice);
+      let paid = collectedByInvoice[invoice.id] || 0;
+      const pool = unappliedByClient[key] || 0;
+      if (pool > 0 && paid < gross) { const take = Math.min(pool - 0, gross - paid); paid += take; unappliedByClient[key] = pool - take; }
+      const balance = Math.round((gross - paid) * 100) / 100;
+      const days = invoice.date ? Math.floor((Date.now() - new Date(`${String(invoice.date).slice(0, 10)}T12:00:00`).getTime()) / 86400000) : 0;
+      return { ...invoice, gross, paid, balance, days };
+    })
+    .filter((invoice) => invoice.balance > 0.005)
+    .sort((a, b) => b.days - a.days);
+  // Diferencia de cambio: facturás en una cotización y cobrás en otra. Sobre las facturas del
+  // período ya saldadas, es lo cobrado (en USD al cambio del día del cobro) menos lo facturado
+  // (en USD al cambio del día de la factura). Se informa aparte y NO se mezcla con el resultado
+  // operativo: no es margen del negocio, es efecto cambiario.
+  const settledInvoices = projectRows.filter((movement) => movement.kind === "invoice" && String(movement.date || "").slice(0, 7) === period)
+    .map((invoice) => ({ invoice, gross: invoiceGross(invoice), collected: collectedByInvoice[invoice.id] || 0 }))
+    .filter((row) => row.collected > 0.005);
+  const fxDifference = settledInvoices.reduce((sum, row) => sum + (row.collected - row.gross), 0);
+  const AGING_BUCKETS = [{ label: "0-30 días", max: 30, tone: "bg-emerald-500" }, { label: "31-60", max: 60, tone: "bg-amber-500" }, { label: "61-90", max: 90, tone: "bg-orange-500" }, { label: "+90 días", max: Infinity, tone: "bg-rose-500" }];
+  const aging = AGING_BUCKETS.map((bucket, index) => {
+    const min = index === 0 ? -Infinity : AGING_BUCKETS[index - 1].max;
+    const rows = openInvoices.filter((invoice) => invoice.days > min && invoice.days <= bucket.max);
+    return { ...bucket, value: rows.reduce((sum, invoice) => sum + invoice.balance, 0), count: rows.length };
+  });
+  const agingTotal = aging.reduce((sum, bucket) => sum + bucket.value, 0);
   const previousIncome = sumKind(previousRows, "income"); const previousBilled = sumKind(previousRows, "invoice"); const previousExpense = sumKind(previousRows, "expense"); const previousResult = previousBilled - previousExpense;
   const margin = billed > 0 ? (result / billed) * 100 : 0;
   const expenseRows = inMonth.filter((movement) => movement.kind === "expense");
@@ -2006,7 +2112,14 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   const shareForProject = (movement, projectId) => allocationsOf(movement).filter((allocation) => allocation.projectId === projectId).reduce((sum, allocation) => sum + allocation.amountUsd, 0);
   const projectProfitability = projects.map((project) => { const inv = inMonth.filter((movement) => movement.kind === "invoice").reduce((sum, movement) => sum + shareForProject(movement, project.id), 0); const exp = inMonth.filter((movement) => movement.kind === "expense").reduce((sum, movement) => sum + shareForProject(movement, project.id), 0); return { name: project.key || project.name, Facturado: inv, Egresos: exp, Resultado: inv - exp }; }).filter((row) => row.Facturado || row.Egresos).sort((a, b) => b.Resultado - a.Resultado).slice(0, 8);
   const billedByClient = Object.values(inMonth.filter((movement) => movement.kind === "invoice").reduce((map, movement) => { const key = movement.clientName || "Sin cliente"; if (!map[key]) map[key] = { name: key, net: 0, vat: 0, gross: 0, value: 0 }; const net = Number(movement.netAmountUsd ?? movement.amountUsd) || 0; const vat = Number(movement.vatAmountUsd) || 0; map[key].net += net; map[key].vat += vat; map[key].gross += Number(movement.grossAmountUsd) || net + vat; map[key].value = map[key].gross; return map; }, {})).sort((a, b) => b.gross - a.gross);
-  const budgetExecution = projectFilter === "all" ? [] : budgets.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage) && budget.projectId === projectFilter).map((budget) => { const actual = movements.filter((movement) => movement.kind === "expense" && (movement.budgetId === budget.id || movement.projectId === budget.projectId)).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0); const baseline = Number(budget.estimatedCost) || 0; return { ...budget, actual, baseline, deviation: baseline ? actual - baseline : 0, progress: baseline ? (actual / baseline) * 100 : 0 }; }).sort((a, b) => b.progress - a.progress).slice(0, 6);
+  // Solo los gastos vinculados a ESTE presupuesto. Antes se sumaba además cualquier gasto del
+  // proyecto (`|| movement.projectId === budget.projectId`): con dos presupuestos aprobados en el
+  // mismo proyecto, el mismo gasto se contaba entero en los dos y ambas barras se inflaban.
+  // El servidor ya asigna budgetId solo al crear el movimiento, así que ese OR era redundante.
+  const budgetExecution = projectFilter === "all" ? [] : budgets.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage) && budget.projectId === projectFilter).map((budget) => { const actual = movements.filter((movement) => movement.kind === "expense" && movement.budgetId === budget.id).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0); const baseline = Number(budget.estimatedCost) || 0; return { ...budget, actual, baseline, deviation: baseline ? actual - baseline : 0, progress: baseline ? (actual / baseline) * 100 : 0 }; }).sort((a, b) => b.progress - a.progress).slice(0, 6);
+  // Gastos del proyecto que no quedaron vinculados a ningún presupuesto (cargados antes de que
+  // existiera el vínculo automático). Se muestran aparte para que no desaparezcan del control.
+  const unbudgetedExpense = projectFilter === "all" ? 0 : movements.filter((movement) => movement.kind === "expense" && movement.projectId === projectFilter && !movement.budgetId).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
   const currencyExposure = grouped(inMonth, "currency", "USD");
   const currencyExposureTotal = currencyExposure.reduce((sum, row) => sum + row.value, 0);
   const topCategoryShare = expense && fullCostDistribution.length ? (fullCostDistribution[0].value / expense) * 100 : 0;
@@ -2059,6 +2172,8 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   if (pendingExpenses.length && isMaterial(payable)) insights.push({ severity: 2, tone: "amber", title: "Cuentas por pagar", text: `${fmt(payable)} en ${pendingExpenses.length} gasto(s) marcados como pendientes de pago.`, action: { label: "Ver pendientes", filter: "pending" } });
   // La concentración solo tiene sentido con volumen: con uno o dos gastos siempre da cerca del 100%.
   if (expenseRows.length >= MIN_SAMPLE && topCategoryShare > 40) insights.push({ severity: 1, tone: "violet", title: "Concentración de costos", text: `${fullCostDistribution[0]?.name} representa ${topCategoryShare.toFixed(0)}% del gasto mensual, sobre ${expenseRows.length} gastos.` });
+  if (settledInvoices.length && isMaterial(fxDifference)) insights.push({ severity: 1, tone: fxDifference >= 0 ? "emerald" : "amber", title: fxDifference >= 0 ? "Diferencia de cambio a favor" : "Diferencia de cambio en contra", text: `Sobre ${settledInvoices.length} factura(s) del mes con cobros imputados, lo cobrado difiere de lo facturado en ${fmt(Math.abs(fxDifference))} por la variación del tipo de cambio entre la emisión y el cobro. No se incluye en el resultado operativo: es efecto cambiario, no margen.` });
+  if (openInvoices.some((invoice) => invoice.days > 90)) insights.push({ severity: 3, tone: "rose", title: "Deuda con más de 90 días", text: `${fmt(aging[3].value)} en ${aging[3].count} factura(s) con más de 90 días de antigüedad. La más vieja acumula ${openInvoices[0].days} días.` });
   if (inMonth.length && !insights.length) insights.push({ severity: 0, tone: "emerald", title: "Sin desvíos relevantes", text: `No se detectaron desvíos por encima del umbral de materialidad (${fmt(materialityUsd)}).` });
   insights.sort((a, b) => b.severity - a.severity);
   const shownInsights = insights.slice(0, 4);
@@ -2074,6 +2189,24 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   // Baja los comprobantes del listado tal como quedó filtrado, no todos los del sistema: así se
   // puede acotar por período, proyecto o tipo antes de descargar.
   const withAttachment = visible.filter((movement) => movement.hasAttachment || movement.attachmentUrl);
+  // Exportación del libro de movimientos tal como quedó filtrado. Finanzas solo emitía un PDF de
+  // KPIs: no había forma de pasarle el detalle al contador.
+  const exportMovementsCSV = () => {
+    const head = ["ID", "Tipo", "Fecha", "Concepto", "Cliente/Proveedor", "Comprobante", "Proyecto", "Presupuesto", "Categoría", "Moneda", "Importe", "Cotización", "Importe USD", "IVA USD", "Retenciones USD", "Neto USD", "Estado de pago", "Fecha de pago", "Cargado por", "Editado por"];
+    const kindLabel = { expense: "Gasto", income: "Cobro", invoice: "Factura" };
+    const cell = (value) => { const text = String(value ?? ""); return /[",;\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
+    const rows = visible.map((movement) => [
+      movement.id, kindLabel[movement.kind] || movement.kind, movement.date, movement.concept,
+      movement.supplier || movement.clientName || "", movement.receiptNumber || "",
+      projects.find((project) => project.id === movement.projectId)?.key || "",
+      budgets.find((budget) => budget.id === movement.budgetId)?.number || "",
+      movement.category || "", movement.currency, movement.amount, movement.exchangeRate || 1,
+      movement.amountUsd, movement.vatAmountUsd ?? "", movement.deductionsUsd ?? "", movement.netAmountUsd ?? "",
+      movement.kind === "expense" ? (movement.paymentStatus === "pending" ? "Pendiente" : "Pagado") : "",
+      movement.paidAt || "", movement.createdByName || "", movement.updatedByName || "",
+    ].map(cell).join(";"));
+    downloadFile(`finanzas_${period}${projectFilter === "all" ? "" : `_${projects.find((project) => project.id === projectFilter)?.key || projectFilter}`}.csv`, [head.join(";"), ...rows].join("\n"));
+  };
   const downloadAllAttachments = async () => {
     setBulkProgress({ done: 0, total: withAttachment.length });
     for (let index = 0; index < withAttachment.length; index++) {
@@ -2122,7 +2255,9 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
       { label: "Flujo de caja (neto acreditado - pagado)", value: fmt(cashFlow) },
       { label: "Margen", value: `${margin.toFixed(1)}%` },
       { label: "IVA debito / credito / saldo", value: `${fmt(vatDebit)} / ${fmt(vatCredit)} / ${fmt(vatPayable)}` },
-      { label: "Por cobrar", value: fmt(receivable) },
+      { label: "Por cobrar (bruto c/IVA)", value: fmt(receivable) },
+      ...(aging[3].count ? [{ label: "Deuda +90 dias", value: `${fmt(aging[3].value)} en ${aging[3].count} factura(s)` }] : []),
+      ...(settledInvoices.length && fxDifference ? [{ label: "Diferencia de cambio", value: fmt(fxDifference) }] : []),
       { label: "Por pagar", value: fmt(payable) },
       { label: "Gastos con comprobante", value: `${receiptCompliance.toFixed(0)}%` },
     ];
@@ -2190,7 +2325,26 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
         </div>) : <EmptyChart>Sin facturas en el período.</EmptyChart>}</div>
       </Panel>
       <Panel title="Ejecución del presupuesto">
-        <div className="space-y-2">{budgetExecution.length ? budgetExecution.map((budget) => <div key={budget.id} className="rounded-xl border border-slate-100 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="truncate font-semibold">{budget.number || budget.id} · {budget.title}</span><b className={budget.progress > 100 ? "text-rose-600" : "text-slate-700"}>{budget.baseline ? `${budget.progress.toFixed(0)}%` : "Sin costo estimado"}</b></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budget.progress > 100 ? "bg-rose-500" : budget.progress > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, budget.progress)}%` }} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-400"><span>Real <b className="text-slate-600">{fmt(budget.actual)}</b></span><span>{budget.baseline ? <>Plan <b className="text-slate-600">{fmt(budget.baseline)}</b></> : "Completar costo estimado"}</span></div></div>) : <EmptyChart>No hay presupuestos aprobados vinculados.</EmptyChart>}</div>
+        <div className="space-y-2">{budgetExecution.length ? budgetExecution.map((budget) => <div key={budget.id} className="rounded-xl border border-slate-100 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="truncate font-semibold">{budget.number || budget.id} · {budget.title}</span><b className={budget.progress > 100 ? "text-rose-600" : "text-slate-700"}>{budget.baseline ? `${budget.progress.toFixed(0)}%` : "Sin costo estimado"}</b></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budget.progress > 100 ? "bg-rose-500" : budget.progress > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, budget.progress)}%` }} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-400"><span>Real <b className="text-slate-600">{fmt(budget.actual)}</b></span><span>{budget.baseline ? <>Plan <b className="text-slate-600">{fmt(budget.baseline)}</b></> : "Completar costo estimado"}</span></div></div>) : <EmptyChart>No hay presupuestos aprobados vinculados.</EmptyChart>}{unbudgetedExpense > 0 && <p className="text-[10px] text-amber-600">{fmt(unbudgetedExpense)} en gastos del proyecto sin presupuesto asignado: no se computan en ninguna barra.</p>}</div>
+      </Panel>
+      <Panel title="Antigüedad de la deuda">
+        {!openInvoices.length ? <EmptyChart>Sin facturas pendientes de cobro.</EmptyChart> : <div className="space-y-3">
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
+            {aging.map((bucket) => bucket.value > 0 && <div key={bucket.label} className={bucket.tone} style={{ width: `${agingTotal ? (bucket.value / agingTotal) * 100 : 0}%` }} title={`${bucket.label}: ${fmt(bucket.value)}`} />)}
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {aging.map((bucket) => <div key={bucket.label} className="flex items-center gap-1.5 text-[10px]"><span className={`h-2 w-2 shrink-0 rounded-full ${bucket.tone}`} /><span className="min-w-0 flex-1 truncate text-slate-500">{bucket.label}</span><b className="shrink-0 text-slate-700">{fmt(bucket.value)}</b></div>)}
+          </div>
+          <div className="space-y-1.5 border-t border-slate-100 pt-2">
+            {openInvoices.slice(0, 5).map((invoice) => <button key={invoice.id} onClick={() => openEdit(invoice)} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-slate-50">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${invoice.days > 90 ? "bg-rose-500" : invoice.days > 60 ? "bg-orange-500" : invoice.days > 30 ? "bg-amber-500" : "bg-emerald-500"}`} />
+              <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium text-slate-700">{invoice.receiptNumber || invoice.id}</span><span className="block truncate text-[10px] text-slate-400">{invoice.clientName || "Sin cliente"} · {invoice.days} días</span></span>
+              <b className="shrink-0 text-[11px] text-slate-800">{fmt(invoice.balance)}</b>
+            </button>)}
+            {openInvoices.length > 5 && <p className="text-[10px] text-slate-400">+{openInvoices.length - 5} factura(s) más.</p>}
+          </div>
+          <p className="text-[10px] leading-relaxed text-slate-400">Saldo en bruto (con IVA), que es lo que paga el cliente. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente.</p>
+        </div>}
       </Panel>
       <Panel title="Concentración por proveedor">
         <div className="space-y-3">{suppliers.length ? suppliers.map((row, index) => <div key={row.name}><div className="flex justify-between gap-3 text-[11px]"><span className="min-w-0 truncate font-medium text-slate-600">{index + 1}. {row.name}</span><b className="shrink-0">{fmt(row.value)}</b></div><div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-violet-500" style={{ width: `${expense ? Math.min(100, (row.value / expense) * 100) : 0}%` }} /></div><span className="mt-1 block text-right text-[9px] text-slate-400">{expense ? ((row.value / expense) * 100).toFixed(0) : 0}% de los egresos</span></div>) : <EmptyChart>Sin gastos asociados a proveedores.</EmptyChart>}{supplierRanking.length > suppliers.length && <p className="text-[10px] text-slate-400">+{supplierRanking.length - suppliers.length} proveedor(es) más, fuera del top 6.</p>}</div>
@@ -2200,12 +2354,16 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
       </Panel>
     </div>
 
-    <div><Box className="p-4"><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar concepto, proveedor o comprobante…" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"><option value="all">Todos los movimientos</option><option value="expense">Gastos</option><option value="income">Cobros</option><option value="invoice">Facturas</option></select>{withAttachment.length > 0 && <button type="button" onClick={downloadAllAttachments} disabled={!!bulkProgress} title="Descarga los comprobantes de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">{bulkProgress ? <><Loader2 className="h-4 w-4 animate-spin" /> {bulkProgress.done}/{bulkProgress.total}</> : <><Download className="h-4 w-4" /> Comprobantes ({withAttachment.length})</>}</button>}</div>{alertFilter && <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span>Mostrando solo {alertFilter === "undocumented" ? "gastos sin comprobante" : "gastos pendientes de pago"} ({visible.length}).</span><button type="button" onClick={() => setAlertFilter(null)} className="ml-auto inline-flex items-center gap-1 rounded-md bg-white/70 px-2 py-1 font-medium hover:bg-white">Quitar filtro <X className="h-3 w-3" /></button></div>}<div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto">{visible.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">No hay movimientos registrados.</div> : visible.map((movement) => { const project = projects.find((item) => item.id === movement.projectId); const invoice = movement.kind === "invoice"; const editable = !invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId; return <div key={movement.id} onClick={editable ? () => openEdit(movement) : undefined} className={`flex flex-col gap-3 rounded-xl border border-slate-200 p-3 sm:flex-row sm:items-center ${editable ? "cursor-pointer transition hover:border-brand-300 hover:bg-slate-50/60" : ""}`}>
+    <div><Box className="p-4"><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar concepto, proveedor o comprobante…" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"><option value="all">Todos los movimientos</option><option value="expense">Gastos</option><option value="income">Cobros</option><option value="invoice">Facturas</option></select><button type="button" onClick={exportMovementsCSV} disabled={!visible.length} title="Exporta el detalle de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>{withAttachment.length > 0 && <button type="button" onClick={downloadAllAttachments} disabled={!!bulkProgress} title="Descarga los comprobantes de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">{bulkProgress ? <><Loader2 className="h-4 w-4 animate-spin" /> {bulkProgress.done}/{bulkProgress.total}</> : <><Download className="h-4 w-4" /> Comprobantes ({withAttachment.length})</>}</button>}</div>{alertFilter && <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span>Mostrando solo {alertFilter === "undocumented" ? "gastos sin comprobante" : "gastos pendientes de pago"} ({visible.length}).</span><button type="button" onClick={() => setAlertFilter(null)} className="ml-auto inline-flex items-center gap-1 rounded-md bg-white/70 px-2 py-1 font-medium hover:bg-white">Quitar filtro <X className="h-3 w-3" /></button></div>}<div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto">{visible.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">No hay movimientos registrados.</div> : visible.map((movement) => { const project = projects.find((item) => item.id === movement.projectId); const invoice = movement.kind === "invoice"; const editable = !invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId; return <div key={movement.id} onClick={editable ? () => openEdit(movement) : undefined} className={`flex flex-col gap-3 rounded-xl border border-slate-200 p-3 sm:flex-row sm:items-center ${editable ? "cursor-pointer transition hover:border-brand-300 hover:bg-slate-50/60" : ""}`}>
                 <div className="flex min-w-0 flex-1 items-start gap-3">
                   <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${invoice ? "bg-sky-50 text-sky-600" : movement.kind === "income" ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>{invoice ? <FileText className="h-5 w-5" /> : movement.kind === "income" ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2"><b className="text-sm">{movement.concept}</b><span className="font-mono text-[10px] text-slate-400">{movement.id}</span>{movement.budgetId && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{movement.budgetNumber || budgets.find((item) => item.id === movement.budgetId)?.number || movement.budgetId}</span>}{movement.sourceOrderId && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Automático · OT {movement.sourceOrderId}</span>}{movement.sourcePurchaseOrderId && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">Automático · OC {movement.purchaseOrderNumber || movement.sourcePurchaseOrderId}</span>}{movement.kind === "expense" && movement.paymentStatus === "pending" && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Pendiente de pago</span>}{movement.allocations?.length > 1 && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{movement.allocations.length} facturas</span>}</div>
                     <div className="mt-0.5 text-xs text-slate-500">{budgetDate(movement.date)}{project ? ` · ${project.key}` : ""}{movement.category ? ` · ${movement.category}` : ""}{movement.receiptNumber ? ` · ${movement.receiptNumber}` : ""}{movement.purchaseOrderNumber ? ` · OC ${movement.purchaseOrderNumber}` : ""}{movement.kind === "expense" && movement.vatIncluded ? ` · IVA cred. ${money(movement.vatAmountUsd)}` : ""}</div>
+                    {/* Trazabilidad: el servidor ya guardaba quién creó y quién editó cada
+                        movimiento, pero no se mostraba en ningún lado. En un módulo de dinero
+                        tiene que estar a la vista sin abrir el registro. */}
+                    <div className="mt-0.5 text-[10px] text-slate-400">{movement.updatedByName ? `Editado por ${movement.updatedByName}${movement.updatedAt ? ` · ${budgetDate(String(movement.updatedAt).slice(0, 10))}` : ""}` : movement.createdByName ? `Cargado por ${movement.createdByName}${movement.createdAt ? ` · ${budgetDate(String(movement.createdAt).slice(0, 10))}` : ""}` : ""}</div>
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-2 sm:shrink-0 sm:justify-end sm:gap-3">
