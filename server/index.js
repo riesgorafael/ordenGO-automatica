@@ -985,8 +985,8 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
 });
 
 /* ------------------------------------------------ Presupuestos ------------------------------------------------ */
-const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Rechazado"];
-const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Rechazado": 0 };
+const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Pagado", "Rechazado"];
+const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Pagado": 100, "Rechazado": 0 };
 const LABOR_ROLE_COST = { "Programador": 50, "Ingeniero": 25, "Asesor": 20, "Programador AUX": 45, "Tablerista": 17, "Dibujante": 17, "Administrativo": 6, "Ayudante": 5, "Programador Aprendiz": 7 };
 const LABOR_DEFAULT_ROLE = { "Mano de obra": "Ingeniero", "Ingeniería": "Ingeniero", "Programación": "Programador", "Montaje": "Tablerista", "Puesta en marcha": "Ingeniero" };
 const normalizeAdditionalCost = (cost) => ({ ...cost, id: String(cost?.id || ""), category: String(cost?.category || "Otro").slice(0, 50), description: String(cost?.description || "").trim().slice(0, 200), amount: Math.round(Math.max(0, Number(cost?.amount) || 0) * 100) / 100, date: String(cost?.date || "").slice(0, 10), notes: String(cost?.notes || "").trim().slice(0, 500) });
@@ -997,7 +997,7 @@ const normalizeBudget = (input, previous = {}) => {
   budget.stage = BUDGET_STAGES.includes(budget.stage) ? budget.stage : "Borrador";
   budget.probabilityOverridden = Boolean(budget.probabilityOverridden);
   budget.probability = budget.probabilityOverridden ? Math.min(100, Math.max(0, Number(budget.probability) || 0)) : BUDGET_STAGE_PROBABILITY[budget.stage];
-  if (budget.projectId && budget.stage !== "Facturado") { budget.stage = "Aprobado"; budget.probability = 100; }
+  if (budget.projectId && !["Facturado", "Pagado"].includes(budget.stage)) { budget.stage = "Aprobado"; budget.probability = 100; }
   budget.negativeMarginReason = String(budget.negativeMarginReason || "").trim().slice(0, 500);
   budget.number = String(budget.number || budget.id || "").trim().slice(0, 40);
   budget.purchaseOrderNumber = String(budget.purchaseOrderNumber || "").trim().slice(0, 80);
@@ -1023,7 +1023,7 @@ const normalizeBudget = (input, previous = {}) => {
 };
 
 async function upsertBudgetInvoice(budget, user, db = pool) {
-  if (budget.stage !== "Facturado") {
+  if (!["Facturado", "Pagado"].includes(budget.stage)) {
     await db.query("DELETE FROM financial_movements WHERE data->>'sourceBudgetId'=$1", [budget.id]);
     return null;
   }
@@ -1045,6 +1045,62 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   const invoice = { ...(existing?.data || {}), id, kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vatAmount, grossAmountUsd: grossAmount, arsReference, currency: "USD", exchangeRate: 1, date: invoiceDate, dueDate: budget.invoiceDueDate || "", invoiceNumber, receiptNumber: invoiceNumber, detail: budget.invoiceDetail || "", projectId: budget.projectId || "", budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || "", clientName: budget.client || "", sourceBudgetId: budget.id, paymentStatus: existing?.data?.paymentStatus || "pending", createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name, updatedAt: new Date().toISOString() };
   await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, invoice]);
   return invoice;
+}
+
+const movementBudgetIds = (movement) => [...new Set([
+  movement?.budgetId,
+  ...(Array.isArray(movement?.allocations) ? movement.allocations.map((allocation) => allocation?.budgetId) : []),
+].filter(Boolean))];
+
+// "Pagado" es una condición financiera derivada: nunca depende de que una persona la marque.
+// Se compara contra el total bruto de las facturas (neto + IVA), porque ese es el importe que el
+// cliente cancela. Si un cobro se corrige o elimina, el presupuesto vuelve automáticamente a
+// Facturado y conserva toda la trazabilidad de sus movimientos.
+async function syncBudgetPaymentStatuses(budgetIds, db = pool, user = null) {
+  const updated = [];
+  const uniqueBudgetIds = [...new Set((budgetIds || []).filter(Boolean))];
+  if (!uniqueBudgetIds.length) return updated;
+  // Se leen una sola vez aunque un aviso de pago cancele varias facturas/presupuestos.
+  const incomes = (await db.query("SELECT data FROM financial_movements WHERE data->>'kind'='income'")).rows.map((income) => income.data);
+  for (const budgetId of uniqueBudgetIds) {
+    const row = (await db.query("SELECT data FROM budgets WHERE id=$1", [budgetId])).rows[0];
+    if (!row?.data || !["Facturado", "Pagado"].includes(row.data.stage)) continue;
+    const budget = row.data;
+    const invoices = (await db.query("SELECT id,data FROM financial_movements WHERE data->>'kind'='invoice' AND (data->>'budgetId'=$1 OR data->>'sourceBudgetId'=$1)", [budgetId])).rows;
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
+    const billedGross = invoices.reduce((sum, invoice) => sum + (Number(invoice.data.grossAmountUsd) || (Number(invoice.data.amountUsd) || 0) + (Number(invoice.data.vatAmountUsd) || 0)), 0);
+    let collected = 0;
+    let lastPaymentDate = "";
+    for (const income of incomes) {
+      const allocations = (income.allocations || []).filter((allocation) => Number(allocation.amountUsd) > 0);
+      let contribution = 0;
+      if (allocations.length) contribution = allocations.filter((allocation) => allocation.budgetId === budgetId || invoiceIds.has(allocation.invoiceId)).reduce((sum, allocation) => sum + Number(allocation.amountUsd), 0);
+      else if (income.budgetId === budgetId) contribution = Number(income.amountUsd) || 0;
+      if (contribution > 0) {
+        collected += contribution;
+        if (String(income.date || "") > lastPaymentDate) lastPaymentDate = String(income.date || "").slice(0, 10);
+      }
+    }
+    collected = Math.round(collected * 100) / 100;
+    const outstanding = Math.round(Math.max(0, billedGross - collected) * 100) / 100;
+    const fullyPaid = billedGross > 0 && outstanding <= 0.01;
+    const nextStage = fullyPaid ? "Pagado" : "Facturado";
+    const stageChanged = budget.stage !== nextStage;
+    const next = {
+      ...budget,
+      stage: nextStage,
+      probability: 100,
+      collectedAmountUsd: collected,
+      outstandingAmountUsd: outstanding,
+      collectionProgress: billedGross > 0 ? Math.min(100, Math.round((collected / billedGross) * 100)) : 0,
+      paidAt: fullyPaid ? (lastPaymentDate || budget.paidAt || new Date().toISOString().slice(0, 10)) : "",
+    };
+    if (stageChanged) next.activity = [...(budget.activity || []), { type: fullyPaid ? "paid" : "payment_reopened", text: fullyPaid ? `Pago completo registrado: USD ${collected.toFixed(2)}` : `Cobro modificado: saldo pendiente USD ${outstanding.toFixed(2)}`, by: user?.id || "system", byName: user?.name || "Sistema", at: new Date().toISOString() }];
+    await db.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budgetId, next]);
+    for (const invoice of invoices) await db.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [invoice.id, { ...invoice.data, paymentStatus: fullyPaid ? "paid" : collected > 0 ? "partial" : "pending", paidAmountUsd: collected, outstandingAmountUsd: outstanding, paidAt: next.paidAt }]);
+    updated.push(next);
+  }
+  return updated;
 }
 
 /* ------------------------------------------------ Órdenes de compra ------------------------------------------------ */
@@ -1436,6 +1492,7 @@ app.delete("/api/whiteboard-notes/:id", auth, async (req, res) => {
 
 app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
   const budget = normalizeBudget(req.body);
+  if (budget.stage === "Pagado") return res.status(400).json({ error: "El estado Pagado se asigna automáticamente al registrar el cobro completo." });
   if (!String(budget.client || "").trim() || !String(budget.title || "").trim()) return res.status(400).json({ error: "Cliente y nombre del presupuesto son obligatorios." });
   if (!budget.id) {
     const year = new Date().getFullYear();
@@ -1444,18 +1501,18 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60)
     budget.id = `PRES-${year}-${String(next).padStart(3, "0")}`;
   }
   budget.number = budget.number || budget.id;
-  if (["Aprobado", "Facturado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
-  if (["Aprobado", "Facturado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
-  if (budget.stage === "Facturado" && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
-  if (budget.stage === "Facturado" && (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 LIMIT 1", [String(budget.invoiceNumber).trim()])).rows[0]) return res.status(409).json({ error: "Ya existe una factura con ese número." });
+  if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
+  if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
+  if (["Facturado", "Pagado"].includes(budget.stage) && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
+  if (["Facturado", "Pagado"].includes(budget.stage) && (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 LIMIT 1", [String(budget.invoiceNumber).trim()])).rows[0]) return res.status(409).json({ error: "Ya existe una factura con ese número." });
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id=$1 OR data->>'number'=$1 LIMIT 1", [budget.number])).rows[0];
   if (duplicateNumber) return res.status(409).json({ error: "Ya existe un presupuesto con ese número." });
   budget.createdAt = budget.createdAt || new Date().toISOString();
   budget.additionalCosts = budget.additionalCosts.map((cost, index) => ({ ...cost, id: `AC-${budget.id}-${Date.now()}-${index}`, createdAt: new Date().toISOString(), createdBy: req.user.id, createdByName: req.user.name }));
   budget.additionalCostTotal = Math.round(budget.additionalCosts.reduce((sum, cost) => sum + cost.amount, 0) * 100) / 100;
   budget.totalEstimatedCost = Math.round((budget.estimatedCost + budget.additionalCostTotal) * 100) / 100;
-  if (["Aprobado", "Facturado"].includes(budget.stage)) budget.commercialLockedAt = new Date().toISOString();
-  if (budget.stage === "Facturado") { budget.approvedAt = budget.approvedAt || new Date().toISOString(); budget.invoicedAt = String(budget.invoicedAt).slice(0, 10); }
+  if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage)) budget.commercialLockedAt = new Date().toISOString();
+  if (["Facturado", "Pagado"].includes(budget.stage)) { budget.approvedAt = budget.approvedAt || new Date().toISOString(); budget.invoicedAt = String(budget.invoicedAt).slice(0, 10); }
   budget.activity = [...(budget.activity || []), { type: "created", text: "Presupuesto creado", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   const db = await pool.connect();
   try {
@@ -1476,7 +1533,9 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), apiRateLimi
   const current = (await pool.query("SELECT data FROM budgets WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const budget = normalizeBudget(req.body, current);
-  const wasCommerciallyLocked = Boolean(current.commercialLockedAt || ["Aprobado", "Facturado"].includes(current.stage));
+  if (req.body?.stage === "Pagado" && current.stage !== "Pagado") return res.status(400).json({ error: "El estado Pagado se asigna automáticamente al registrar el cobro completo." });
+  if (current.stage === "Pagado" && budget.stage !== "Pagado") return res.status(409).json({ error: "Un presupuesto pagado no puede cambiarse manualmente. Edita o elimina el ingreso asociado para recalcular su estado." });
+  const wasCommerciallyLocked = Boolean(current.commercialLockedAt || ["Aprobado", "Facturado", "Pagado"].includes(current.stage));
   const currentAdditionalCosts = Array.isArray(current.additionalCosts) ? current.additionalCosts.map(normalizeAdditionalCost) : [];
   const currentCostIds = new Set(currentAdditionalCosts.map((cost) => cost.id));
   const appendedCosts = (Array.isArray(req.body?.additionalCosts) ? req.body.additionalCosts : []).map(normalizeAdditionalCost).filter((cost) => cost.description && cost.amount > 0 && !currentCostIds.has(cost.id)).map((cost, index) => ({ ...cost, id: `AC-${req.params.id}-${Date.now()}-${index}`, createdAt: new Date().toISOString(), createdBy: req.user.id, createdByName: req.user.name }));
@@ -1489,13 +1548,13 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), apiRateLimi
   }
   budget.additionalCostTotal = Math.round(budget.additionalCosts.reduce((sum, cost) => sum + cost.amount, 0) * 100) / 100;
   budget.totalEstimatedCost = Math.round(((Number(budget.estimatedCost) || 0) + budget.additionalCostTotal) * 100) / 100;
-  budget.commercialLockedAt = current.commercialLockedAt || (wasCommerciallyLocked ? current.approvedAt || new Date().toISOString() : ["Aprobado", "Facturado"].includes(budget.stage) ? new Date().toISOString() : "");
+  budget.commercialLockedAt = current.commercialLockedAt || (wasCommerciallyLocked ? current.approvedAt || new Date().toISOString() : ["Aprobado", "Facturado", "Pagado"].includes(budget.stage) ? new Date().toISOString() : "");
   budget.id = req.params.id;
   budget.number = budget.number || budget.id;
-  if (["Aprobado", "Facturado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
-  if (["Aprobado", "Facturado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
-  if (budget.stage === "Facturado" && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
-  if (budget.stage === "Facturado") { const currentInvoiceId = (await pool.query("SELECT id FROM financial_movements WHERE data->>'sourceBudgetId'=$1 LIMIT 1", [budget.id])).rows[0]?.id; const duplicateInvoice = (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 AND ($2::text IS NULL OR id<>$2) LIMIT 1", [String(budget.invoiceNumber).trim(), currentInvoiceId || null])).rows[0]; if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." }); }
+  if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
+  if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
+  if (["Facturado", "Pagado"].includes(budget.stage) && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
+  if (["Facturado", "Pagado"].includes(budget.stage)) { const currentInvoiceId = (await pool.query("SELECT id FROM financial_movements WHERE data->>'sourceBudgetId'=$1 LIMIT 1", [budget.id])).rows[0]?.id; const duplicateInvoice = (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 AND ($2::text IS NULL OR id<>$2) LIMIT 1", [String(budget.invoiceNumber).trim(), currentInvoiceId || null])).rows[0]; if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." }); }
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id<>$2 AND (id=$1 OR data->>'number'=$1) LIMIT 1", [budget.number, req.params.id])).rows[0];
   if (duplicateNumber) return res.status(409).json({ error: "Ya existe un presupuesto con ese número." });
   const changes = [];
@@ -1508,12 +1567,12 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), apiRateLimi
   budget.activity = [...(current.activity || []), { type: "update", text: changes.join(" · "), by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   if (budget.stage === "Enviado" && !budget.sentAt) budget.sentAt = new Date().toISOString();
   if (budget.stage === "Aprobado" && !budget.approvedAt) budget.approvedAt = new Date().toISOString();
-  if (budget.stage === "Facturado") { budget.approvedAt = budget.approvedAt || new Date().toISOString(); budget.invoicedAt = String(budget.invoicedAt).slice(0, 10); }
+  if (["Facturado", "Pagado"].includes(budget.stage)) { budget.approvedAt = budget.approvedAt || new Date().toISOString(); budget.invoicedAt = String(budget.invoicedAt).slice(0, 10); }
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
     await db.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, budget]);
-    if (["Aprobado", "Facturado"].includes(budget.stage) && budget.projectId) {
+    if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && budget.projectId) {
       const project = (await db.query("SELECT data FROM projects WHERE id=$1", [budget.projectId])).rows[0]?.data;
       if (project) {
         const linkedProject = { ...project, budgetId: budget.id, clientId: budget.clientId || project.clientId || "", client: budget.client || project.client || "", site: budget.site || project.site || "", purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "" };
@@ -1568,7 +1627,7 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
     await db.query("BEGIN");
     const budget = (await db.query("SELECT data FROM budgets WHERE id=$1 FOR UPDATE", [req.params.id])).rows[0]?.data;
     if (!budget) { await db.query("ROLLBACK"); return res.status(404).json({ error: "No existe" }); }
-    if (!["Aprobado", "Facturado"].includes(budget.stage) || !String(budget.purchaseOrderNumber || "").trim()) { await db.query("ROLLBACK"); return res.status(400).json({ error: "El presupuesto debe estar aprobado y tener una OC del cliente antes de crear el proyecto." }); }
+    if (!["Aprobado", "Facturado", "Pagado"].includes(budget.stage) || !String(budget.purchaseOrderNumber || "").trim()) { await db.query("ROLLBACK"); return res.status(400).json({ error: "El presupuesto debe estar aprobado y tener una OC del cliente antes de crear el proyecto." }); }
     if (budget.projectId) {
       const existing = (await db.query("SELECT data FROM projects WHERE id=$1", [budget.projectId])).rows[0]?.data;
       await db.query("COMMIT");
@@ -1580,9 +1639,9 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
     const monitors = (await db.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
     const project = { id: projectId, key, name: budget.title, color: req.body?.color || "#F18700", allowedUsers: monitors, budgetId: budget.id, clientId: budget.clientId || "", client: budget.client, site: budget.site || "", plannedStart: budget.plannedStart || "", plannedEnd: budget.plannedEnd || "", estimatedAmount: budget.amount, currency: "USD", purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "" };
     await db.query("INSERT INTO projects(id,data) VALUES($1,$2)", [projectId, project]);
-    const updated = { ...budget, stage: budget.stage === "Facturado" ? "Facturado" : "Aprobado", probability: 100, projectId, approvedAt: budget.approvedAt || new Date().toISOString(), activity: [...(budget.activity || []), { type: "converted", text: `Convertido en proyecto ${key}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
+    const updated = { ...budget, stage: ["Facturado", "Pagado"].includes(budget.stage) ? budget.stage : "Aprobado", probability: 100, projectId, approvedAt: budget.approvedAt || new Date().toISOString(), activity: [...(budget.activity || []), { type: "converted", text: `Convertido en proyecto ${key}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
     await db.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budget.id, updated]);
-    if (updated.stage === "Facturado") await upsertBudgetInvoice(updated, req.user, db);
+    if (["Facturado", "Pagado"].includes(updated.stage)) await upsertBudgetInvoice(updated, req.user, db);
     await db.query("COMMIT");
     res.json({ budget: updated, project });
   } catch (error) {
@@ -1701,10 +1760,10 @@ const applyApprovedBudgetLink = async (movement) => {
   if (!project) return movement;
   let budget = null;
   if (project.budgetId) budget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [project.budgetId])).rows[0]?.data || null;
-  if (!budget || !["Aprobado", "Facturado"].includes(budget.stage)) budget = (await pool.query("SELECT data FROM budgets WHERE data->>'projectId'=$1 AND data->>'stage' IN ('Aprobado','Facturado') ORDER BY updated_at DESC LIMIT 1", [movement.projectId])).rows[0]?.data || null;
+  if (!budget || !["Aprobado", "Facturado", "Pagado"].includes(budget.stage)) budget = (await pool.query("SELECT data FROM budgets WHERE data->>'projectId'=$1 AND data->>'stage' IN ('Aprobado','Facturado','Pagado') ORDER BY updated_at DESC LIMIT 1", [movement.projectId])).rows[0]?.data || null;
   movement.clientId = project.clientId || budget?.clientId || movement.clientId || "";
   movement.clientName = project.client || budget?.client || movement.clientName || "";
-  if (["Aprobado", "Facturado"].includes(budget?.stage)) {
+  if (["Aprobado", "Facturado", "Pagado"].includes(budget?.stage)) {
     movement.budgetId = budget.id;
     movement.budgetNumber = budget.number || budget.id;
     movement.budgetTitle = budget.title || "";
@@ -1743,9 +1802,18 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   movement.createdAt = movement.createdAt || new Date().toISOString();
   movement.createdBy = movement.createdBy || req.user.id;
   movement.createdByName = movement.createdByName || req.user.name;
-  try { await pool.query("INSERT INTO financial_movements(id,data) VALUES($1,$2)", [movement.id, movement]); }
-  catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un movimiento con ese identificador" }); throw error; }
-  res.json(movement);
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2)", [movement.id, movement]);
+    const updatedBudgets = movement.kind === "income" ? await syncBudgetPaymentStatuses(movementBudgetIds(movement), db, req.user) : [];
+    await db.query("COMMIT");
+    res.json({ ...movement, _updatedBudgets: updatedBudgets });
+  } catch (error) {
+    await db.query("ROLLBACK");
+    if (error.code === "23505") return res.status(409).json({ error: "Ya existe un movimiento con ese identificador" });
+    throw error;
+  } finally { db.release(); }
 });
 
 app.get("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -1783,8 +1851,18 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
     if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." });
   }
   movement.updatedBy = req.user.id; movement.updatedByName = req.user.name; movement.updatedAt = new Date().toISOString();
-  await pool.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, movement]);
-  res.json(movement);
+  const affectedBudgetIds = [...new Set([...movementBudgetIds(current), ...movementBudgetIds(movement)])];
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, movement]);
+    const updatedBudgets = (current.kind === "income" || movement.kind === "income") ? await syncBudgetPaymentStatuses(affectedBudgetIds, db, req.user) : [];
+    await db.query("COMMIT");
+    res.json({ ...movement, _updatedBudgets: updatedBudgets });
+  } catch (error) {
+    await db.query("ROLLBACK");
+    throw error;
+  } finally { db.release(); }
 });
 
 app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -1792,8 +1870,17 @@ app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (re
   if (movement?.sourceBudgetId) return res.status(409).json({ error: "Esta factura se administra desde el presupuesto. Cambia su etapa para quitarla de Finanzas." });
   if (movement?.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo. Se actualiza o se quita solo si la OT deja de estar aprobada o vinculada a un proyecto." });
   if (movement?.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra. Cambia su estado para quitarla de Finanzas." });
-  await pool.query("DELETE FROM financial_movements WHERE id=$1", [req.params.id]);
-  res.status(204).end();
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("DELETE FROM financial_movements WHERE id=$1", [req.params.id]);
+    const updatedBudgets = movement?.kind === "income" ? await syncBudgetPaymentStatuses(movementBudgetIds(movement), db, req.user) : [];
+    await db.query("COMMIT");
+    res.json({ deleted: true, _updatedBudgets: updatedBudgets });
+  } catch (error) {
+    await db.query("ROLLBACK");
+    throw error;
+  } finally { db.release(); }
 });
 // Duplica un proyecto con todas sus tareas; permite renombrar, cambiar clave, accesos y reasignar
 app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -1883,7 +1970,7 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
   if (o.budgetId) {
     const linkedBudget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [o.budgetId])).rows[0]?.data;
     if (!linkedBudget) return res.status(400).json({ error: "El presupuesto vinculado ya no existe." });
-    if (!["Aprobado", "Facturado"].includes(linkedBudget.stage)) return res.status(400).json({ error: "Solo se pueden generar órdenes desde presupuestos aprobados o facturados." });
+    if (!["Aprobado", "Facturado", "Pagado"].includes(linkedBudget.stage)) return res.status(400).json({ error: "Solo se pueden generar órdenes desde presupuestos aprobados, facturados o pagados." });
     o.budgetNumber = linkedBudget.number || linkedBudget.id;
     o.quoteNumber = linkedBudget.number || linkedBudget.id;
     o.customerPO = linkedBudget.purchaseOrderNumber || o.customerPO || "";
@@ -1956,7 +2043,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
     } else {
       const budget = (await pool.query("SELECT data FROM budgets WHERE id=$1", [patch.budgetId])).rows[0]?.data;
       if (!budget) return res.status(400).json({ error: "El presupuesto seleccionado ya no existe." });
-      if (!["Aprobado", "Facturado"].includes(budget.stage)) return res.status(400).json({ error: "La orden solo puede vincularse con un presupuesto aprobado o facturado." });
+      if (!["Aprobado", "Facturado", "Pagado"].includes(budget.stage)) return res.status(400).json({ error: "La orden solo puede vincularse con un presupuesto aprobado, facturado o pagado." });
       patch.budgetNumber = budget.number || budget.id; patch.quoteNumber = budget.number || budget.id;
       patch.customerPO = budget.purchaseOrderNumber || ""; patch.projectId = budget.projectId || "";
       patch.client = budget.client || patch.client || ""; patch.site = budget.site || patch.site || "";

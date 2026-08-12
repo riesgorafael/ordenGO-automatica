@@ -116,8 +116,8 @@ const isUrgentOrder = (o) => URGENT_SERVICES.has(o.service) || !!o.urgent;
 // se generó el aviso (technical.reportedAt, cargado automáticamente al crear la orden).
 const RESPONSE_SLA_MS = 2 * 60 * 60 * 1000;
 const isResponseOverdue = (o) => !o.technical?.arrivalAt && !!o.technical?.reportedAt && !["Completada", "Aprobada", "Facturada", "Suspendida"].includes(o.status) && (Date.now() - new Date(o.technical.reportedAt).getTime()) > RESPONSE_SLA_MS;
-const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Rechazado"];
-const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Rechazado": 0 };
+const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Pagado", "Rechazado"];
+const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Pagado": 100, "Rechazado": 0 };
 const LABOR_ROLES = [
   { name: "Programador", cost: 50 }, { name: "Ingeniero", cost: 25 }, { name: "Asesor", cost: 20 },
   { name: "Programador AUX", cost: 45 }, { name: "Tablerista", cost: 17 }, { name: "Dibujante", cost: 17 },
@@ -137,20 +137,20 @@ const UNIT_OPTIONS = ["u", "hs", "mts", "gl"];
 const BUDGET_STYLE = {
   "Borrador": "bg-slate-100 text-slate-600 ring-slate-200", "En preparación": "bg-sky-50 text-sky-700 ring-sky-200",
   "Enviado": "bg-brand-50 text-brand-700 ring-brand-200", "En seguimiento": "bg-violet-50 text-violet-700 ring-violet-200",
-  "Aprobado": "bg-emerald-50 text-emerald-700 ring-emerald-200", "Facturado": "bg-sky-50 text-sky-700 ring-sky-200", "Rechazado": "bg-rose-50 text-rose-700 ring-rose-200",
+  "Aprobado": "bg-emerald-50 text-emerald-700 ring-emerald-200", "Facturado": "bg-sky-50 text-sky-700 ring-sky-200", "Pagado": "bg-emerald-600 text-white ring-emerald-700/20", "Rechazado": "bg-rose-50 text-rose-700 ring-rose-200",
   "Vencido": "bg-amber-50 text-amber-700 ring-amber-200",
 };
 const BUDGET_GROUPS = [
   { id: "preparation", label: "Preparación", statuses: ["Borrador", "En preparación"], color: "slate", detail: ["Borrador", "En preparación"] },
   { id: "commercial", label: "Gestión comercial", statuses: ["Enviado", "En seguimiento"], color: "violet", detail: ["Enviado", "En seguimiento"] },
-  { id: "won", label: "Ganados", statuses: ["Aprobado", "Facturado"], color: "emerald", detail: ["Aprobado", "Facturado"] },
+  { id: "won", label: "Ganados", statuses: ["Aprobado", "Facturado", "Pagado"], color: "emerald", detail: ["Aprobado", "Facturado", "Pagado"] },
   { id: "lost", label: "Perdidos", statuses: ["Rechazado"], color: "rose", detail: ["Rechazado"] },
 ];
 const BUDGET_STAGE_GROUPS = [
   { label: "Preparación", stages: ["Borrador", "En preparación"] },
   { label: "Gestión comercial", stages: ["Enviado", "En seguimiento"] },
   { label: "Cierre comercial", stages: ["Aprobado", "Rechazado"] },
-  { label: "Condición financiera", stages: ["Facturado"] },
+  { label: "Condición financiera", stages: ["Facturado", "Pagado"] },
 ];
 const PO_STAGES = ["Borrador", "Enviada", "Confirmada", "Recibida", "Cancelada"];
 const isDeliveryOverdue = (po) => !!po.dueDate && po.dueDate < todayStr() && !["Recibida", "Cancelada"].includes(po.stage);
@@ -995,7 +995,7 @@ export default function App() {
       const { _generatedInvoice, ...saved } = response;
       setBudgets((items) => items.some((item) => item.id === saved.id) ? items.map((item) => item.id === saved.id ? saved : item) : [saved, ...items]);
       if (generatedInvoice) { const { attachmentUrl, ...invoiceSummary } = generatedInvoice; invoiceSummary.hasAttachment = Boolean(attachmentUrl); setFinances((items) => items.some((item) => item.id === invoiceSummary.id) ? items.map((item) => item.id === invoiceSummary.id ? invoiceSummary : item) : [invoiceSummary, ...items]); }
-      else if (saved.stage !== "Facturado") setFinances((items) => items.filter((item) => item.sourceBudgetId !== saved.id));
+      else if (!["Facturado", "Pagado"].includes(saved.stage)) setFinances((items) => items.filter((item) => item.sourceBudgetId !== saved.id));
       toast(`Presupuesto ${saved.number || saved.id} guardado`, "success"); return saved;
     } catch (e) { err(e); return null; }
   };
@@ -1004,7 +1004,7 @@ export default function App() {
     delete copy.id; delete copy._updatedAt;
     try { const saved = await api.createBudget(copy); setBudgets((items) => [saved, ...items]); toast(`Duplicado como ${saved.number || saved.id} (borrador)`, "success"); return saved; } catch (e) { err(e); return null; }
   };
-  const deleteBudget = (budget) => setConfirmDialog({ title: `Eliminar ${budget.number || budget.id}`, message: budget.stage === "Facturado" ? "Se eliminarán el presupuesto, su historial comercial y la factura automática asociada en Finanzas. Los proyectos ya creados no se eliminarán." : "Se eliminará el presupuesto y su historial comercial. Esta acción no afecta proyectos ya creados.", confirmLabel: "Eliminar presupuesto", danger: true, action: async () => { try { await api.deleteBudget(budget.id); setBudgets((items) => items.filter((item) => item.id !== budget.id)); setFinances((items) => items.filter((item) => item.sourceBudgetId !== budget.id)); toast(budget.stage === "Facturado" ? "Presupuesto y factura asociada eliminados" : "Presupuesto eliminado", "success"); } catch (e) { err(e); } } });
+  const deleteBudget = (budget) => setConfirmDialog({ title: `Eliminar ${budget.number || budget.id}`, message: ["Facturado", "Pagado"].includes(budget.stage) ? "Se eliminarán el presupuesto, su historial comercial y la factura automática asociada en Finanzas. Los proyectos ya creados no se eliminarán." : "Se eliminará el presupuesto y su historial comercial. Esta acción no afecta proyectos ya creados.", confirmLabel: "Eliminar presupuesto", danger: true, action: async () => { try { await api.deleteBudget(budget.id); setBudgets((items) => items.filter((item) => item.id !== budget.id)); setFinances((items) => items.filter((item) => item.sourceBudgetId !== budget.id)); toast(["Facturado", "Pagado"].includes(budget.stage) ? "Presupuesto y factura asociada eliminados" : "Presupuesto eliminado", "success"); } catch (e) { err(e); } } });
   const convertBudget = async (budget) => {
     try { const result = await api.convertBudget(budget.id); setBudgets((items) => items.map((item) => item.id === budget.id ? result.budget : item)); if (result.project && !projects.some((project) => project.id === result.project.id)) setProjects((items) => [...items, result.project]); toast(`Proyecto ${result.project?.key || "creado"} generado`, "success"); return result; } catch (e) { err(e); return null; }
   };
@@ -1032,7 +1032,7 @@ export default function App() {
 
   /* Finanzas */
   const saveFinance = async (movement) => {
-    try { const saved = movement.id ? await api.updateFinance(movement.id, movement) : await api.createFinance(movement); const { attachmentUrl, attachments, ...summary } = saved; summary.attachmentCount = attachments?.length || (attachmentUrl ? 1 : 0); summary.hasAttachment = summary.attachmentCount > 0; setFinances((items) => items.some((item) => item.id === saved.id) ? items.map((item) => item.id === saved.id ? summary : item) : [summary, ...items]); toast(`${saved.kind === "invoice" ? "Factura" : saved.kind === "expense" ? "Gasto" : "Cobro"} guardado`, "success"); return saved; } catch (e) { err(e); return null; }
+    try { const saved = movement.id ? await api.updateFinance(movement.id, movement) : await api.createFinance(movement); const { attachmentUrl, attachments, _updatedBudgets = [], ...summary } = saved; summary.attachmentCount = attachments?.length || (attachmentUrl ? 1 : 0); summary.hasAttachment = summary.attachmentCount > 0; setFinances((items) => items.some((item) => item.id === saved.id) ? items.map((item) => item.id === saved.id ? summary : item) : [summary, ...items]); if (_updatedBudgets.length) setBudgets((items) => items.map((item) => _updatedBudgets.find((budget) => budget.id === item.id) || item)); toast(`${saved.kind === "invoice" ? "Factura" : saved.kind === "expense" ? "Gasto" : "Cobro"} guardado${_updatedBudgets.some((budget) => budget.stage === "Pagado") ? " · presupuesto pagado" : ""}`, "success"); return summary; } catch (e) { err(e); return null; }
   };
   const loadFinance = async (id) => { try { return await api.getFinance(id); } catch (e) { err(e); return null; } };
   // Para gastos autogenerados (desde una OT o una OC) solo se permite tocar el estado de pago —
@@ -1040,7 +1040,7 @@ export default function App() {
   const markFinancePaid = async (id, paid = true) => {
     try { const saved = await api.updateFinance(id, { paymentStatus: paid ? "paid" : "pending", paidAt: paid ? todayStr() : "" }); setFinances((items) => items.map((item) => (item.id === saved.id ? { ...item, ...saved } : item))); toast(paid ? "Marcado como pagado" : "Marcado como pendiente de pago", "success"); return saved; } catch (e) { err(e); return null; }
   };
-  const deleteFinance = (movement) => setConfirmDialog({ title: `Eliminar ${movement.id}`, message: "Se eliminará el movimiento y su comprobante asociado.", confirmLabel: "Eliminar movimiento", danger: true, action: async () => { try { await api.deleteFinance(movement.id); setFinances((items) => items.filter((item) => item.id !== movement.id)); toast("Movimiento eliminado", "success"); } catch (e) { err(e); } } });
+  const deleteFinance = (movement) => setConfirmDialog({ title: `Eliminar ${movement.id}`, message: "Se eliminará el movimiento y su comprobante asociado. Si era un cobro, también se recalculará automáticamente el estado del presupuesto.", confirmLabel: "Eliminar movimiento", danger: true, action: async () => { try { const result = await api.deleteFinance(movement.id); setFinances((items) => items.filter((item) => item.id !== movement.id)); if (result?._updatedBudgets?.length) setBudgets((items) => items.map((item) => result._updatedBudgets.find((budget) => budget.id === item.id) || item)); toast("Movimiento eliminado y estados recalculados", "success"); } catch (e) { err(e); } } });
 
   /* Equipo */
   const addUser = async (nf) => { const u = await api.createUser(nf); setUsers((p) => [...p, u]); };
@@ -1797,7 +1797,7 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const projectLink = (projectId) => {
     const project = projects.find((item) => item.id === projectId);
-    const budget = budgets.find((item) => item.stage === "Aprobado" && (item.id === project?.budgetId || item.projectId === projectId));
+    const budget = budgets.find((item) => ["Aprobado", "Facturado", "Pagado"].includes(item.stage) && (item.id === project?.budgetId || item.projectId === projectId));
     return { project, budget, clientId: project?.clientId || budget?.clientId || "", clientName: project?.client || budget?.client || "" };
   };
   const selectProject = (projectId) => setForm((current) => { const linked = projectLink(projectId); return { ...current, projectId, clientId: linked.clientId, clientName: linked.clientName, budgetId: linked.budget?.id || "" }; });
@@ -2193,7 +2193,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   // proyecto (`|| movement.projectId === budget.projectId`): con dos presupuestos aprobados en el
   // mismo proyecto, el mismo gasto se contaba entero en los dos y ambas barras se inflaban.
   // El servidor ya asigna budgetId solo al crear el movimiento, así que ese OR era redundante.
-  const budgetExecution = projectFilter === "all" ? [] : budgets.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage) && budget.projectId === projectFilter).map((budget) => { const actual = movements.filter((movement) => movement.kind === "expense" && movement.budgetId === budget.id).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0); const baseline = Number(budget.estimatedCost) || 0; return { ...budget, actual, baseline, deviation: baseline ? actual - baseline : 0, progress: baseline ? (actual / baseline) * 100 : 0 }; }).sort((a, b) => b.progress - a.progress).slice(0, 6);
+  const budgetExecution = projectFilter === "all" ? [] : budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && budget.projectId === projectFilter).map((budget) => { const actual = movements.filter((movement) => movement.kind === "expense" && movement.budgetId === budget.id).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0); const baseline = Number(budget.estimatedCost) || 0; return { ...budget, actual, baseline, deviation: baseline ? actual - baseline : 0, progress: baseline ? (actual / baseline) * 100 : 0 }; }).sort((a, b) => b.progress - a.progress).slice(0, 6);
   // Gastos del proyecto que no quedaron vinculados a ningún presupuesto (cargados antes de que
   // existiera el vínculo automático). Se muestran aparte para que no desaparezcan del control.
   const unbudgetedExpense = projectFilter === "all" ? 0 : movements.filter((movement) => movement.kind === "expense" && movement.projectId === projectFilter && !movement.budgetId).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
@@ -2477,7 +2477,9 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
 
 /* ===================================== PRESUPUESTOS ===================================== */
 const budgetDisplayStage = (budget) => {
-  return budget.stage || "Borrador";
+  // En la tarjeta conservamos ambas condiciones visibles: "Facturado" describe el documento
+  // comercial y el chip "Pagado" confirma que su saldo fue cancelado.
+  return budget.stage === "Pagado" ? "Facturado" : budget.stage || "Borrador";
 };
 const budgetDate = (value) => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("es-AR") : "—";
 // Mismo criterio que ya usa la creación de OT: por defecto el cliente/planta más frecuente
@@ -2515,7 +2517,7 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, on
   const amount = form.items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitPrice) || 0), 0);
   const cost = form.items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitCost) || 0), 0);
   const margin = amount - cost;
-  const commerciallyLocked = Boolean(budget?.commercialLockedAt || ["Aprobado", "Facturado"].includes(budget?.stage));
+  const commerciallyLocked = Boolean(budget?.commercialLockedAt || ["Aprobado", "Facturado", "Pagado"].includes(budget?.stage));
   const additionalCostTotal = (form.additionalCosts || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const totalCost = cost + additionalCostTotal;
   const currentMargin = amount - totalCost;
@@ -2533,8 +2535,8 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, on
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         <Section title="Oportunidad y cliente"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="N.º de presupuesto"><input value={form.number || ""} onChange={(event) => set("number", event.target.value)} placeholder="Automático al guardar" className="u-input" /></L><L label="Cliente *"><select value={form.clientId} onChange={(event) => { const client = clients.find((item) => item.id === event.target.value); setForm((current) => ({ ...current, clientId: event.target.value, client: client?.name || "", site: clientSites(client)[0]?.name || "", contact: client?.contactName || "" })); }} className="u-input"><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L><L label="Sitio / planta">{clientSites(clients.find((c) => c.id === form.clientId)).length > 1 ? (<select value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input">{clientSites(clients.find((c) => c.id === form.clientId)).map((s) => <option key={s.code || s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select>) : (<input value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input" />)}</L><L label="Nombre del presupuesto *"><input value={form.title} onChange={(event) => set("title", event.target.value)} placeholder="Ej. Automatización celda de secado 2" className="u-input" /></L><L label="Tipo de servicio"><select value={form.service} onChange={(event) => set("service", event.target.value)} className="u-input">{SERVICE_TYPES.map((service) => <option key={service}>{service}</option>)}</select></L><L label="Contacto"><input value={form.contact || ""} onChange={(event) => set("contact", event.target.value)} placeholder="Nombre, correo o teléfono" className="u-input" /></L><L label="Responsable comercial"><input value={form.owner || ""} onChange={(event) => set("owner", event.target.value)} className="u-input" /></L></div></Section>
 
-        <Section title="Estado y seguimiento"><div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><L label="Etapa"><select value={form.stage} onChange={(event) => { const stage = event.target.value; setForm((current) => ({ ...current, stage, probability: current.probabilityOverridden ? current.probability : BUDGET_STAGE_PROBABILITY[stage], invoicedAt: stage === "Facturado" ? current.invoicedAt || todayStr() : current.invoicedAt })); }} className="u-input">{BUDGET_STAGE_GROUPS.map((group) => <optgroup key={group.label} label={group.label}>{group.stages.map((stage) => <option key={stage}>{stage}</option>)}</optgroup>)}</select></L><L label={form.probabilityOverridden ? "Probabilidad (manual)" : "Probabilidad automática"}><div className="flex h-10 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1"><input type="number" min="0" max="100" step="1" value={form.probability} onChange={(event) => setForm((current) => ({ ...current, probabilityOverridden: true, probability: Math.min(100, Math.max(0, Number(event.target.value) || 0)) }))} className="w-full min-w-0 border-0 bg-transparent px-2 text-sm font-semibold text-slate-700 outline-none" />%</div></L><L label="Válido hasta"><input type="date" value={form.validUntil || ""} onChange={(event) => set("validUntil", event.target.value)} className="u-input" /></L><L label="Decisión estimada"><input type="date" value={form.expectedDecisionDate || ""} onChange={(event) => set("expectedDecisionDate", event.target.value)} className="u-input" /></L></div><p className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">{form.probabilityOverridden ? "Probabilidad ajustada manualmente para esta oportunidad." : "La probabilidad se actualiza automáticamente según la etapa comercial."}{form.probabilityOverridden && <button type="button" onClick={() => setForm((current) => ({ ...current, probabilityOverridden: false, probability: BUDGET_STAGE_PROBABILITY[current.stage] }))} className="font-medium text-brand-600 hover:underline">Volver a automática</button>}</p><div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Próxima acción"><input value={form.nextAction || ""} onChange={(event) => set("nextAction", event.target.value)} placeholder="Llamar, enviar revisión, visita técnica…" className="u-input" /></L><L label="Próximo seguimiento"><input type="date" value={form.nextFollowUp || ""} onChange={(event) => set("nextFollowUp", event.target.value)} className="u-input" /></L></div></Section>
-        {["Aprobado", "Facturado"].includes(form.stage) && <Section title="Orden de compra del cliente">
+        <Section title="Estado y seguimiento"><div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><L label="Etapa"><select disabled={form.stage === "Pagado"} value={form.stage} onChange={(event) => { const stage = event.target.value; setForm((current) => ({ ...current, stage, probability: current.probabilityOverridden ? current.probability : BUDGET_STAGE_PROBABILITY[stage], invoicedAt: stage === "Facturado" ? current.invoicedAt || todayStr() : current.invoicedAt })); }} className="u-input disabled:bg-emerald-50 disabled:text-emerald-700">{form.stage === "Pagado" && <option>Pagado</option>}{BUDGET_STAGE_GROUPS.map((group) => <optgroup key={group.label} label={group.label}>{group.stages.filter((stage) => stage !== "Pagado").map((stage) => <option key={stage}>{stage}</option>)}</optgroup>)}</select></L><L label={form.probabilityOverridden ? "Probabilidad (manual)" : "Probabilidad automática"}><div className="flex h-10 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1"><input type="number" min="0" max="100" step="1" value={form.probability} onChange={(event) => setForm((current) => ({ ...current, probabilityOverridden: true, probability: Math.min(100, Math.max(0, Number(event.target.value) || 0)) }))} className="w-full min-w-0 border-0 bg-transparent px-2 text-sm font-semibold text-slate-700 outline-none" />%</div></L><L label="Válido hasta"><input type="date" value={form.validUntil || ""} onChange={(event) => set("validUntil", event.target.value)} className="u-input" /></L><L label="Decisión estimada"><input type="date" value={form.expectedDecisionDate || ""} onChange={(event) => set("expectedDecisionDate", event.target.value)} className="u-input" /></L></div>{form.stage === "Pagado" && <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-700">Estado automático: los ingresos imputados cubren el total facturado con IVA{form.paidAt ? ` · Pago registrado el ${budgetDate(form.paidAt)}` : ""}.</p>}<p className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">{form.probabilityOverridden ? "Probabilidad ajustada manualmente para esta oportunidad." : "La probabilidad se actualiza automáticamente según la etapa comercial."}{form.probabilityOverridden && <button type="button" onClick={() => setForm((current) => ({ ...current, probabilityOverridden: false, probability: BUDGET_STAGE_PROBABILITY[current.stage] }))} className="font-medium text-brand-600 hover:underline">Volver a automática</button>}</p><div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Próxima acción"><input value={form.nextAction || ""} onChange={(event) => set("nextAction", event.target.value)} placeholder="Llamar, enviar revisión, visita técnica…" className="u-input" /></L><L label="Próximo seguimiento"><input type="date" value={form.nextFollowUp || ""} onChange={(event) => set("nextFollowUp", event.target.value)} className="u-input" /></L></div></Section>
+        {["Aprobado", "Facturado", "Pagado"].includes(form.stage) && <Section title="Orden de compra del cliente">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <L label="N.º de OC del cliente *"><input value={form.purchaseOrderNumber || ""} onChange={(event) => set("purchaseOrderNumber", event.target.value)} placeholder="Ej. OC 4500123456" className="u-input" /></L>
             <L label="Fecha de la OC"><input type="date" value={form.purchaseOrderDate || ""} onChange={(event) => set("purchaseOrderDate", event.target.value)} className="u-input" /></L>
@@ -2639,19 +2641,19 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState("Todos");
   useEffect(() => { if (createSignal > 0) { setEditingBudget(null); setEditorOpen(true); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
-  const open = budgets.filter((budget) => !["Aprobado", "Facturado", "Rechazado"].includes(budget.stage));
+  const open = budgets.filter((budget) => !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage));
   const pipeline = open.reduce((sum, budget) => sum + (Number(budget.amount) || 0), 0);
   const weighted = open.reduce((sum, budget) => sum + (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100, 0);
   const due = open.filter((budget) => budget.nextFollowUp && budget.nextFollowUp <= todayStr()).length;
-  const decided = budgets.filter((budget) => ["Aprobado", "Facturado", "Rechazado"].includes(budget.stage));
-  const winRate = decided.length ? Math.round(decided.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage)).length / decided.length * 100) : 0;
-  const approved = budgets.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage));
+  const decided = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage));
+  const winRate = decided.length ? Math.round(decided.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage)).length / decided.length * 100) : 0;
+  const approved = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage));
   const approvedTotal = approved.reduce((sum, budget) => sum + (Number(budget.amount) || 0), 0);
   // Se desglosa por cliente + planta (no solo cliente) porque un mismo cliente puede tener varias plantas.
   const approvedByClient = Object.values(approved.reduce((map, budget) => { const key = `${budget.client || "Sin cliente"}||${budget.site || ""}`; if (!map[key]) map[key] = { name: budget.client || "Sin cliente", site: budget.site || "", total: 0, count: 0 }; map[key].total += Number(budget.amount) || 0; map[key].count += 1; return map; }, {})).sort((a, b) => b.total - a.total);
   const projectRecommended = (budget) => (Number(budget.durationDays) || 0) > 2 || (Number(budget.teamSize) || 1) > 1 || (budget.items || []).length > 3 || (["Automatización", "Instalación"].includes(budget.service) && (Number(budget.durationDays) || 0) > 1);
   const groupSummary = BUDGET_GROUPS.map((group) => { const rows = budgets.filter((budget) => group.statuses.includes(budget.stage)); return { ...group, count: rows.length, total: rows.reduce((sum, budget) => sum + (Number(budget.amount) || 0), 0), breakdown: group.detail.map((name) => ({ name, count: rows.filter((budget) => budget.stage === name).length })) }; });
-  const visible = budgets.filter((budget) => { const selectedGroup = stage.startsWith("group:") ? BUDGET_GROUPS.find((group) => group.id === stage.slice(6)) : null; const overdueFollowUp = !["Aprobado", "Facturado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr(); const stageMatches = stage === "Todos" || (selectedGroup ? selectedGroup.statuses.includes(budget.stage) : stage === "Vencido" ? overdueFollowUp : budget.stage === stage); return stageMatches && (!query || `${budget.number || budget.id} ${budget.title} ${budget.client} ${budget.site || ""}`.toLowerCase().includes(query.toLowerCase())); });
+  const visible = budgets.filter((budget) => { const selectedGroup = stage.startsWith("group:") ? BUDGET_GROUPS.find((group) => group.id === stage.slice(6)) : null; const overdueFollowUp = !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr(); const stageMatches = stage === "Todos" || (selectedGroup ? selectedGroup.statuses.includes(budget.stage) : stage === "Vencido" ? overdueFollowUp : budget.stage === stage); return stageMatches && (!query || `${budget.number || budget.id} ${budget.title} ${budget.client} ${budget.site || ""}`.toLowerCase().includes(query.toLowerCase())); });
   return <div className="space-y-4">
     <div><h2 className="text-lg font-semibold text-slate-900">Gestión de presupuestos</h2><p className="text-xs text-slate-500">Seguimiento comercial de oportunidades y presupuestos de automatización, desde la primera estimación hasta la aprobación y facturación.</p></div>
     <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-5"><Metric label="En negociación" value={money(pipeline)} icon={Briefcase} tint="text-brand-600" caption="En gestión, sin decidir todavía" description="Suma del valor neto de todos los presupuestos que todavía están en gestión comercial. No incluye aprobados, facturados ni rechazados." /><Metric label="Valor esperado" value={money(weighted)} icon={TrendingUp} tint="text-violet-600" caption="Ajustado por probabilidad de cierre" description="Valor esperado del pipeline: cada presupuesto abierto se multiplica por la probabilidad automática de su etapa comercial." /><Metric label="Negocio ganado" value={money(approvedTotal)} icon={CheckCircle2} tint="text-emerald-600" caption="Ganado, aún no facturado ni cobrado" description="Suma neta, sin IVA, de los presupuestos aprobados o ya facturados. Representa negocio ganado, no necesariamente cobrado." /><Metric label="Seguimientos vencidos" value={due} icon={AlertTriangle} tint={due ? "text-rose-600" : "text-emerald-600"} caption="Seguimientos que ya deberían hacerse" description="Cantidad de presupuestos abiertos cuyo próximo seguimiento estaba previsto para hoy o una fecha anterior." /><Metric label="Tasa de conversión" value={`${winRate}%`} icon={CheckCircle2} tint="text-emerald-600" caption="% de oportunidades ganadas" description="Porcentaje de oportunidades ganadas: presupuestos aprobados o facturados dividido por el total de decisiones cerradas, incluyendo rechazados." /></div>
@@ -2914,7 +2916,7 @@ function ActionCenter({ orders, tasks, parts, budgets = [], onGo }) {
   const overdue = tasks.filter(isOverdue).length;
   const stale = tasks.filter(isStale).length;
   const low = parts.filter((p) => Number(p.stock) <= Number(p.minStock)).length;
-  const budgetFollowUps = budgets.filter((budget) => !["Aprobado", "Facturado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr()).length;
+  const budgetFollowUps = budgets.filter((budget) => !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr()).length;
   const actions = [
     { id: "billing", label: "Listas para facturar", value: pendingBilling, icon: FileText, tone: "text-amber-700 bg-amber-50 border-amber-200" },
     { id: "projects", label: "Tareas vencidas", value: overdue, icon: AlertTriangle, tone: "text-rose-700 bg-rose-50 border-rose-200" },
@@ -3221,7 +3223,7 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
   // (que suelen estar vacías para un admin que no hace trabajo de campo).
   const teamActiveOrders = ger ? orders.filter((o) => ["Borrador", "En progreso", "En proceso de ejecución", "Suspendida"].includes(o.status) && !myOrders.some((m) => m.id === o.id)) : [];
   const unsignedTeam = ger ? orders.filter((o) => o.status === "Completada" && !o.signatureUrl && !o.noSignReason) : [];
-  const budgetFollowUps = ger ? budgets.filter((budget) => !["Aprobado", "Facturado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr()) : [];
+  const budgetFollowUps = ger ? budgets.filter((budget) => !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= todayStr()) : [];
   const attentionOrders = orders.filter((o) => (isUrgentOrder(o) || isResponseOverdue(o)) && !["Completada", "Aprobada", "Facturada", "Suspendida"].includes(o.status) && (ger || o.tech === me.name || o.assignedTechs?.includes(me.name)));
   return (
     <div className="space-y-5">
@@ -3768,7 +3770,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
   // acceso hoy a la orden. Son dos campos independientes a propósito (alguien sin usuario en la
   // app también puede haber trabajado), así que no se auto-corrige, solo se avisa.
   const distinctAssigned = new Set([form.tech, ...(form.assignedTechs || [])].filter(Boolean).map((name) => name.trim().toLowerCase())).size;
-  const availableBudgets = budgets.filter((budget) => ["Aprobado", "Facturado"].includes(budget.stage) && (!form.client || budget.client === form.client || budget.clientId === clients.find((client) => client.name === form.client)?.id));
+  const availableBudgets = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (!form.client || budget.client === form.client || budget.clientId === clients.find((client) => client.name === form.client)?.id));
   const selectBudget = (budgetId) => {
     const budget = budgets.find((item) => item.id === budgetId);
     if (!budget) { set({ budgetId: "", budgetNumber: "", projectId: "", quoteNumber: "", customerPO: "" }); return; }
