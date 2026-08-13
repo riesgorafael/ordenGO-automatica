@@ -1310,7 +1310,7 @@ export default function App() {
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} projects={projects} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} onGoToProject={(projectId) => { navigateModule("projects"); setPTab("board"); setPProj(projectId); }} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} finances={finances} clients={clients} parts={parts} projects={projects} users={users} orders={orders} onOpenOrder={setODetail} me={me} createSignal={budgetCreateSignal} onConsumeCreate={() => setBudgetCreateSignal(0)} onSave={saveBudget} onDelete={deleteBudget} onDuplicate={duplicateBudget} onConvert={convertBudget} onCreateOrder={createOrderFromBudget} onInvoice={saveFinance} />}
-        {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} branding={branding} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
+        {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} branding={branding} me={me} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
         {activeModule === "inventory" && isMgr && <Inventory parts={parts} orders={orders} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
         {activeModule === "orders" && (
           <>
@@ -2017,7 +2017,7 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
   </div>;
 }
 
-function FinanceModule({ movements, projects, budgets, clients, branding, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
+function FinanceModule({ movements, projects, budgets, clients, branding, me, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
   const [period, setPeriod] = useState(currentMonth());
   const [projectFilter, setProjectFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
