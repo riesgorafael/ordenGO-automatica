@@ -872,16 +872,24 @@ export function financeReportPDF({
     while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (doc.getTextWidth(str.slice(0, mid) + "…") <= maxWidth) lo = mid; else hi = mid - 1; }
     return str.slice(0, lo) + "…";
   };
+  // Con importes chicos, redondear a entero producía marcas de eje repetidas ("0,1,1,2,2") para
+  // los cortes 0 / 0,5 / 1 / 1,5 / 2. Se conserva un decimal mientras el rango sea menor a 10.
   const compact = (value) => {
     const abs = Math.abs(value);
-    return abs >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : abs >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
+    if (abs >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+    if (abs >= 1000) return `${Math.round(value / 1000)}k`;
+    if (abs >= 10 || value === 0) return String(Math.round(value));
+    return value.toFixed(1);
   };
   // Barras horizontales con su valor al costado: el mismo formato para costos y proveedores.
-  const barList = (rows, color, emptyText) => {
+  // `total` es el universo REAL, no la suma de las filas mostradas: si se listan los 8 costos más
+  // grandes de 12, los porcentajes tienen que seguir siendo sobre el gasto completo. Calcularlos
+  // sobre el subconjunto hacía que 8 categorías sumaran 100% y pareciera que ahí estaba todo.
+  const barList = (rows, color, emptyText, total = 0, hiddenCount = 0, hiddenLabel = "") => {
     if (!rows.length) { doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(148, 163, 184); doc.text(emptyText, M, y); y += 8; return; }
     const labelW = 62, valueW = 30, barMax = CW - labelW - valueW;
     const max = Math.max(...rows.map((row) => Math.abs(row.value))) || 1;
-    const total = rows.reduce((sum, row) => sum + Math.abs(row.value), 0) || 1;
+    const universe = Math.abs(total) > 0 ? Math.abs(total) : (rows.reduce((sum, row) => sum + Math.abs(row.value), 0) || 1);
     rows.forEach((row) => {
       brk(8);
       doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(15, 23, 42);
@@ -893,9 +901,17 @@ export function financeReportPDF({
       doc.text(fmt(row.value), W - M, y + 2.7, { align: "right" });
       doc.setFont("helvetica", "normal"); doc.setFontSize(6);
       doc.setTextColor(148, 163, 184);
-      doc.text(`${Math.round((Math.abs(row.value) / total) * 100)}%`, M + labelW + barMax + 2, y + 2.7);
+      doc.text(`${Math.round((Math.abs(row.value) / universe) * 100)}%`, M + labelW + barMax + 2, y + 2.7);
       y += 6;
     });
+    // El recorte se declara: sin esto, ver 8 filas sugiere que no hay más.
+    if (hiddenCount > 0) {
+      const shown = rows.reduce((sum, row) => sum + Math.abs(row.value), 0);
+      doc.setFont("helvetica", "italic"); doc.setFontSize(6.4); doc.setTextColor(148, 163, 184);
+      doc.text(`+ ${hiddenCount} ${hiddenLabel} más, por ${fmt(Math.max(0, universe - shown))} (${Math.round(Math.max(0, universe - shown) / universe * 100)}%), no listados.`, M, y + 1.5);
+      doc.setFont("helvetica", "normal");
+      y += 5;
+    }
     y += 2;
   };
 
@@ -947,13 +963,14 @@ export function financeReportPDF({
   if (trend.length) {
     brk(62);
     heading("EVOLUCIÓN FINANCIERA · 12 MESES");
-    const series = [
-      { key: "Facturado", color: "#0ea5e9" }, { key: "IVA", color: "#f59e0b" },
-      { key: "Cobrado", color: "#10b981" }, { key: "Egresos", color: "#ef4444" },
-    ];
-    const chartH = 38, axisW = 13;
+    // Paleta Okabe-Ito (segura para daltonismo) y deliberadamente SIN verde/ámbar/rojo: esos tres
+    // quedan reservados para estado y riesgo. Antes, ámbar era "IVA" acá y "31-60 días de atraso"
+    // doce centímetros más abajo — el mismo color con dos significados opuestos en una hoja.
+    const C_NETO = "#0072B2", C_IVA = "#56B4E9", C_EGRESO = "#6B7280", C_COBRADO = "#CC79A7";
+    const chartH = 40, axisW = 15;
     const plotX = M + axisW, plotW = CW - axisW, plotBottom = y + chartH;
-    const peak = Math.max(1, ...trend.flatMap((point) => series.map((serie) => Number(point[serie.key]) || 0)));
+    // El tope contempla la barra apilada (facturado + IVA), que es la más alta del gráfico.
+    const peak = Math.max(1, ...trend.map((point) => Math.max((Number(point.Facturado) || 0) + (Number(point.IVA) || 0), Number(point.Egresos) || 0, Number(point.Cobrado) || 0)));
     const axisMax = niceCeil(peak);
     doc.setFontSize(5.8);
     for (let i = 0; i <= 4; i++) {
@@ -961,35 +978,53 @@ export function financeReportPDF({
       doc.setDrawColor(i === 0 ? 203 : 236, i === 0 ? 213 : 240, i === 0 ? 225 : 245);
       doc.line(plotX, gy, plotX + plotW, gy);
       doc.setTextColor(148, 163, 184);
-      doc.text(compact((axisMax * i) / 4), plotX - 1.5, gy + 1, { align: "right" });
+      // La unidad va en cada marca: un eje sin moneda se presta a leer mal la escala.
+      doc.text(`${currencyLabel} ${compact((axisMax * i) / 4)}`, plotX - 1.5, gy + 1, { align: "right" });
     }
-    const slot = plotW / trend.length, barW = Math.min(2.6, (slot - 2) / series.length);
+    const slot = plotW / trend.length, barW = Math.min(4, (slot - 3) / 2);
+    const points = [];
     trend.forEach((point, index) => {
-      const groupW = barW * series.length;
-      const startX = plotX + slot * index + (slot - groupW) / 2;
-      series.forEach((serie, position) => {
-        const value = Number(point[serie.key]) || 0;
-        const height = (Math.abs(value) / axisMax) * chartH;
-        if (height > 0.25) { doc.setFillColor(...hexRgb(serie.color)); doc.rect(startX + position * barW, plotBottom - height, barW - 0.3, height, "F"); }
-      });
+      const center = plotX + slot * index + slot / 2;
+      const leftX = center - barW - 0.6, rightX = center + 0.6;
+      // Facturado e IVA se APILAN: juntos componen el total facturado con IVA. Enfrentado va el
+      // egreso. Así la comparación que el gráfico sugiere (ingreso devengado vs. costo) es válida.
+      const neto = Number(point.Facturado) || 0, iva = Number(point.IVA) || 0;
+      const netoH = (neto / axisMax) * chartH, ivaH = (iva / axisMax) * chartH;
+      if (netoH > 0.25) { doc.setFillColor(...hexRgb(C_NETO)); doc.rect(leftX, plotBottom - netoH, barW, netoH, "F"); }
+      if (ivaH > 0.25) { doc.setFillColor(...hexRgb(C_IVA)); doc.rect(leftX, plotBottom - netoH - ivaH, barW, ivaH, "F"); }
+      const egreso = Number(point.Egresos) || 0;
+      const egresoH = (egreso / axisMax) * chartH;
+      if (egresoH > 0.25) { doc.setFillColor(...hexRgb(C_EGRESO)); doc.rect(rightX, plotBottom - egresoH, barW, egresoH, "F"); }
+      points.push({ x: center, value: Number(point.Cobrado) || 0 });
       doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(100, 116, 139);
-      doc.text(point.name, plotX + slot * index + slot / 2, plotBottom + 3.6, { align: "center" });
+      doc.text(point.name, center, plotBottom + 3.6, { align: "center" });
     });
+    // Cobrado va como LÍNEA, no como barra: es caja, otra base de medición. Mezclarlo entre las
+    // barras devengadas invitaba a restarlo del facturado, que son magnitudes distintas.
+    doc.setDrawColor(...hexRgb(C_COBRADO)); doc.setLineWidth(0.6);
+    points.forEach((point, index) => {
+      const py = plotBottom - (point.value / axisMax) * chartH;
+      if (index > 0) { const prev = points[index - 1]; doc.line(prev.x, plotBottom - (prev.value / axisMax) * chartH, point.x, py); }
+    });
+    doc.setLineWidth(0.2); doc.setFillColor(...hexRgb(C_COBRADO));
+    points.forEach((point) => { if (point.value > 0) doc.circle(point.x, plotBottom - (point.value / axisMax) * chartH, 0.7, "F"); });
     y = plotBottom + 8;
-    series.forEach((serie, index) => {
-      const lx = M + index * 34;
-      doc.setFillColor(...hexRgb(serie.color)); doc.rect(lx, y, 3, 3, "F");
-      doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
-      doc.text(serie.key, lx + 4.5, y + 2.5);
+    const legend = [{ label: "Facturado neto", color: C_NETO }, { label: "IVA facturado", color: C_IVA }, { label: "Egresos", color: C_EGRESO }, { label: "Cobrado (caja)", color: C_COBRADO, line: true }];
+    legend.forEach((item, index) => {
+      const lx = M + index * 44;
+      if (item.line) { doc.setDrawColor(...hexRgb(item.color)); doc.setLineWidth(0.6); doc.line(lx, y + 1.5, lx + 4, y + 1.5); doc.setLineWidth(0.2); doc.setFillColor(...hexRgb(item.color)); doc.circle(lx + 2, y + 1.5, 0.7, "F"); }
+      else { doc.setFillColor(...hexRgb(item.color)); doc.rect(lx, y, 3, 3, "F"); }
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); doc.setTextColor(100, 116, 139);
+      doc.text(item.label, lx + 5.5, y + 2.5);
     });
     y += 8;
-    caption(`Importes mensuales en ${currencyLabel}. "Facturado" es neto sin IVA; "Cobrado" es el bruto recibido del cliente, que incluye IVA — por eso no son directamente comparables entre sí.`);
+    caption(`Barra izquierda: facturación del mes, con el IVA apilado sobre el neto. Barra derecha: egresos incurridos. La línea es lo efectivamente cobrado — va aparte porque mide caja, no devengado, y su distancia respecto de la barra de facturación muestra el desfasaje entre facturar y cobrar. Importes en ${currencyLabel}.`);
   }
 
   /* ---------- Costos ---------- */
   brk(30);
   heading("DISTRIBUCIÓN DE COSTOS POR CATEGORÍA");
-  barList(costs, "#F18700", "Sin egresos registrados en el período.");
+  barList(costs.rows || costs, "#0072B2", "Sin egresos registrados en el período.", costs.total, costs.hidden, "categoría(s)");
 
   /* ---------- Antigüedad de la deuda ---------- */
   if (aging.some((bucket) => bucket.value > 0)) {
@@ -1034,10 +1069,11 @@ export function financeReportPDF({
   }
 
   /* ---------- Proveedores ---------- */
-  if (suppliers.length) {
+  const supplierRows = suppliers.rows || suppliers;
+  if (supplierRows.length) {
     brk(30);
     heading("CONCENTRACIÓN POR PROVEEDOR");
-    barList(suppliers, "#8b5cf6", "Sin gastos asociados a proveedores.");
+    barList(supplierRows, "#CC79A7", "Sin gastos asociados a proveedores.", suppliers.total, suppliers.hidden, "proveedor(es)");
   }
 
   /* ---------- Alertas ---------- */

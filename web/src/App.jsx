@@ -2352,9 +2352,11 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       currencyLabel: showArs ? "ARS" : "USD",
       rateNote,
       fmt,
+      // Un rojo intenso por un desvío de USD 200 desgasta la señal igual que una alerta que salta
+      // siempre: el titular se pinta en negativo solo si el desvío supera el umbral de materialidad.
       headline: [
-        { label: "Resultado operativo", value: fmt(result), positive: result >= 0, hint: "Neto facturado − egresos incurridos" },
-        { label: "Flujo de caja", value: fmt(cashFlow), positive: cashFlow >= 0, hint: "Neto acreditado − egresos pagados" },
+        { label: "Resultado operativo", value: fmt(result), positive: result >= 0 || !isMaterial(result), hint: result < 0 && !isMaterial(result) ? `Negativo, por debajo del umbral de ${fmt(materialityUsd)}` : "Neto facturado − egresos incurridos" },
+        { label: "Flujo de caja", value: fmt(cashFlow), positive: cashFlow >= 0 || !isMaterial(cashFlow), hint: cashFlow < 0 && !isMaterial(cashFlow) ? `Negativo, por debajo del umbral de ${fmt(materialityUsd)}` : "Neto acreditado − egresos pagados" },
       ],
       kpis: [
         { label: "Facturado neto", value: fmt(billed), hint: "Sin IVA" },
@@ -2367,10 +2369,12 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
         ...(settledInvoices.length && fxDifference ? [{ label: "Dif. de cambio", value: fmt(fxDifference), hint: "Efecto cambiario, fuera del resultado" }] : []),
       ],
       trend,
-      costs: fullCostDistribution.slice(0, 8),
+      // Se manda el total real y cuántas filas quedaron fuera: los porcentajes del PDF tienen que
+      // ser sobre el gasto completo, no sobre las que entran en la hoja.
+      costs: { rows: fullCostDistribution.slice(0, 8), total: expense, hidden: Math.max(0, fullCostDistribution.length - 8) },
       aging: aging.map((bucket) => ({ label: bucket.label, value: bucket.value, count: bucket.count, color: bucket.color })),
       openInvoices: openInvoices.slice(0, 6).map((invoice) => ({ number: invoice.receiptNumber || invoice.id, client: invoice.clientName || "Sin cliente", days: invoice.days, balance: invoice.balance })),
-      suppliers: supplierRanking.slice(0, 6),
+      suppliers: { rows: supplierRanking.slice(0, 6), total: expense, hidden: Math.max(0, supplierRanking.length - 6) },
       insights,
       notes: [
         `Alcance: ${projectFilter === "all" ? "toda la operación" : `proyecto ${projects.find((project) => project.id === projectFilter)?.key || projectFilter}`}.`,
