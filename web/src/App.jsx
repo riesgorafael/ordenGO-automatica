@@ -2159,7 +2159,8 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
     .map((invoice) => ({ invoice, gross: invoiceGross(invoice), collected: collectedByInvoice[invoice.id] || 0 }))
     .filter((row) => row.collected > 0.005);
   const fxDifference = settledInvoices.reduce((sum, row) => sum + (row.collected - row.gross), 0);
-  const AGING_BUCKETS = [{ label: "0-30 días", max: 30, tone: "bg-emerald-500" }, { label: "31-60", max: 60, tone: "bg-amber-500" }, { label: "61-90", max: 90, tone: "bg-orange-500" }, { label: "+90 días", max: Infinity, tone: "bg-rose-500" }];
+  // `tone` es la clase Tailwind para pantalla; `color` el hex equivalente para el PDF.
+  const AGING_BUCKETS = [{ label: "0-30 días", max: 30, tone: "bg-emerald-500", color: "#10b981" }, { label: "31-60 días", max: 60, tone: "bg-amber-500", color: "#f59e0b" }, { label: "61-90 días", max: 90, tone: "bg-orange-500", color: "#f97316" }, { label: "+90 días", max: Infinity, tone: "bg-rose-500", color: "#e11d48" }];
   const aging = AGING_BUCKETS.map((bucket, index) => {
     const min = index === 0 ? -Infinity : AGING_BUCKETS[index - 1].max;
     const rows = openInvoices.filter((invoice) => invoice.days > min && invoice.days <= bucket.max);
@@ -2339,27 +2340,47 @@ function FinanceModule({ movements, projects, budgets, clients, branding, create
   const wholesaleQuoteAgeDays = wholesaleQuote?.updatedAt ? Math.floor((Date.now() - new Date(wholesaleQuote.updatedAt).getTime()) / 86400000) : null;
   const wholesaleSourceStale = wholesaleQuoteAgeDays != null && wholesaleQuoteAgeDays >= 2;
   const exportPdf = () => {
-    const kpis = [
-      { label: "Ingresos cobrados (bruto)", value: fmt(income) },
-      ...(deductions > 0 ? [{ label: "Retenciones deducidas", value: fmt(deductions) }, { label: "Neto acreditado", value: fmt(collectedNet) }] : []),
-      { label: "Facturado", value: fmt(billed) },
-      { label: "Egresos", value: fmt(expense) },
-      { label: "Resultado (facturado - egresos)", value: fmt(result) },
-      { label: "Flujo de caja (neto acreditado - pagado)", value: fmt(cashFlow) },
-      { label: "Margen", value: `${margin.toFixed(1)}%` },
-      { label: "IVA debito / credito / saldo", value: `${fmt(vatDebit)} / ${fmt(vatCredit)} / ${fmt(vatPayable)}` },
-      { label: "Por cobrar (bruto c/IVA)", value: fmt(receivable) },
-      ...(aging[3].count ? [{ label: "Deuda +90 dias", value: `${fmt(aging[3].value)} en ${aging[3].count} factura(s)` }] : []),
-      ...(settledInvoices.length && fxDifference ? [{ label: "Diferencia de cambio", value: fmt(fxDifference) }] : []),
-      { label: "Por pagar", value: fmt(payable) },
-      { label: "Gastos con comprobante", value: `${receiptCompliance.toFixed(0)}%` },
-    ];
     // Si el tablero se está viendo en pesos, el PDF sale en pesos y deja asentada la cotización
     // aplicada: sin ese dato el importe no sería reproducible más adelante.
-    const currencyNote = showArs
-      ? [{ title: "Moneda del reporte", text: `Importes convertidos a pesos con el tipo de cambio mayorista BCRA A 3500: USD 1 = ${ars(rate)}${wholesaleUpdatedAt ? ` (actualizado ${wholesaleUpdatedAt})` : ""}. Los movimientos se registran en USD; esta conversión es de referencia a la fecha de emisión, no la cotización de cada operación.` }]
-      : [];
-    financeReportPDF(period, kpis, [...currencyNote, ...insights]);
+    const rateNote = showArs
+      ? `Importes convertidos a pesos con el tipo de cambio mayorista BCRA A 3500: USD 1 = ${ars(rate)}${wholesaleUpdatedAt ? ` (actualizado ${wholesaleUpdatedAt})` : ""}. Los movimientos se registran en USD; esta conversión es de referencia a la fecha de emisión, no la cotización de cada operación.`
+      : "Los movimientos se registran y se informan en USD. Los cargados en otra moneda se convirtieron con el tipo de cambio de su propia fecha.";
+    financeReportPDF({
+      period,
+      periodLabel: new Date(`${period}-01T12:00:00`).toLocaleDateString("es-AR", { month: "long", year: "numeric" }),
+      generatedBy: me?.name || "",
+      currencyLabel: showArs ? "ARS" : "USD",
+      rateNote,
+      fmt,
+      headline: [
+        { label: "Resultado operativo", value: fmt(result), positive: result >= 0, hint: "Neto facturado − egresos incurridos" },
+        { label: "Flujo de caja", value: fmt(cashFlow), positive: cashFlow >= 0, hint: "Neto acreditado − egresos pagados" },
+      ],
+      kpis: [
+        { label: "Facturado neto", value: fmt(billed), hint: "Sin IVA" },
+        { label: "Cobrado (bruto)", value: fmt(income), hint: deductions > 0 ? `Neto ${fmt(collectedNet)} · ret. ${fmt(deductions)}` : "Sin retenciones" },
+        { label: "Egresos", value: fmt(expense), hint: `${receiptCompliance.toFixed(0)}% con comprobante` },
+        { label: "Por cobrar", value: fmt(receivable), hint: aging[3].count ? `+90 días: ${fmt(aging[3].value)}` : "Bruto con IVA" },
+        { label: "Por pagar", value: fmt(payable), hint: "Gastos pendientes de pago" },
+        { label: "Posición de IVA", value: fmt(Math.abs(vatPayable)), hint: vatPayable > 0 ? "A pagar" : "Saldo a favor" },
+        { label: "Margen", value: `${margin.toFixed(1)}%`, hint: "Sobre facturación neta" },
+        ...(settledInvoices.length && fxDifference ? [{ label: "Dif. de cambio", value: fmt(fxDifference), hint: "Efecto cambiario, fuera del resultado" }] : []),
+      ],
+      trend,
+      costs: fullCostDistribution.slice(0, 8),
+      aging: aging.map((bucket) => ({ label: bucket.label, value: bucket.value, count: bucket.count, color: bucket.color })),
+      openInvoices: openInvoices.slice(0, 6).map((invoice) => ({ number: invoice.receiptNumber || invoice.id, client: invoice.clientName || "Sin cliente", days: invoice.days, balance: invoice.balance })),
+      suppliers: supplierRanking.slice(0, 6),
+      insights,
+      notes: [
+        `Alcance: ${projectFilter === "all" ? "toda la operación" : `proyecto ${projects.find((project) => project.id === projectFilter)?.key || projectFilter}`}.`,
+        "«Facturado» es neto sin IVA; «Cobrado» y «Por cobrar» van en bruto con IVA, que es lo que efectivamente paga el cliente. Por eso no se restan entre sí directamente.",
+        "El resultado operativo es devengado (facturado − egresos incurridos) y no representa caja. El flujo de caja usa cobros netos de retenciones menos egresos efectivamente pagados.",
+        "Las retenciones que el cliente descuenta cancelan deuda pero no ingresan a la caja.",
+        "La posición de IVA requiere que los gastos tengan tildado «incluye IVA» para computar crédito fiscal; si no, queda sobrestimada.",
+        `Solo se listan alertas por desvíos superiores a ${fmt(materialityUsd)}.`,
+      ],
+    });
   };
 
   return <div className="space-y-4">

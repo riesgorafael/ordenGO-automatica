@@ -833,43 +833,247 @@ export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, agi
   doc.save(`panel_direccion_${periodLabel.replace(/\s+/g, "_")}.pdf`);
 }
 
-// Resumen financiero mensual: antes Finanzas no tenía ninguna exportación (ni CSV ni PDF), solo
-// se veía en pantalla — este PDF deja constancia de los KPIs y las alertas automáticas del mes.
-export function financeReportPDF(period, kpis, insights) {
+// Resumen financiero mensual. Antes era una lista plana de "etiqueta: valor" sin ningún gráfico:
+// para leerlo había que ya saber qué se estaba mirando. Ahora replica lo que se ve en pantalla —
+// indicadores destacados, evolución de 12 meses, costos, antigüedad de deuda y alertas — y declara
+// al pie con qué cotización y con qué criterios se calculó cada cosa.
+export function financeReportPDF({
+  period, periodLabel, generatedBy = "", currencyLabel = "USD", rateNote = "", fmt = money,
+  headline = [], kpis = [], trend = [], costs = [], aging = [], openInvoices = [],
+  suppliers = [], insights = [], notes = [],
+}) {
   const doc = new jsPDF("p", "mm", "a4");
-  const W = 210, M = 15;
+  const W = 210, M = 15, CW = W - 2 * M;
+  const stamp = new Date().toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
   let y = 20;
-  let drawHead = () => {};
-  const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
+  const drawHead = () => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+    doc.text("RESUMEN FINANCIERO", M, 14);
+    doc.setFont("helvetica", "normal"); doc.text(periodLabel || period, W - M, 14, { align: "right" });
+    doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17);
+    y = 26;
+  };
+  const brk = (need = 8) => { if (y + need > 272) { doc.addPage(); drawHead(); return true; } return false; };
+  const heading = (text) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(241, 135, 0);
+    doc.text(text, M, y);
+    doc.setDrawColor(241, 135, 0); doc.setLineWidth(0.4); doc.line(M, y + 1.6, M + doc.getTextWidth(text), y + 1.6); doc.setLineWidth(0.2);
+    y += 7;
+  };
+  const caption = (text) => {
+    doc.setFont("helvetica", "italic"); doc.setFontSize(6.8); doc.setTextColor(148, 163, 184);
+    doc.splitTextToSize(text, CW).forEach((line) => { doc.text(line, M, y); y += 3.2; });
+    doc.setFont("helvetica", "normal"); y += 1.5;
+  };
+  const fit = (text, maxWidth) => {
+    const str = String(text ?? "—");
+    if (!maxWidth || doc.getTextWidth(str) <= maxWidth) return str;
+    let lo = 0, hi = str.length;
+    while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (doc.getTextWidth(str.slice(0, mid) + "…") <= maxWidth) lo = mid; else hi = mid - 1; }
+    return str.slice(0, lo) + "…";
+  };
+  const compact = (value) => {
+    const abs = Math.abs(value);
+    return abs >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : abs >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
+  };
+  // Barras horizontales con su valor al costado: el mismo formato para costos y proveedores.
+  const barList = (rows, color, emptyText) => {
+    if (!rows.length) { doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(148, 163, 184); doc.text(emptyText, M, y); y += 8; return; }
+    const labelW = 62, valueW = 30, barMax = CW - labelW - valueW;
+    const max = Math.max(...rows.map((row) => Math.abs(row.value))) || 1;
+    const total = rows.reduce((sum, row) => sum + Math.abs(row.value), 0) || 1;
+    rows.forEach((row) => {
+      brk(8);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(15, 23, 42);
+      doc.text(fit(row.name, labelW - 2), M, y + 2.7);
+      const width = (Math.abs(row.value) / max) * barMax;
+      doc.setFillColor(...hexRgb(row.value < 0 ? "#e11d48" : color));
+      if (width > 0.3) doc.roundedRect(M + labelW, y, width, 3.6, 0.8, 0.8, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.2); doc.setTextColor(15, 23, 42);
+      doc.text(fmt(row.value), W - M, y + 2.7, { align: "right" });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`${Math.round((Math.abs(row.value) / total) * 100)}%`, M + labelW + barMax + 2, y + 2.7);
+      y += 6;
+    });
+    y += 2;
+  };
 
+  /* ---------- Portada ---------- */
   drawLogo(doc, M, 12);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text("RESUMEN FINANCIERO", W - M, 16, { align: "right" });
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
-  doc.text(`Período: ${formatDate(period + "-01")}`, W - M, 23, { align: "right" });
-  doc.setDrawColor(203, 213, 225); doc.line(M, 32, W - M, 32);
-  y = 42;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
+  doc.text(periodLabel || formatDate(`${period}-01`), W - M, 22.5, { align: "right" });
+  doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+  doc.text(`Valores en ${currencyLabel} · Corte ${stamp}${generatedBy ? ` · ${generatedBy}` : ""}`, W - M, 27.5, { align: "right" });
+  doc.setDrawColor(203, 213, 225); doc.line(M, 33, W - M, 33);
+  y = 41;
 
-  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
-  heading("INDICADORES DEL MES", y); y += 8;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
-  kpis.forEach((kpi) => { brk(7); doc.setFont("helvetica", "bold"); doc.text(kpi.label + ":", M, y); doc.setFont("helvetica", "normal"); doc.text(String(kpi.value), M + 65, y); y += 5.5; });
-  y += 4;
+  /* ---------- Indicadores destacados ---------- */
+  heading("RESULTADO DEL PERÍODO");
+  const heroW = (CW - 4) / 2;
+  headline.slice(0, 2).forEach((card, index) => {
+    const hx = M + index * (heroW + 4);
+    doc.setFillColor(250, 251, 252); doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(hx, y, heroW, 24, 2, 2, "FD");
+    doc.setFillColor(...hexRgb(card.positive ? "#10b981" : "#e11d48"));
+    doc.rect(hx, y + 2, 1.4, 20, "F");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+    doc.text(card.label, hx + 5, y + 6.5);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.setTextColor(...hexRgb(card.positive ? "#047857" : "#be123c"));
+    doc.text(fit(card.value, heroW - 10), hx + 5, y + 15);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); doc.setTextColor(148, 163, 184);
+    doc.text(fit(card.hint || "", heroW - 10), hx + 5, y + 20.5);
+  });
+  y += 30;
 
-  if (insights?.length) {
-    brk(14); heading("ALERTAS Y OBSERVACIONES AUTOMÁTICAS", y); y += 8;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8.2);
+  /* ---------- Indicadores del mes ---------- */
+  const cardW = (CW - 2 * 3) / 3, cardH = 16;
+  kpis.forEach((kpi, index) => {
+    const col = index % 3, row = Math.floor(index / 3);
+    const cx = M + col * (cardW + 3), cy = y + row * (cardH + 3);
+    doc.setFillColor(250, 251, 252); doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(cx, cy, cardW, cardH, 1.5, 1.5, "FD");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); doc.setTextColor(100, 116, 139);
+    doc.text(fit(kpi.label, cardW - 6), cx + 3.5, cy + 5);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(15, 23, 42);
+    doc.text(fit(kpi.value, cardW - 6), cx + 3.5, cy + 11);
+    if (kpi.hint) { doc.setFont("helvetica", "normal"); doc.setFontSize(5.8); doc.setTextColor(148, 163, 184); doc.text(fit(kpi.hint, cardW - 6), cx + 3.5, cy + 14.4); }
+  });
+  y += Math.ceil(kpis.length / 3) * (cardH + 3) + 5;
+
+  /* ---------- Evolución 12 meses ---------- */
+  if (trend.length) {
+    brk(62);
+    heading("EVOLUCIÓN FINANCIERA · 12 MESES");
+    const series = [
+      { key: "Facturado", color: "#0ea5e9" }, { key: "IVA", color: "#f59e0b" },
+      { key: "Cobrado", color: "#10b981" }, { key: "Egresos", color: "#ef4444" },
+    ];
+    const chartH = 38, axisW = 13;
+    const plotX = M + axisW, plotW = CW - axisW, plotBottom = y + chartH;
+    const peak = Math.max(1, ...trend.flatMap((point) => series.map((serie) => Number(point[serie.key]) || 0)));
+    const axisMax = niceCeil(peak);
+    doc.setFontSize(5.8);
+    for (let i = 0; i <= 4; i++) {
+      const gy = plotBottom - (chartH * i) / 4;
+      doc.setDrawColor(i === 0 ? 203 : 236, i === 0 ? 213 : 240, i === 0 ? 225 : 245);
+      doc.line(plotX, gy, plotX + plotW, gy);
+      doc.setTextColor(148, 163, 184);
+      doc.text(compact((axisMax * i) / 4), plotX - 1.5, gy + 1, { align: "right" });
+    }
+    const slot = plotW / trend.length, barW = Math.min(2.6, (slot - 2) / series.length);
+    trend.forEach((point, index) => {
+      const groupW = barW * series.length;
+      const startX = plotX + slot * index + (slot - groupW) / 2;
+      series.forEach((serie, position) => {
+        const value = Number(point[serie.key]) || 0;
+        const height = (Math.abs(value) / axisMax) * chartH;
+        if (height > 0.25) { doc.setFillColor(...hexRgb(serie.color)); doc.rect(startX + position * barW, plotBottom - height, barW - 0.3, height, "F"); }
+      });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(100, 116, 139);
+      doc.text(point.name, plotX + slot * index + slot / 2, plotBottom + 3.6, { align: "center" });
+    });
+    y = plotBottom + 8;
+    series.forEach((serie, index) => {
+      const lx = M + index * 34;
+      doc.setFillColor(...hexRgb(serie.color)); doc.rect(lx, y, 3, 3, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
+      doc.text(serie.key, lx + 4.5, y + 2.5);
+    });
+    y += 8;
+    caption(`Importes mensuales en ${currencyLabel}. "Facturado" es neto sin IVA; "Cobrado" es el bruto recibido del cliente, que incluye IVA — por eso no son directamente comparables entre sí.`);
+  }
+
+  /* ---------- Costos ---------- */
+  brk(30);
+  heading("DISTRIBUCIÓN DE COSTOS POR CATEGORÍA");
+  barList(costs, "#F18700", "Sin egresos registrados en el período.");
+
+  /* ---------- Antigüedad de la deuda ---------- */
+  if (aging.some((bucket) => bucket.value > 0)) {
+    brk(40);
+    heading("ANTIGÜEDAD DE LA DEUDA");
+    const totalAging = aging.reduce((sum, bucket) => sum + bucket.value, 0) || 1;
+    let cursor = M;
+    aging.forEach((bucket) => {
+      const width = (bucket.value / totalAging) * CW;
+      if (width > 0.3) { doc.setFillColor(...hexRgb(bucket.color)); doc.rect(cursor, y, width, 5, "F"); }
+      cursor += width;
+    });
+    y += 8;
+    aging.filter((bucket) => bucket.value > 0).forEach((bucket) => {
+      brk(6);
+      doc.setFillColor(...hexRgb(bucket.color)); doc.rect(M, y - 2, 2.6, 2.6, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(71, 85, 105);
+      doc.text(bucket.label, M + 4.5, y);
+      doc.setTextColor(148, 163, 184); doc.text(`${bucket.count} factura(s)`, M + 34, y);
+      doc.setFont("helvetica", "bold"); doc.setTextColor(15, 23, 42);
+      doc.text(fmt(bucket.value), W - M, y, { align: "right" });
+      y += 5;
+    });
+    if (openInvoices.length) {
+      y += 2;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
+      doc.text("FACTURAS CON MAYOR ATRASO", M, y); y += 4;
+      openInvoices.slice(0, 6).forEach((invoice) => {
+        brk(6);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(15, 23, 42);
+        doc.text(fit(invoice.number, 46), M, y);
+        doc.setTextColor(100, 116, 139); doc.text(fit(invoice.client, 62), M + 48, y);
+        doc.setTextColor(invoice.days > 90 ? 225 : 100, invoice.days > 90 ? 29 : 116, invoice.days > 90 ? 72 : 139);
+        doc.text(`${invoice.days} d`, M + 116, y);
+        doc.setFont("helvetica", "bold"); doc.setTextColor(15, 23, 42);
+        doc.text(fmt(invoice.balance), W - M, y, { align: "right" });
+        y += 4.8;
+      });
+    }
+    y += 3;
+    caption("Saldo en bruto (con IVA), que es lo que paga el cliente. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente.");
+  }
+
+  /* ---------- Proveedores ---------- */
+  if (suppliers.length) {
+    brk(30);
+    heading("CONCENTRACIÓN POR PROVEEDOR");
+    barList(suppliers, "#8b5cf6", "Sin gastos asociados a proveedores.");
+  }
+
+  /* ---------- Alertas ---------- */
+  if (insights.length) {
+    brk(24);
+    heading("ALERTAS E INTERPRETACIÓN");
+    const toneColor = { rose: "#e11d48", amber: "#f59e0b", violet: "#8b5cf6", emerald: "#10b981", slate: "#94a3b8" };
     insights.forEach((insight) => {
       brk(12);
-      doc.setFont("helvetica", "bold"); doc.setTextColor(15, 23, 42); doc.text(`• ${insight.title}`, M, y); y += 4.5;
-      doc.setFont("helvetica", "normal"); doc.setTextColor(71, 85, 105);
-      const lines = doc.splitTextToSize(insight.text, W - 2 * M - 4);
-      doc.text(lines, M + 4, y); y += lines.length * 4 + 3;
+      doc.setFillColor(...hexRgb(toneColor[insight.tone] || "#94a3b8"));
+      doc.circle(M + 1.2, y - 0.9, 1.2, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.8); doc.setTextColor(15, 23, 42);
+      doc.text(insight.title, M + 4.5, y); y += 3.8;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(71, 85, 105);
+      doc.splitTextToSize(insight.text, CW - 4.5).forEach((line) => { brk(6); doc.text(line, M + 4.5, y); y += 3.4; });
+      y += 2.5;
     });
   }
 
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-  doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
+  /* ---------- Notas ---------- */
+  brk(18);
+  heading("NOTAS METODOLÓGICAS");
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(100, 116, 139);
+  [...(rateNote ? [rateNote] : []), ...notes].forEach((note) => {
+    doc.splitTextToSize(`•  ${note}`, CW).forEach((line, index) => { brk(5); doc.text(line, M + (index ? 2.6 : 0), y); y += 3.3; });
+  });
+
+  /* ---------- Pie ---------- */
+  const pages = doc.getNumberOfPages();
+  for (let page = 1; page <= pages; page++) {
+    doc.setPage(page);
+    doc.setDrawColor(226, 232, 240); doc.line(M, 285, W - M, 285);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(148, 163, 184);
+    doc.text(fit(`${periodLabel || period}  ·  Valores en ${currencyLabel}  ·  Corte ${stamp}`, CW - 25), M, 289);
+    doc.text(`Página ${page} de ${pages}`, W - M, 289, { align: "right" });
+  }
 
   doc.save(`finanzas_${period}.pdf`);
 }
