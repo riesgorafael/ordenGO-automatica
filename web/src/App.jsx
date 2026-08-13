@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BarChart, Bar as RechartsBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie as RechartsPie, Legend } from "recharts";
 import {
   Plus, X, Search, Camera, Upload, Sparkles, Loader2, MapPin, Clock, ClipboardList,
@@ -3453,32 +3454,42 @@ function downloadOrderReport(order, projects, audience) {
 // mandarle al cliente una constancia valorizada por error es un problema comercial, así que el
 // tipo de reporte se elige explícitamente en vez de asumir uno.
 function OrderReportMenu({ order, projects, ger }) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef(null);
+  const [rect, setRect] = useState(null); // posición del disparador; null = cerrado
+  const triggerRef = useRef(null);
+  // El menú se dibuja en un portal sobre <body>, no dentro de la tarjeta. La tarjeta entera es un
+  // <button>, y un botón recorta a sus descendientes y aplasta su apilado: adentro, el desplegable
+  // quedaba cortado y tapado por la tarjeta siguiente. Desde el portal no depende de ningún
+  // ancestro, así que se ve completo siempre.
+  const place = () => { const box = triggerRef.current?.getBoundingClientRect(); if (box) setRect({ top: box.bottom + 4, right: window.innerWidth - box.right }); };
   useEffect(() => {
-    if (!open) return;
-    const onDown = (event) => { if (boxRef.current && !boxRef.current.contains(event.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+    if (!rect) return;
+    const close = () => setRect(null);
+    // Al hacer scroll o cambiar el tamaño, la posición calculada deja de valer: se cierra en vez
+    // de quedar flotando en un lugar equivocado.
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    document.addEventListener("mousedown", close);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); document.removeEventListener("mousedown", close); };
+  }, [rect]);
   const options = ORDER_REPORTS.filter((report) => ger || !report.ger);
+  const pick = (audience) => { setRect(null); downloadOrderReport(order, projects, audience); };
   return (
-    <span ref={boxRef} className="relative" onClick={(event) => { event.stopPropagation(); event.preventDefault(); }}>
-      <span role="button" tabIndex={0} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpen((value) => !value); } }}
-        aria-expanded={open} aria-haspopup="menu" title="Descargar reporte de esta orden"
-        className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium ${open ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600"}`}>
+    <span onClick={(event) => { event.stopPropagation(); event.preventDefault(); }}>
+      <span ref={triggerRef} role="button" tabIndex={0}
+        onClick={() => (rect ? setRect(null) : place())}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); rect ? setRect(null) : place(); } }}
+        aria-expanded={!!rect} aria-haspopup="menu" title="Descargar reporte de esta orden"
+        className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium ${rect ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600"}`}>
         <Download className="h-3.5 w-3.5" /> PDF
       </span>
-      {open && (
-        <span role="menu" className="motion-popover absolute right-0 top-full z-30 mt-1 block w-56 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+      {rect && createPortal(
+        <div role="menu" onMouseDown={(event) => event.stopPropagation()} style={{ top: rect.top, right: rect.right }}
+          className="motion-popover fixed z-[90] w-60 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
           {options.map((report) => (
-            <span key={report.audience} role="menuitem" tabIndex={0}
-              onClick={() => { setOpen(false); downloadOrderReport(order, projects, report.audience); }}
-              onKeyDown={(event) => { if (event.key === "Enter") { setOpen(false); downloadOrderReport(order, projects, report.audience); } }}
-              className="block cursor-pointer px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">{report.label}</span>
+            <button key={report.audience} type="button" role="menuitem" onClick={() => pick(report.audience)}
+              className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">{report.label}</button>
           ))}
-        </span>
-      )}
+        </div>, document.body)}
     </span>
   );
 }
