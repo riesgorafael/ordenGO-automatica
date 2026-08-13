@@ -1321,7 +1321,7 @@ export default function App() {
               </div>
             )}
             {(!isMgr || oTab === "list")
-              ? <OrdersHome {...{ orders, ger: isMgr, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen: setODetail }} />
+              ? <OrdersHome {...{ orders, ger: isMgr, projects, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen: setODetail }} />
               : <MonthlyReport orders={orders} />}
           </>
         )}
@@ -3432,7 +3432,58 @@ function MiDia({ me, tasks, orders, purchaseOrders = [], finances = [], budgets 
 }
 
 
-function OrderRow({ order: o, ger, onOpen }) {
+// Generación de los PDF de una orden. Vive a nivel de módulo para que la lista y el detalle usen
+// exactamente la misma validación: una cronología inconsistente no debe llegar nunca a un PDF
+// firmado por el cliente.
+const ORDER_REPORTS = [
+  { audience: "client", label: "Constancia para el cliente", ger: false },
+  { audience: "valued", label: "Constancia valorizada", ger: true },
+  { audience: "internal", label: "Reporte interno", ger: true },
+];
+function downloadOrderReport(order, projects, audience) {
+  const errors = timelineErrors(order.technical, order.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : Date.now());
+  if (errors.length) { alert(`No se puede generar un reporte con una cronología inconsistente:\n\n${errors.join("\n")}`); return; }
+  const project = projects.find((item) => item.id === order.projectId) || null;
+  if (audience === "internal") internalOrderReportPDF(order, project);
+  else if (audience === "valued") valuedClientReportPDF(order, project);
+  else clientOrderReportPDF(order, project);
+}
+
+// Descarga rápida desde la tarjeta, sin abrir la orden. Se despliega para elegir el destinatario:
+// mandarle al cliente una constancia valorizada por error es un problema comercial, así que el
+// tipo de reporte se elige explícitamente en vez de asumir uno.
+function OrderReportMenu({ order, projects, ger }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event) => { if (boxRef.current && !boxRef.current.contains(event.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const options = ORDER_REPORTS.filter((report) => ger || !report.ger);
+  return (
+    <span ref={boxRef} className="relative" onClick={(event) => { event.stopPropagation(); event.preventDefault(); }}>
+      <span role="button" tabIndex={0} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpen((value) => !value); } }}
+        aria-expanded={open} aria-haspopup="menu" title="Descargar reporte de esta orden"
+        className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium ${open ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600"}`}>
+        <Download className="h-3.5 w-3.5" /> PDF
+      </span>
+      {open && (
+        <span role="menu" className="motion-popover absolute right-0 top-full z-30 mt-1 block w-56 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          {options.map((report) => (
+            <span key={report.audience} role="menuitem" tabIndex={0}
+              onClick={() => { setOpen(false); downloadOrderReport(order, projects, report.audience); }}
+              onKeyDown={(event) => { if (event.key === "Enter") { setOpen(false); downloadOrderReport(order, projects, report.audience); } }}
+              className="block cursor-pointer px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">{report.label}</span>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function OrderRow({ order: o, ger, projects = [], onOpen }) {
   const t = orderTotals(o);
   return (
     <button onClick={() => onOpen(o)} className="block w-full text-left">
@@ -3445,7 +3496,10 @@ function OrderRow({ order: o, ger, onOpen }) {
           {o._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente de sincronizar</Chip>}
           {o.category && <Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{o.category}</Chip>}
           {(o.quoteNumber || o.budgetNumber) && <Chip title="Presupuesto vinculado" className="bg-sky-50 text-sky-700 ring-sky-600/20"><FileText className="h-3 w-3" />{o.quoteNumber || o.budgetNumber}</Chip>}
-          <span className="ml-auto text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{compactDuration((Number(o.laborHours) || 0) * 3600000)}</span>}</span>
+          <span className="ml-auto flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{compactDuration((Number(o.laborHours) || 0) * 3600000)}</span>}</span>
+            <OrderReportMenu order={o} projects={projects} ger={ger} />
+          </span>
         </div>
         <div className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-800"><Building2 className="h-3.5 w-3.5 text-slate-400" />{o.client}</div>
         <div className="text-xs text-slate-500">{o.site} · {o.service} · {o.date}</div>
@@ -3455,7 +3509,7 @@ function OrderRow({ order: o, ger, onOpen }) {
   );
 }
 /* ===================================== ÓRDENES: HOME ===================================== */
-function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
+function OrdersHome({ orders, ger, projects = [], oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
   const [oUrgent, setOUrgent] = useState(false);
   const [view, setView] = useState("lista"); // "lista" | "estado"
   const pendingBill = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada");
@@ -3508,7 +3562,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
               <div className="flex items-center justify-between px-3 py-2"><h3 className="text-sm font-semibold text-slate-700">{status}</h3><span className="rounded-full bg-white px-2 text-xs font-medium text-slate-500 ring-1 ring-slate-200">{items.length}</span></div>
               <div className="space-y-2 px-2 pb-3">
                 {items.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 bg-white py-8 text-center text-xs text-slate-400">Sin órdenes</div>}
-                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} onOpen={onOpen} />)}
+                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} onOpen={onOpen} />)}
               </div>
             </section>
           ); })}
@@ -3516,7 +3570,7 @@ function OrdersHome({ orders, ger, oQ, setOQ, oStatus, setOStatus, oBillable, se
       ) : (
         <div className="space-y-3">
           {filtered.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No hay órdenes que coincidan.</div>}
-          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} onOpen={onOpen} />)}
+          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} onOpen={onOpen} />)}
         </div>
       )}
     </div>
@@ -3698,14 +3752,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
   const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || (order.laborCost || 0) !== Number(laborCost) || JSON.stringify(mats) !== JSON.stringify(order.materials));
   const savePrices = () => onUpdate(order.id, { rate: normalizedRate(rate), laborCost: wholeMoney(laborCost), materials: mats.map((m) => ({ ...m, price: wholeMoney(m.price), cost: wholeMoney(m.cost), qty: Number(m.qty) || 0 })), laborBillable });
   const shareOrder = async () => { const text = `${order.id} · ${order.client}\n${order.site || ""}\n${order.service} · ${order.status}`; if (navigator.share) { try { await navigator.share({ title: `Orden ${order.id}`, text }); } catch {} } else { try { await navigator.clipboard.writeText(text); } catch {} } };
-  const downloadReport = (audience) => {
-    const errors = timelineErrors(order.technical, order.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : Date.now());
-    if (errors.length) { alert(`No se puede generar un reporte con una cronología inconsistente:\n\n${errors.join("\n")}`); return; }
-    const project = projects.find((item) => item.id === order.projectId) || null;
-    if (audience === "internal") internalOrderReportPDF(order, project);
-    else if (audience === "valued") valuedClientReportPDF(order, project);
-    else clientOrderReportPDF(order, project);
-  };
+  const downloadReport = (audience) => downloadOrderReport(order, projects, audience);
   const [zoom, setZoom] = useState(null);
   const mouseDownOnBackdrop = useRef(false);
   return (
