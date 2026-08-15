@@ -3238,7 +3238,9 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   const byTech = {};
   const addTech = (name, hours, countOrder) => {
     const key = name || "—";
-    if (!byTech[key]) byTech[key] = { name: key.split(" ")[0], horas: 0, ordenes: 0 };
+    // Nombre completo: la lista tiene ancho de sobra y recortar al primer nombre confundía dos
+    // personas con el mismo nombre de pila, además de dejar "Sin identificar" como "Sin".
+    if (!byTech[key]) byTech[key] = { name: key, horas: 0, ordenes: 0, unnamed: key === "Sin identificar" };
     byTech[key].horas += hours;
     if (countOrder) byTech[key].ordenes += 1;
   };
@@ -3384,22 +3386,31 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
       </div>
 
       {/* Productividad por técnico */}
+      {/* Lista horizontal en vez de barras agrupadas: horas y cantidad de órdenes son unidades
+          distintas (9 h contra 2 OT) y compartir un eje aplastaba las barras de órdenes hasta
+          volverlas ilegibles. Acá la barra representa solo las horas y las órdenes van como número. */}
       <Panel title={`Productividad por técnico (${periodLabel})`}>
-        {tech.length === 0 ? <Empty text="Sin datos en el período." /> : (
-          <div style={{ width: "100%", height: 220 }}>
-            <ResponsiveContainer>
-              <BarChart data={tech} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="horas" name="Horas-técnico" fill="#F18700" radius={[5, 5, 0, 0]} />
-                <Bar dataKey="ordenes" name="Órdenes" fill="#0ea5e9" radius={[5, 5, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
+        {tech.length === 0 ? <Empty text="Sin datos en el período." /> : (() => {
+          const maxHoras = Math.max(...tech.map((t) => t.horas), 1);
+          const totalHoras = tech.reduce((sum, t) => sum + t.horas, 0);
+          return <div className="space-y-3">
+            {tech.map((t) => (
+              <div key={t.name}>
+                <div className="flex items-baseline justify-between gap-2 text-xs">
+                  <span className={`min-w-0 truncate font-medium ${t.unnamed ? "italic text-slate-400" : "text-slate-700"}`}>{t.name}</span>
+                  <span className="shrink-0 tabular-nums text-slate-500"><b className="text-slate-800">{t.horas} h</b>{t.ordenes > 0 ? ` · ${t.ordenes} OT` : ""}</span>
+                </div>
+                <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                  <div className={`h-full rounded-full ${t.unnamed ? "bg-slate-300" : "bg-brand-500"}`} style={{ width: `${(t.horas / maxHoras) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+            <p className="border-t border-slate-100 pt-2 text-[11px] text-slate-400">
+              Total {Math.round(totalHoras * 100) / 100} horas-técnico en el período. Las horas de una OT se cuentan para cada persona que trabajó en ella.
+              {tech.some((t) => t.unnamed) && " «Sin identificar» son las horas facturadas por encima de los técnicos cargados por nombre."}
+            </p>
+          </div>;
+        })()}
       </Panel>
 
       <Panel title={`Rentabilidad por cliente — ingreso vs. costo (${periodLabel})`}>
