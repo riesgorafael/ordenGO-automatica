@@ -9,7 +9,7 @@ import {
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
   ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
-  Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff,
+  Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -17,13 +17,14 @@ import { budgetReportPDF, clientOrderReportPDF, dashboardReportPDF, financeRepor
 import { parseReceiptImage } from "./receiptOcr";
 import { warpPerspective, autoDetectCorners } from "./imagePerspective";
 import GanttChart from "./GanttChart";
+import IndustrialManagement from "./IndustrialManagement";
 import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, updateQueuedOrder } from "./offline";
 
 /* ===================================== CONFIG ===================================== */
 const CUR = "USD ";
 const DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
 const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "", hideAdminModules: false, companyCuit: "", companyLegalName: "", companyIvaCondition: "IVA Responsable Inscripto", companyAddress: "" };
 const cuitDigits = (value) => String(value || "").replace(/\D/g, "");
 const formatCuit = (value) => { const digits = cuitDigits(value); return digits.length === 11 ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}` : digits; };
@@ -554,6 +555,11 @@ export default function App() {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [materialLists, setMaterialLists] = useState([]);
   const [whiteboardNotes, setWhiteboardNotes] = useState([]);
+  const [assets, setAssets] = useState([]);
+  const [serviceContracts, setServiceContracts] = useState([]);
+  const [technicalDocuments, setTechnicalDocuments] = useState([]);
+  const orderSyncCursor = useRef("");
+  const taskSyncCursor = useRef("");
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
   HIDE_COSTS = !!branding.hideAdminModules;
   const [module, setModule] = useState("orders");
@@ -712,7 +718,10 @@ export default function App() {
   const boot = async () => {
     const d = await api.bootstrap();
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING);
+    orderSyncCursor.current = (d.orders || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
+    taskSyncCursor.current = (d.tasks || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current);
     setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setWhiteboardNotes(d.whiteboardNotes || []);
+    setAssets(d.assets || []); setServiceContracts(d.serviceContracts || []); setTechnicalDocuments(d.technicalDocuments || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
@@ -752,12 +761,15 @@ export default function App() {
     let cancelled = false;
     const refreshOrders = async () => {
       try {
-        const fresh = await api.orders();
-        if (!cancelled) setOrders((fresh || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order));
+        const fresh = await api.orders(orderSyncCursor.current);
+        if (!cancelled && fresh?.length) {
+          orderSyncCursor.current = fresh.reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
+          setOrders((current) => { const updates = new Map(fresh.map((order) => [order.id, order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order])); return [...updates.values(), ...current.filter((item) => !updates.has(item.id))]; });
+        }
       } catch {}
     };
     const onVisibility = () => { if (document.visibilityState === "visible") void refreshOrders(); };
-    const timer = window.setInterval(refreshOrders, 8000);
+    const timer = window.setInterval(refreshOrders, 30000);
     window.addEventListener("focus", refreshOrders);
     document.addEventListener("visibilitychange", onVisibility);
     void refreshOrders();
@@ -769,9 +781,9 @@ export default function App() {
     // cambios hechos por otros usuarios (otro técnico, gerencia) sin tener que recargar a mano.
     if (!me || !online || module !== "projects") return;
     let cancelled = false;
-    const refreshTasks = async () => { try { const fresh = await api.tasks(); if (!cancelled) setTasks(fresh || []); } catch {} };
+    const refreshTasks = async () => { try { const fresh = await api.tasks(taskSyncCursor.current); if (!cancelled && fresh?.length) { taskSyncCursor.current = fresh.reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current); setTasks((current) => { const updates = new Map(fresh.map((item) => [item.id, item])); return [...updates.values(), ...current.filter((item) => !updates.has(item.id))]; }); } } catch {} };
     const onVisibility = () => { if (document.visibilityState === "visible") void refreshTasks(); };
-    const timer = window.setInterval(refreshTasks, 10000);
+    const timer = window.setInterval(refreshTasks, 45000);
     window.addEventListener("focus", refreshTasks);
     document.addEventListener("visibilitychange", onVisibility);
     void refreshTasks();
@@ -845,11 +857,11 @@ export default function App() {
     return () => { cancelled = true; document.removeEventListener("visibilitychange", onVisibility); wakeLock?.release().catch(() => {}); };
   }, [me?.role, tvSettings.tvModeEnabled]);
 
-  const logout = () => { setToken(null); setMe(null); setModule("orders"); setOView("list"); };
+  const logout = () => { api.logout().catch(() => {}); setToken(null); setMe(null); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
   if (booting) return <div className="grid min-h-screen place-items-center bg-ink-900 text-slate-300"><div className="motion-page flex flex-col items-center gap-3" role="status" aria-label="Cargando OrdenGO"><div className="skeleton h-9 w-36 rounded-lg" /><Loader2 className="h-5 w-5 animate-spin" /></div></div>;
-  if (!me) return <Login branding={branding} onLogin={async (email, password) => { const r = await api.login(email, password); setToken(r.token); await boot(); }} />;
+  if (!me) return <Login branding={branding} onLogin={async (email, password) => { await api.login(email, password); setToken(true); await boot(); }} />;
 
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
@@ -1157,6 +1169,14 @@ export default function App() {
   };
   const deleteWhiteboardNote = async (id) => { await api.deleteWhiteboardNote(id); setWhiteboardNotes((p) => p.filter((x) => x.id !== id)); };
 
+  /* Gestión industrial */
+  const saveAsset = async (form, id) => { const saved = id ? await api.updateAsset(id, form) : await api.createAsset(form); setAssets((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [...p, saved]); return saved; };
+  const deleteAsset = async (id) => { await api.deleteAsset(id); setAssets((p) => p.filter((x) => x.id !== id)); };
+  const saveServiceContract = async (form, id) => { const saved = id ? await api.updateServiceContract(id, form) : await api.createServiceContract(form); setServiceContracts((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [...p, saved]); return saved; };
+  const deleteServiceContract = async (id) => { await api.deleteServiceContract(id); setServiceContracts((p) => p.filter((x) => x.id !== id)); };
+  const saveTechnicalDocument = async (form, id) => { const saved = id ? await api.updateTechnicalDocument(id, form) : await api.createTechnicalDocument(form); setTechnicalDocuments((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [...p, saved]); return saved; };
+  const deleteTechnicalDocument = async (id) => { await api.deleteTechnicalDocument(id); setTechnicalDocuments((p) => p.filter((x) => x.id !== id)); };
+
   /* Repuestos */
   const addPart = async (pt) => { const s = await api.addPart(pt); setParts((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [...p, s])); };
   const updatePart = async (id, patch) => { const s = await api.updatePart(id, patch); setParts((p) => p.map((x) => (x.id === id ? s : x))); };
@@ -1164,7 +1184,7 @@ export default function App() {
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
   if (!isOffice && module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
+    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} assets={assets} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
   // Los módulos se agrupan por área de trabajo: Inicio/Órdenes/Proyectos quedan
   // como núcleo operativo sin agrupar (uso diario, incluye técnicos de campo);
@@ -1181,6 +1201,7 @@ export default function App() {
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isMgr && !branding.hideAdminModules ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Administración" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Administración" }] : []),
+    ...(isMgr ? [{ id: "industrial", label: "Gestión industrial", icon: Activity, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
@@ -1421,6 +1442,7 @@ export default function App() {
           </>
           ); })()}
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
+        {activeModule === "industrial" && isMgr && <IndustrialManagement assets={assets} contracts={serviceContracts} documents={technicalDocuments} clients={clients} projects={projects} orders={orders} tasks={tasks} users={users} me={me} onSaveAsset={saveAsset} onDeleteAsset={deleteAsset} onSaveContract={saveServiceContract} onDeleteContract={deleteServiceContract} onSaveDocument={saveTechnicalDocument} onDeleteDocument={deleteTechnicalDocument} onError={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
@@ -1438,7 +1460,7 @@ export default function App() {
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
-      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
+      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} assets={assets} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "asset") navigateModule("industrial"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
       {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
@@ -1594,7 +1616,7 @@ function ChangePassword({ onClose, forced, onDone }) {
     if (n1.length < 8) { setMsg("La nueva contraseña debe tener al menos 8 caracteres."); return; }
     if (n1 !== n2) { setMsg("Las contraseñas nuevas no coinciden."); return; }
     setBusy(true);
-    try { const r = await api.changePassword(cur, n1); if (r?.token) setToken(r.token); setDone(true); }
+    try { await api.changePassword(cur, n1); setToken(true); setDone(true); }
     catch (e) { setMsg(e?.message || "No se pudo cambiar la contraseña."); }
     finally { setBusy(false); }
   };
@@ -1636,7 +1658,7 @@ function ProjectEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
-function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
+function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], assets = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const projectById = (id) => projects.find((p) => p.id === id);
@@ -1652,9 +1674,10 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], f
       ...(isMgr ? purchaseOrders.filter((po) => `${po.number || po.id} ${po.supplierName || ""} ${po.supplierInvoiceNumber || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "purchaseOrder", item, title: `${item.number || item.id} · ${item.supplierName}`, meta: `Orden de compra · ${item.stage} · ${money(item.grossAmountUsd)}`, icon: ShoppingCart })) : []),
       ...(canSeeMaterialLists ? materialLists.filter((ml) => `${ml.number || ml.id} ${ml.projectName || ""} ${ml.client || ""} ${ml.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "materialList", item, title: `${item.number || item.id} · ${item.projectName}`, meta: `Listado de materiales · ${item.discipline} · ${item.totalItems || 0} ítem(s)`, icon: Package })) : []),
       ...(isMgr ? parts.filter((p) => `${p.name} ${p.unit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "part", item, title: item.name, meta: `Inventario · Stock ${item.stock ?? "—"}`, icon: Wrench })) : []),
+      ...(isMgr ? assets.filter((a) => `${a.tag} ${a.name} ${a.clientName} ${a.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "asset", item, title: `${item.tag} · ${item.name}`, meta: `Activo · ${item.clientName} · ${item.status}`, icon: Activity })) : []),
     ];
     return found.slice(0, 12);
-  }, [q, orders, tasks, clients, parts, projects, budgets, finances, suppliers, purchaseOrders, materialLists, isMgr]);
+  }, [q, orders, tasks, clients, parts, projects, budgets, finances, suppliers, purchaseOrders, materialLists, assets, isMgr]);
   const mouseDownOnBackdrop = useRef(false);
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-3 pt-[8vh] sm:p-6 sm:pt-[12vh]" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
@@ -4229,7 +4252,7 @@ function BarcodeScannerDialog({ onClose, onDetect }) {
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
+function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], assets = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
   const fieldTechs = users.filter((u) => u.active && ["admin", "gerente", "tecnico"].includes(u.role));
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
@@ -4267,6 +4290,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [service, setService] = useState(initial.service || "Mantenimiento preventivo");
   const [recurrenceMonths, setRecurrenceMonths] = useState(initial.recurrenceMonths || 0);
   const [urgent, setUrgent] = useState(!!initial.urgent);
+  const [assetId, setAssetId] = useState(initial.assetId || "");
   const [equipo, setEquipo] = useState(initial.equipo || ""); const [sintoma, setSintoma] = useState(initial.sintoma || ""); const [solucion, setSolucion] = useState(initial.solucion || ""); const [category, setCategory] = useState(initial.category || "");
   const [linkedBudgetId] = useState(initial.budgetId || ""); const [linkedBudgetNumber] = useState(initial.budgetNumber || initial.quoteNumber || ""); const [linkedProjectId] = useState(initial.projectId || "");
   const [technical, setTechnical] = useState(() => ({ ...EMPTY_TECHNICAL, ...(initial.technical || {}), reportedAt: initial.technical?.reportedAt || new Date().toISOString() }));
@@ -4377,9 +4401,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
     : [];
   const errCls = (missing) => stepAttempted && missing ? "border-rose-400 ring-1 ring-rose-200" : "";
   useEffect(() => {
-    const timer = setTimeout(() => { saveOrderDraft(me.id, { existingOrderId: currentOrderId, step, clientMode, clientId, newClient, siteLabel, siteCode, contact, tech, assignedTechs, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location, budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId }); setDraftSaved(true); }, 500);
+    const timer = setTimeout(() => { saveOrderDraft(me.id, { existingOrderId: currentOrderId, step, clientMode, clientId, newClient, siteLabel, siteCode, contact, tech, assignedTechs, quoteNumber, customerPO, service, assetId, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location, budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId }); setDraftSaved(true); }, 500);
     setDraftSaved(false); return () => clearTimeout(timer);
-  }, [me.id, currentOrderId, step, clientMode, clientId, newClient, siteLabel, siteCode, contact, tech, assignedTechs, quoteNumber, customerPO, service, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location]);
+  }, [me.id, currentOrderId, step, clientMode, clientId, newClient, siteLabel, siteCode, contact, tech, assignedTechs, quoteNumber, customerPO, service, assetId, equipo, sintoma, solucion, category, technical, rate, laborHours, technicians, laborBillable, materials, location]);
   const save = async (status, { stayOpen = false, technicalOverride = technical } = {}) => {
     setSaving(true);
     const selectedPlant = clientMode === "existing" ? clientSites(client).find((s) => s.code === siteCode) : null;
@@ -4392,7 +4416,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
     const savedLocation = location ? { ...location, label: resolvedSite } : null;
     const completionStamp = new Date().toISOString();
     const timelineHours = technicalOverride.startedAt ? round2(timelineWorkMs(technicalOverride, Date.now()) / 3600000) : automaticLaborHours;
-    const o = { client: client.name, site: resolvedSite, siteCode: siteCode.trim(), contact, tech, assignedTechs, quoteNumber: quoteNumber.trim(), customerPO: customerPO.trim(), budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId, service, recurrenceMonths: Number(recurrenceMonths) || 0, urgent, date: todayStr(), createdAt: completionStamp, equipo, sintoma, solucion, category, technical: { ...technicalOverride, signerCompany: client.name, downtimeMinutes: Number(technicalOverride.downtimeMinutes) || 0, billableWaitMinutes: Number(technicalOverride.billableWaitMinutes) || 0 }, location: savedLocation, photos, signatureUrl, signedAt: signatureUrl ? completionStamp : null, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), technicianSignatureUrl, technicianSignedAt: technicianSignatureUrl ? completionStamp : null, technicianSignedBy: tech || me.name, laborHours: timelineHours, billableHours: projectedBillableHours, technicians: Math.max(1, Math.round(Number(technicians) || 1)), rate: normalizedRate(rate), currency: "USD", laborBillable, materials: materials.map((m) => ({ ...m, qty: m.unit === "u" ? Math.max(1, Math.round(Number(m.qty) || 1)) : (Number(m.qty) || 0), price: wholeMoney(m.price), cost: wholeMoney(m.cost) })), status };
+    const o = { client: client.name, site: resolvedSite, siteCode: siteCode.trim(), contact, tech, assignedTechs, quoteNumber: quoteNumber.trim(), customerPO: customerPO.trim(), budgetId: linkedBudgetId, budgetNumber: linkedBudgetNumber, projectId: linkedProjectId, assetId, service, recurrenceMonths: Number(recurrenceMonths) || 0, urgent, date: todayStr(), createdAt: completionStamp, equipo, sintoma, solucion, category, technical: { ...technicalOverride, signerCompany: client.name, downtimeMinutes: Number(technicalOverride.downtimeMinutes) || 0, billableWaitMinutes: Number(technicalOverride.billableWaitMinutes) || 0 }, location: savedLocation, photos, signatureUrl, signedAt: signatureUrl ? completionStamp : null, signedBy, noSignReason: signatureUrl ? "" : noSignReason.trim(), technicianSignatureUrl, technicianSignedAt: technicianSignatureUrl ? completionStamp : null, technicianSignedBy: tech || me.name, laborHours: timelineHours, billableHours: projectedBillableHours, technicians: Math.max(1, Math.round(Number(technicians) || 1)), rate: normalizedRate(rate), currency: "USD", laborBillable, materials: materials.map((m) => ({ ...m, qty: m.unit === "u" ? Math.max(1, Math.round(Number(m.qty) || 1)) : (Number(m.qty) || 0), price: wholeMoney(m.price), cost: wholeMoney(m.cost) })), status };
     if (clientMode === "new" && newClient.name) o._newClient = { id: "c" + Date.now(), name: newClient.name, site: resolvedSite, sites: resolvedSite ? [{ code: "", name: resolvedSite }] : [] };
     const saved = await onSave(o, currentOrderId, { stayOpen });
     if (saved?.id && !currentOrderId) setCurrentOrderId(saved.id);
@@ -4452,6 +4476,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           <label className="mt-3 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} className="h-4 w-4" /> Marcar como urgente{URGENT_SERVICES.has(service) && <span className="text-xs text-slate-400">(ya lo es por ser {service})</span>}</label>
         </Section>
         <Section title="Identificación del activo">
+          {clientMode === "existing" && assets.some((asset) => asset.clientId === clientId && asset.status !== "Baja") && <L label="Activo del registro técnico" help="Al seleccionarlo se completan TAG, fabricante, modelo y serie, y la OT queda incorporada a su historial."><select value={assetId} onChange={(e) => { const id = e.target.value; const asset = assets.find((item) => item.id === id); setAssetId(id); if (asset) { setEquipo(asset.name || ""); setSiteLabel((current) => current || asset.site || ""); setTechnical((current) => ({ ...current, assetTag: asset.tag || "", manufacturer: asset.manufacturer || "", model: asset.model || "", serial: asset.serial || "" })); } }} className="u-input mt-1"><option value="">Equipo no registrado / carga manual</option>{assets.filter((asset) => asset.clientId === clientId && asset.status !== "Baja").map((asset) => <option key={asset.id} value={asset.id}>{asset.tag} · {asset.name}{asset.site ? ` · ${asset.site}` : ""}</option>)}</select></L>}
           <ReqLabel>Equipo / sistema intervenido</ReqLabel>
           <input value={equipo} onChange={(e) => setEquipo(e.target.value)} placeholder="Ej. Tablero principal, línea 2" className={`u-input mt-1 ${errCls(!(equipo || technical.assetTag))}`} />
           <L label="Categoría" help="Etiqueta corta y libre para agrupar el tipo de falla o intervención (ej. Sobrecalentamiento, Falla eléctrica, Programación)."><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Sobrecalentamiento" className="u-input mt-1" /></L>

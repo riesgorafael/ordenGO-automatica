@@ -1,19 +1,22 @@
 const BASE = "/api";
-let token = localStorage.getItem("og_token") || null;
+// La credencial real vive en una cookie HttpOnly; JavaScript solo recuerda que debe intentar
+// restaurar la sesión. Esto evita que un XSS pueda extraer el JWT desde localStorage.
+let token = localStorage.getItem("og_session_active") === "1";
+localStorage.removeItem("og_token");
 
 export function setToken(t) {
-  token = t;
-  if (t) localStorage.setItem("og_token", t);
-  else localStorage.removeItem("og_token");
+  token = Boolean(t);
+  if (token) localStorage.setItem("og_session_active", "1");
+  else localStorage.removeItem("og_session_active");
 }
 export function getToken() { return token; }
 
 async function req(path, opts = {}) {
   const res = await fetch(BASE + path, {
     ...opts,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
       ...(opts.headers || {}),
     },
   });
@@ -32,6 +35,7 @@ async function req(path, opts = {}) {
 
 export const api = {
   login: (email, password) => req("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  logout: () => req("/auth/logout", { method: "POST" }),
   getBranding: () => req("/branding"),
   bootstrap: () => req("/bootstrap"),
   changePassword: (current, next) => req("/me/password", { method: "POST", body: JSON.stringify({ current, next }) }),
@@ -39,6 +43,18 @@ export const api = {
   addClient: (c) => req("/clients", { method: "POST", body: JSON.stringify(c) }),
   updateClient: (id, patch) => req("/clients/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteClient: (id) => req("/clients/" + id, { method: "DELETE" }),
+
+  createAsset: (asset) => req("/assets", { method: "POST", body: JSON.stringify(asset) }),
+  updateAsset: (id, patch) => req("/assets/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteAsset: (id) => req("/assets/" + id, { method: "DELETE" }),
+  createServiceContract: (contract) => req("/service-contracts", { method: "POST", body: JSON.stringify(contract) }),
+  updateServiceContract: (id, patch) => req("/service-contracts/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteServiceContract: (id) => req("/service-contracts/" + id, { method: "DELETE" }),
+  createTechnicalDocument: (document) => req("/technical-documents", { method: "POST", body: JSON.stringify(document) }),
+  updateTechnicalDocument: (id, patch) => req("/technical-documents/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteTechnicalDocument: (id) => req("/technical-documents/" + id, { method: "DELETE" }),
+  stockMovements: (partId) => req(`/parts/${partId}/movements`),
+  auditLog: () => req("/audit-log"),
 
   addPart: (p) => req("/parts", { method: "POST", body: JSON.stringify(p) }),
   updatePart: (id, patch) => req("/parts/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -60,7 +76,7 @@ export const api = {
   updateWhiteboardNote: (id, patch) => req("/whiteboard-notes/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteWhiteboardNote: (id) => req("/whiteboard-notes/" + id, { method: "DELETE" }),
 
-  orders: () => req("/orders"),
+  orders: (updatedSince = "") => req("/orders" + (updatedSince ? `?updated_since=${encodeURIComponent(updatedSince)}` : "")),
   createOrder: (o) => req("/orders", { method: "POST", body: JSON.stringify(o) }),
   updateOrder: (id, patch) => req("/orders/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteOrder: (id) => req("/orders/" + id, { method: "DELETE" }),
@@ -82,7 +98,7 @@ export const api = {
   // force omite la caché del servidor: lo usa el botón de refrescar manual.
   wholesaleExchangeRate: (force = false) => req("/exchange-rates/wholesale" + (force ? "?force=1" : "")),
 
-  tasks: () => req("/tasks"),
+  tasks: (updatedSince = "") => req("/tasks" + (updatedSince ? `?updated_since=${encodeURIComponent(updatedSince)}` : "")),
   saveTask: (t) => req("/tasks", { method: "POST", body: JSON.stringify(t) }),
   updateTask: (id, patch) => req("/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (id) => req("/tasks/" + id, { method: "DELETE" }),
@@ -108,7 +124,7 @@ export const api = {
     form.append("file", file);
     const res = await fetch(`${BASE}/projects/${projectId}/import-mpp`, {
       method: "POST",
-      headers: token ? { Authorization: "Bearer " + token } : {},
+      credentials: "same-origin",
       body: form,
     });
     if (!res.ok) { const msg = await res.json().catch(() => ({ error: res.statusText })); throw new Error(msg.error || "Error de servidor"); }

@@ -1,0 +1,38 @@
+name: Calidad y seguridad
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: |
+            server/pnpm-lock.yaml
+            web/pnpm-lock.yaml
+      - run: corepack enable
+      - name: Instalar backend
+        working-directory: server
+        run: pnpm install --frozen-lockfile
+      - name: Probar reglas de negocio
+        working-directory: server
+        run: pnpm test
+      - name: Auditar backend
+        working-directory: server
+        run: pnpm audit --prod
+      - name: Instalar frontend
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Compilar frontend
+        working-directory: web
+        run: pnpm build
+      - name: Auditar frontend
+        working-directory: web
+        run: pnpm audit --prod

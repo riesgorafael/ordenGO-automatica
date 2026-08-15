@@ -1,17 +1,17 @@
 # OrdenGO Suite — Proyecto full-stack
 
-Aplicación de **órdenes de campo + seguimiento de proyectos** para empresas de automatización.
+Plataforma de **servicios de campo, proyectos, activos y gestión comercial/financiera** para empresas de automatización industrial.
 
 - **Frontend:** React + Vite + Tailwind (se compila y lo sirve el backend).
 - **Backend:** Node/Express + PostgreSQL, con login real (JWT + contraseñas cifradas).
 - **IA:** proxy a Anthropic con tu clave del lado del servidor (nunca en el navegador).
-- **Roles:** Administrador, Gerencia y Técnico de campo. Los montos **no** se envían a los técnicos (se filtran en el servidor).
+- **Roles:** Administrador, Gerencia, Técnico de campo, Técnico de oficina y Monitor de oficina. Los montos **no** se envían a los técnicos (se filtran en el servidor).
 
 ---
 
-> **Estado:** proyecto compilado y verificado. El frontend construye sin errores y la API
-> pasa 39 pruebas automáticas de autenticación, permisos por rol, ocultamiento de montos
-> a los técnicos, órdenes, tareas, gestión de usuarios y cambio de contraseña.
+> **Estado:** proyecto compilado y verificado. El backend incluye pruebas automáticas para
+> facturación mínima, reglas contractuales, tarifa por defecto e IVA. Ejecutar con
+> `npm test` dentro de `server/`.
 
 ## Estructura
 
@@ -22,6 +22,8 @@ ordengo/
 ├─ .env.example            # variables de entorno (copiar a .env)
 ├─ server/                 # backend Node/Express + API
 │  ├─ index.js
+│  ├─ domainRules.js       # reglas de negocio testeables
+│  ├─ test/                # pruebas automáticas
 │  └─ package.json
 └─ web/                    # frontend React/Vite
    ├─ src/ (App.jsx, api.js, main.jsx, index.css)
@@ -29,6 +31,16 @@ ordengo/
    ├─ vite.config.js
    └─ package.json
 ```
+
+## Gestión industrial
+
+- Registro maestro de activos por cliente, planta, área y TAG, con criticidad, estado y mantenimiento preventivo.
+- Vinculación de órdenes al activo para construir historial y métricas de confiabilidad.
+- Contratos y SLA por cliente/sitio: respuesta, resolución, tarifa y mínimo facturable.
+- Control de versiones para programas PLC/HMI/SCADA, planos, backups y protocolos FAT/SAT.
+- Vista de capacidad del equipo y panel inicial de MTTR/recurrencia.
+- Libro inmutable de movimientos de inventario asociado a órdenes de trabajo y compras.
+- Sincronización incremental de órdenes y tareas para reducir transferencia y carga de PostgreSQL.
 
 ---
 
