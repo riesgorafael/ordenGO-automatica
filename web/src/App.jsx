@@ -264,6 +264,10 @@ function orderMargin(o) {
   const rev = orderTotals(o).total, cost = orderCosts(o).costTotal;
   return { rev, cost, margin: rev - cost, pct: rev ? (rev - cost) / rev : 0 };
 }
+// Separador de las exportaciones CSV. Excel en español usa punto y coma como separador de lista:
+// con comas abre todo el archivo en una sola columna, que es como venían saliendo estos reportes.
+// Todos los valores se exportan entrecomillados, así que un ";' dentro de un texto no rompe nada.
+const CSV_SEP = ";";
 function downloadFile(name, text) {
   try { const blob = new Blob(["\ufeff" + text], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
@@ -897,8 +901,8 @@ export default function App() {
   const deleteOrder = (id) => setConfirmDialog({ title: `Eliminar ${id}`, message: "La orden y su historial se eliminarán de forma permanente.", confirmLabel: "Eliminar orden", danger: true, action: async () => { try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } } });
   const exportCSV = (rows, name) => {
     const head = ["Folio", "Fecha", "Cliente", "Sitio", "Tipo", "Estado", "Horas efectivas", "Horas facturables", "Técnicos", "Horas-técnico facturables", "Mano de obra (USD)", "Materiales (USD)", "Total (USD)"];
-    const lines = rows.map((o) => { const t = orderTotals(o); const technicianHours = t.billedHours * (Number(o.technicians) || 1); return [o.id, o.date, o.client, o.site, o.service, o.status, o.laborHours, t.billedHours, o.technicians || 1, technicianHours, t.labor.toFixed(2), t.mats.toFixed(2), t.total.toFixed(2)].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","); });
-    downloadFile(name, [head.join(","), ...lines].join("\n"));
+    const lines = rows.map((o) => { const t = orderTotals(o); const technicianHours = t.billedHours * (Number(o.technicians) || 1); return [o.id, o.date, o.client, o.site, o.service, o.status, o.laborHours, t.billedHours, o.technicians || 1, technicianHours, t.labor.toFixed(2), t.mats.toFixed(2), t.total.toFixed(2)].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(CSV_SEP); });
+    downloadFile(name, [head.join(CSV_SEP), ...lines].join("\n"));
   };
 
   /* Proyectos */
@@ -2312,8 +2316,8 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       movement.amountUsd, movement.vatAmountUsd ?? "", movement.deductionsUsd ?? "", movement.netAmountUsd ?? "",
       movement.kind === "expense" ? (movement.paymentStatus === "pending" ? "Pendiente" : "Pagado") : "",
       movement.paidAt || "", movement.createdByName || "", movement.updatedByName || "",
-    ].map(cell).join(";"));
-    downloadFile(`finanzas_${period}${projectFilter === "all" ? "" : `_${projects.find((project) => project.id === projectFilter)?.key || projectFilter}`}.csv`, [head.join(";"), ...rows].join("\n"));
+    ].map(cell).join(CSV_SEP));
+    downloadFile(`finanzas_${period}${projectFilter === "all" ? "" : `_${projects.find((project) => project.id === projectFilter)?.key || projectFilter}`}.csv`, [head.join(CSV_SEP), ...rows].join("\n"));
   };
   const downloadAllAttachments = async () => {
     setBulkProgress({ done: 0, total: totalAttachments });
@@ -3683,8 +3687,8 @@ function MonthlyReport({ orders }) {
   const chart = rows.slice(0, 8).map((r) => ({ name: r.client.length > 14 ? r.client.slice(0, 13) + "…" : r.client, value: Math.round(r.total), fill: "#F18700" }));
   const exportCSV = () => {
     const head = ["Cliente", "Órdenes", "Horas-técnico", "Mano de obra (USD)", "Materiales (USD)", "Total (USD)", "Facturado (USD)", "Por facturar (USD)"];
-    const lines = rows.map((r) => [r.client, r.count, round2(r.hours), r.labor.toFixed(2), r.mats.toFixed(2), r.total.toFixed(2), r.facturado.toFixed(2), r.pendiente.toFixed(2)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
-    downloadFile(`reporte_${period}.csv`, [head.join(","), ...lines].join("\n"));
+    const lines = rows.map((r) => [r.client, r.count, round2(r.hours), r.labor.toFixed(2), r.mats.toFixed(2), r.total.toFixed(2), r.facturado.toFixed(2), r.pendiente.toFixed(2)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(CSV_SEP));
+    downloadFile(`reporte_${period}.csv`, [head.join(CSV_SEP), ...lines].join("\n"));
   };
   // Análisis de pausas: cuenta y suma la duración (fin de la pausa dentro del período elegido) de
   // cada categoría y de cada técnico, sobre todas las órdenes (no solo las ya facturables) — a
@@ -3709,8 +3713,8 @@ function MonthlyReport({ orders }) {
   const suspensionsInPeriod = orders.filter((o) => o.suspendedAt && String(o.suspendedAt).startsWith(period));
   const exportPausesCSV = () => {
     const head = ["Categoría", "Cantidad", "Duración total"];
-    const lines = pauseCategoryRows.map((r) => [r.category, r.count, compactDuration(r.ms)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
-    downloadFile(`pausas_${period}.csv`, [head.join(","), ...lines].join("\n"));
+    const lines = pauseCategoryRows.map((r) => [r.category, r.count, compactDuration(r.ms)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(CSV_SEP));
+    downloadFile(`pausas_${period}.csv`, [head.join(CSV_SEP), ...lines].join("\n"));
   };
   return (
     <div className="space-y-5">
@@ -5022,18 +5026,30 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
   };
   const exportCSV = () => {
     const head = ["Nombre", "SKU", "Marca", "Categoría", "Unidad", "Precio venta", "Costo", "Stock", "Stock mínimo"];
-    const lines = parts.map((p) => [p.name || "", p.sku || "", p.brand || "", categoryOf(p), p.unit || "u", p.price || 0, p.cost || 0, p.stock || 0, p.minStock || 0].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
-    downloadFile("inventario.csv", [head.join(","), ...lines].join("\n"));
+    const lines = parts.map((p) => [p.name || "", p.sku || "", p.brand || "", categoryOf(p), p.unit || "u", p.price || 0, p.cost || 0, p.stock || 0, p.minStock || 0].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(CSV_SEP));
+    downloadFile("inventario.csv", [head.join(CSV_SEP), ...lines].join("\n"));
   };
   // Parser mínimo de CSV (soporta campos entre comillas con comas adentro, como los que exportan
   // Excel/Sheets) — alcanza para esto, no hace falta una librería para un archivo de una columna fija.
-  const parseCsvLine = (line) => {
+  // El separador se detecta por línea en vez de fijarse: la exportación ahora usa ";" (por Excel en
+  // español) pero los archivos exportados antes usan ",", y un CSV armado a mano puede venir de
+  // cualquiera de las dos formas. Se ignoran los separadores que estén dentro de comillas.
+  const detectSeparator = (line) => {
+    let inQuotes = false, semi = 0, comma = 0;
+    for (const ch of String(line)) {
+      if (ch === '"') inQuotes = !inQuotes;
+      else if (!inQuotes && ch === ";") semi++;
+      else if (!inQuotes && ch === ",") comma++;
+    }
+    return semi >= comma ? ";" : ",";
+  };
+  const parseCsvLine = (line, sep = ";") => {
     const cells = []; let cur = ""; let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQuotes) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; } else cur += ch; }
       else if (ch === '"') inQuotes = true;
-      else if (ch === ",") { cells.push(cur); cur = ""; }
+      else if (ch === sep) { cells.push(cur); cur = ""; }
       else cur += ch;
     }
     cells.push(cur);
@@ -5046,10 +5062,13 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
     setImportBusy(true); setImportResult(null);
     try {
       const text = await file.text();
-      const dataRows = text.split(/\r?\n/).filter((line) => line.trim()).slice(1);
+      const allRows = text.split(/\r?\n/).filter((line) => line.trim());
+      // El separador se toma del encabezado, que es la línea con más columnas garantizadas.
+      const separator = detectSeparator(allRows[0] || "");
+      const dataRows = allRows.slice(1);
       let created = 0, failed = 0;
       for (const line of dataRows) {
-        const [name, sku, brand, category, unit, price, cost, stock, minStock] = parseCsvLine(line);
+        const [name, sku, brand, category, unit, price, cost, stock, minStock] = parseCsvLine(line, separator);
         if (!name?.trim()) continue;
         try {
           await onAdd({ name: name.trim(), sku: (sku || "").trim(), brand: (brand || "").trim(), category: MATERIAL_LIST_DISCIPLINES.includes(category) ? category : "Otro", unit: (unit || "").trim() || "u", price: wholeMoney(price), cost: wholeMoney(cost), stock: Number(stock) || 0, minStock: Number(minStock) || 0 });
