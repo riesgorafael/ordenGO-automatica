@@ -3207,7 +3207,10 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   // 4) Top clientes (período)
   const byClient = {};
   periodOrders.forEach((o) => { byClient[o.client] = (byClient[o.client] || 0) + tot(o); });
-  const topClients = Object.entries(byClient).map(([name, value]) => ({ name: name.length > 16 ? name.slice(0, 15) + "…" : name, value: Math.round(value) })).sort((a, b) => b.value - a.value).slice(0, 6);
+  // `name` va recortado porque es la etiqueta del eje del gráfico, que tiene poco ancho.
+  // `fullName` conserva el nombre entero para el PDF, donde la columna mide 150 mm y no hay
+  // ninguna razón para mostrar "Corteva Seeds A…".
+  const topClients = Object.entries(byClient).map(([name, value]) => ({ name: name.length > 16 ? name.slice(0, 15) + "…" : name, fullName: name, value: Math.round(value) })).sort((a, b) => b.value - a.value).slice(0, 6);
 
   // 4b) Rentabilidad por cliente (ingreso vs costo) — sobre facturadas del período
   const byClientRent = {};

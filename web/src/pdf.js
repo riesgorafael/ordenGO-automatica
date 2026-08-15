@@ -813,12 +813,21 @@ export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, agi
   y = 42;
 
   const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  // Recorta al ancho real de la columna, medido con la fuente activa: sin esto un nombre largo se
+  // superponía con la columna del importe.
+  const fit = (text, maxWidth) => {
+    const str = String(text ?? "—");
+    if (!maxWidth || doc.getTextWidth(str) <= maxWidth) return str;
+    let lo = 0, hi = str.length;
+    while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (doc.getTextWidth(str.slice(0, mid) + "…") <= maxWidth) lo = mid; else hi = mid - 1; }
+    return str.slice(0, lo) + "…";
+  };
   const table = (rows, cols) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
     cols.forEach((c) => doc.text(c.label, M + c.x, y, { align: c.align || "left" }));
     y += 2; doc.setDrawColor(226, 232, 240); doc.line(M, y, W - M, y); y += 4.5;
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42); doc.setFontSize(8.2);
-    rows.forEach((row) => { brk(7); cols.forEach((c) => doc.text(String(c.value(row)), M + c.x, y, { align: c.align || "left" })); y += 5.5; });
+    rows.forEach((row) => { brk(7); cols.forEach((c) => doc.text(fit(c.value(row), c.maxWidth), M + c.x, y, { align: c.align || "left" })); y += 5.5; });
     y += 4;
   };
 
@@ -827,9 +836,11 @@ export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, agi
   kpis.forEach((kpi) => { doc.setFont("helvetica", "bold"); doc.text(kpi.label + ":", M, y); doc.setFont("helvetica", "normal"); doc.text(String(kpi.value), M + 55, y); y += 5.5; });
   y += 4;
 
-  if (topClients?.length) { brk(20); heading("TOP CLIENTES DEL PERÍODO", y); y += 8; table(topClients, [{ label: "Cliente", x: 0, value: (r) => r.name }, { label: "Facturado", x: 150, align: "right", value: (r) => money(r.value) }]); }
-  if (mix?.length) { brk(20); heading("MIX DE SERVICIOS", y); y += 8; table(mix, [{ label: "Servicio", x: 0, value: (r) => r.name }, { label: "Monto", x: 150, align: "right", value: (r) => money(r.value) }]); }
-  if (tech?.length) { brk(20); heading("PRODUCTIVIDAD POR TÉCNICO", y); y += 8; table(tech, [{ label: "Técnico", x: 0, value: (r) => r.name }, { label: "Horas", x: 100, align: "right", value: (r) => r.horas }, { label: "Órdenes", x: 150, align: "right", value: (r) => r.ordenes }]); }
+  // fullName cuando existe: el `name` viene recortado para el eje del gráfico en pantalla, pero acá
+  // la columna tiene 145 mm y no hace falta abreviar.
+  if (topClients?.length) { brk(20); heading("TOP CLIENTES DEL PERÍODO", y); y += 8; table(topClients, [{ label: "Cliente", x: 0, maxWidth: 140, value: (r) => r.fullName || r.name }, { label: "Facturado", x: 150, align: "right", value: (r) => money(r.value) }]); }
+  if (mix?.length) { brk(20); heading("MIX DE SERVICIOS", y); y += 8; table(mix, [{ label: "Servicio", x: 0, maxWidth: 140, value: (r) => r.name }, { label: "Monto", x: 150, align: "right", value: (r) => money(r.value) }]); }
+  if (tech?.length) { brk(20); heading("PRODUCTIVIDAD POR TÉCNICO", y); y += 8; table(tech, [{ label: "Técnico", x: 0, maxWidth: 92, value: (r) => r.name }, { label: "Horas", x: 100, align: "right", value: (r) => r.horas }, { label: "Órdenes", x: 150, align: "right", value: (r) => r.ordenes }]); }
   if (aging?.length) { brk(20); heading("AGING DE COBRANZAS PENDIENTES", y); y += 8; table(aging, [{ label: "Rango", x: 0, value: (r) => r.name }, { label: "Monto", x: 150, align: "right", value: (r) => money(r.value) }]); }
 
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
