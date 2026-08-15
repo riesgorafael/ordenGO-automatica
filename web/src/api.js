@@ -22,6 +22,9 @@ async function req(path, opts = {}) {
     const msg = await res.json().catch(() => ({ error: res.statusText }));
     const error = new Error(msg.error || "Error de servidor");
     error.status = res.status;
+    // El cuerpo completo queda disponible: algunos errores traen datos que la UI necesita para
+    // ofrecer una salida (ej. cuál es el gasto duplicado), no solo el mensaje.
+    error.payload = msg;
     throw error;
   }
   return res.status === 204 ? null : res.json();

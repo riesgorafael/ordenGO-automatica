@@ -1709,9 +1709,38 @@ app.get("/api/exchange-rates/wholesale", auth, requireRole("admin", "gerente"), 
 });
 const MAX_MOVEMENT_ATTACHMENTS = 8;
 const MAX_MOVEMENT_ATTACHMENT_CHARS = 18 * 1024 * 1024; // el body de express admite 24 MB
+// Un gasto cargado dos veces (mismo proveedor, mismo comprobante) infla el resultado operativo,
+// el flujo de caja, la concentración por proveedor y el crédito fiscal de IVA. Con carga por OCR
+// desde el celular y varias personas subiendo comprobantes, es de los errores más probables.
+// No se bloquea —una nota de débito puede reutilizar el número, y una recarga tras corregir un
+// dato es legítima— pero no puede pasar en silencio: exige confirmación explícita.
+async function findDuplicateExpense(movement, excludeId = "") {
+  const receipt = String(movement.receiptNumber || "").trim().toLowerCase();
+  if (movement.kind !== "expense" || !receipt) return null;
+  const supplier = String(movement.supplier || "").trim().toLowerCase();
+  const row = (await pool.query(
+    `SELECT data FROM financial_movements
+      WHERE id <> $3 AND data->>'kind' = 'expense'
+        AND lower(trim(coalesce(data->>'receiptNumber', ''))) = $1
+        AND lower(trim(coalesce(data->>'supplier', ''))) = $2
+      LIMIT 1`,
+    [receipt, supplier, excludeId || ""])).rows[0];
+  return row?.data || null;
+}
+const duplicateExpenseResponse = (duplicate) => ({
+  error: "Ya existe un gasto cargado con ese comprobante para el mismo proveedor.",
+  duplicateOf: {
+    id: duplicate.id, date: duplicate.date, concept: duplicate.concept,
+    supplier: duplicate.supplier || "", receiptNumber: duplicate.receiptNumber || "",
+    amount: duplicate.amount, currency: duplicate.currency, amountUsd: duplicate.amountUsd,
+  },
+});
+
 const normalizeFinancialMovement = (input, previous = {}) => {
   const movement = { ...previous, ...(input || {}) };
   delete movement._updatedAt;
+  // Bandera de la petición, no un dato del movimiento: no debe quedar guardada.
+  delete movement.confirmDuplicate;
   // Un gasto suele necesitar más de un respaldo (factura + cupón de tarjeta + remito). Se guardan
   // en `attachments`; los movimientos viejos traen un único adjunto suelto y se migran acá, y se
   // sigue publicando el primero en attachmentUrl/attachmentName por compatibilidad.
@@ -1818,6 +1847,10 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
   if (movement.attachments.reduce((sum, item) => sum + item.url.length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
   if (movement.kind === "invoice" && !String(movement.invoiceNumber || movement.receiptNumber || "").trim()) return res.status(400).json({ error: "Indica el número de factura." });
+  if (!req.body?.confirmDuplicate) {
+    const duplicate = await findDuplicateExpense(movement);
+    if (duplicate) return res.status(409).json(duplicateExpenseResponse(duplicate));
+  }
   if (movement.kind === "invoice") {
     movement.invoiceNumber = String(movement.invoiceNumber || movement.receiptNumber).trim();
     movement.receiptNumber = movement.invoiceNumber;
@@ -1875,6 +1908,10 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
   if (movement.attachments.reduce((sum, item) => sum + item.url.length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
+  if (!req.body?.confirmDuplicate) {
+    const duplicate = await findDuplicateExpense(movement, req.params.id);
+    if (duplicate) return res.status(409).json(duplicateExpenseResponse(duplicate));
+  }
   if (movement.kind === "invoice") {
     movement.invoiceNumber = String(movement.invoiceNumber || movement.receiptNumber || "").trim();
     if (!movement.invoiceNumber) return res.status(400).json({ error: "Indica el número de factura." });
