@@ -2464,9 +2464,22 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       </div>
     </div>
 
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <Kpi size="lg" label="Resultado operativo" value={fmt(result)} alt={alt(result)} comparison={delta(result, previousResult)} icon={BarChart3} tint={result >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Neto facturado − egresos incurridos" description="Resultado contable simplificado del período: facturación neta menos egresos incurridos (devengado). No representa caja disponible." />
       <Kpi size="lg" label="Flujo de caja" value={fmt(cashFlow)} alt={alt(cashFlow)} icon={DollarSign} tint={cashFlow >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Neto acreditado − egresos pagados" description="Movimiento real de efectivo del período: cobros netos de retenciones, menos egresos efectivamente pagados (excluye gastos marcados como pendientes de pago)." />
+      <Panel title={<>Días promedio de cobro <HelpHint text="Desde la fecha de la factura hasta la del pago que la canceló, ponderado por importe: una factura grande que demora pesa más que una chica que se paga rápido. Solo considera cobros vinculados a una factura concreta." /></>}>
+        {avgCollectionDays == null ? <EmptyChart>Todavía no hay cobros vinculados a una factura.</EmptyChart> : <div>
+          <div className="flex items-baseline gap-2">
+            <b className={`text-3xl ${avgCollectionDays > 60 ? "text-rose-600" : avgCollectionDays > 30 ? "text-amber-600" : "text-emerald-600"}`}>{avgCollectionDays}</b>
+            <span className="text-sm text-slate-500">días</span>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Sobre {collectionSpans.length} cobro(s) imputado(s) a factura, por {fmt(collectionWeight)}.</p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className={`h-full rounded-full ${avgCollectionDays > 60 ? "bg-rose-500" : avgCollectionDays > 30 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, (avgCollectionDays / 90) * 100)}%` }} />
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">Escala de referencia: 90 días.</p>
+        </div>}
+      </Panel>
     </div>
 
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
@@ -2515,22 +2528,6 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       </Panel>
       <Panel title="Concentración por proveedor">
         <div className="space-y-3">{suppliers.length ? suppliers.map((row, index) => <div key={row.name}><div className="flex justify-between gap-3 text-[11px]"><span className="min-w-0 truncate font-medium text-slate-600">{index + 1}. {row.name}</span><b className="shrink-0">{fmt(row.value)}</b></div><div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-violet-500" style={{ width: `${expense ? Math.min(100, (row.value / expense) * 100) : 0}%` }} /></div><span className="mt-1 block text-right text-[9px] text-slate-400">{expense ? ((row.value / expense) * 100).toFixed(0) : 0}% de los egresos</span></div>) : <EmptyChart>Sin gastos asociados a proveedores.</EmptyChart>}{supplierRanking.length > suppliers.length && <p className="text-[10px] text-slate-400">+{supplierRanking.length - suppliers.length} proveedor(es) más, fuera del top 6.</p>}</div>
-      </Panel>
-      {/* Acompañan a "Exposición por moneda", que quedaba sola en su fila. Las dos muestran datos
-          que hasta ahora no aparecían en ningún lado: cuánto tarda en entrar la plata y qué
-          proporción del gasto tiene respaldo. No repiten ninguna tarjeta de arriba. */}
-      <Panel title={<>Días promedio de cobro <HelpHint text="Desde la fecha de la factura hasta la del pago que la canceló, ponderado por importe: una factura grande que demora pesa más que una chica que se paga rápido. Solo considera cobros vinculados a una factura concreta." /></>}>
-        {avgCollectionDays == null ? <EmptyChart>Todavía no hay cobros vinculados a una factura.</EmptyChart> : <div>
-          <div className="flex items-baseline gap-2">
-            <b className={`text-3xl ${avgCollectionDays > 60 ? "text-rose-600" : avgCollectionDays > 30 ? "text-amber-600" : "text-emerald-600"}`}>{avgCollectionDays}</b>
-            <span className="text-sm text-slate-500">días</span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-400">Sobre {collectionSpans.length} cobro(s) imputado(s) a factura, por {fmt(collectionWeight)}.</p>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-            <div className={`h-full rounded-full ${avgCollectionDays > 60 ? "bg-rose-500" : avgCollectionDays > 30 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, (avgCollectionDays / 90) * 100)}%` }} />
-          </div>
-          <p className="mt-1 text-[10px] text-slate-400">Escala de referencia: 90 días.</p>
-        </div>}
       </Panel>
       <Panel title={<>Respaldo documental <HelpHint text="Proporción de gastos del período que tienen comprobante adjunto o número de factura cargado. Los que no lo tienen no son deducibles ni auditables." /></>}>
         {expenseRows.length === 0 ? <EmptyChart>Sin gastos en el período.</EmptyChart> : <div>
