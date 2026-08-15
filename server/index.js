@@ -167,9 +167,6 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS purchase_orders ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS material_lists ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS whiteboard_notes ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
-    CREATE TABLE IF NOT EXISTS assets ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
-    CREATE TABLE IF NOT EXISTS service_contracts ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
-    CREATE TABLE IF NOT EXISTS technical_documents ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS stock_movements (
       id text PRIMARY KEY, part_id text NOT NULL REFERENCES parts(id) ON DELETE RESTRICT,
       quantity numeric NOT NULL, balance numeric NOT NULL, movement_type text NOT NULL,
@@ -183,8 +180,14 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS gantt_tasks ( id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
   `);
   await pool.query("CREATE INDEX IF NOT EXISTS gantt_tasks_project_idx ON gantt_tasks (project_id);");
-  await pool.query("CREATE INDEX IF NOT EXISTS assets_client_idx ON assets ((data->>'clientId')); CREATE INDEX IF NOT EXISTS assets_tag_idx ON assets (lower(data->>'tag')); CREATE INDEX IF NOT EXISTS contracts_client_idx ON service_contracts ((data->>'clientId')); CREATE INDEX IF NOT EXISTS technical_documents_asset_idx ON technical_documents ((data->>'assetId')); CREATE INDEX IF NOT EXISTS stock_movements_part_date_idx ON stock_movements (part_id, created_at DESC); CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log (entity_type, entity_id, created_at DESC);");
-  await pool.query("CREATE INDEX IF NOT EXISTS orders_updated_idx ON orders(updated_at); CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at); CREATE INDEX IF NOT EXISTS orders_project_idx ON orders((data->>'projectId')); CREATE INDEX IF NOT EXISTS orders_asset_idx ON orders((data->>'assetId')); CREATE INDEX IF NOT EXISTS tasks_project_idx ON tasks((data->>'project')); CREATE INDEX IF NOT EXISTS budgets_project_idx ON budgets((data->>'projectId')); CREATE INDEX IF NOT EXISTS finances_project_idx ON financial_movements((data->>'projectId'));");
+  // Baja definitiva del módulo de gestión industrial (activos, contratos/SLA y documentación
+  // técnica). Se eliminan las tablas y sus datos por pedido expreso. Las órdenes conservan los
+  // campos que habían copiado del contrato (responseSlaHours, minimumBillableHours, assetId): son
+  // el respaldo del criterio con el que se facturó cada OT y se siguen respetando para no alterar
+  // el histórico. Las órdenes nuevas usan los valores por defecto (SLA 2 h, mínimo 2 h).
+  await pool.query("DROP TABLE IF EXISTS technical_documents; DROP TABLE IF EXISTS service_contracts; DROP TABLE IF EXISTS assets;");
+  await pool.query("CREATE INDEX IF NOT EXISTS stock_movements_part_date_idx ON stock_movements (part_id, created_at DESC); CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log (entity_type, entity_id, created_at DESC);");
+  await pool.query("CREATE INDEX IF NOT EXISTS orders_updated_idx ON orders(updated_at); CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at); CREATE INDEX IF NOT EXISTS orders_project_idx ON orders((data->>'projectId')); CREATE INDEX IF NOT EXISTS tasks_project_idx ON tasks((data->>'project')); CREATE INDEX IF NOT EXISTS budgets_project_idx ON budgets((data->>'projectId')); CREATE INDEX IF NOT EXISTS finances_project_idx ON financial_movements((data->>'projectId'));");
   // Migración idempotente para instalaciones existentes
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
   // Config individual por usuario (pantalla TV: nombre, modo TV, rotación) — permite N televisores, uno por cuenta Monitor Oficina.
@@ -794,7 +797,7 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml, wb, assets, contracts, documents] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml, wb] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -810,9 +813,6 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC"),
-    pool.query("SELECT data, updated_at FROM assets ORDER BY data->>'clientName', data->>'tag'"),
-    pool.query("SELECT data, updated_at FROM service_contracts ORDER BY data->>'clientName'"),
-    pool.query("SELECT data, updated_at FROM technical_documents ORDER BY updated_at DESC"),
   ]);
   // Aviso de tareas por vencer (próximos 2 días): se genera una sola vez por tarea (id determinístico)
   // y queda en la bandeja de notificaciones —visible en la campana de cualquier pantalla— hasta que
@@ -858,9 +858,6 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     materialLists: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     whiteboardNotes: wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    assets: isMonitor(req.user.role) ? [] : assets.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    serviceContracts: tec || isMonitor(req.user.role) ? [] : contracts.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    technicalDocuments: isMonitor(req.user.role) ? [] : documents.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
   });
 });
@@ -891,76 +888,6 @@ app.post("/api/notifications/read-all", auth, async (req, res) => {
   res.status(204).end();
 });
 
-/* ------------------------------------------------ Gestión industrial ------------------------------------------------ */
-const ASSET_CRITICALITIES = new Set(["Baja", "Media", "Alta", "Crítica"]);
-const ASSET_STATUSES = new Set(["Operativo", "En observación", "Fuera de servicio", "Baja"]);
-function normalizeAsset(input = {}, current = {}) {
-  const value = { ...current, ...input };
-  return {
-    ...value,
-    id: current.id || value.id,
-    tag: String(value.tag || "").trim().toUpperCase().slice(0, 60),
-    name: String(value.name || "").trim().slice(0, 160),
-    clientId: String(value.clientId || "").trim(), clientName: String(value.clientName || "").trim().slice(0, 160),
-    site: String(value.site || "").trim().slice(0, 160), area: String(value.area || "").trim().slice(0, 120),
-    manufacturer: String(value.manufacturer || "").trim().slice(0, 100), model: String(value.model || "").trim().slice(0, 100), serial: String(value.serial || "").trim().slice(0, 100),
-    criticality: ASSET_CRITICALITIES.has(value.criticality) ? value.criticality : "Media",
-    status: ASSET_STATUSES.has(value.status) ? value.status : "Operativo",
-    maintenanceIntervalDays: Math.max(0, Math.round(Number(value.maintenanceIntervalDays) || 0)),
-    nextMaintenance: String(value.nextMaintenance || "").slice(0, 10),
-    notes: String(value.notes || "").trim().slice(0, 1200),
-    updatedAt: new Date().toISOString(),
-  };
-}
-function normalizeContract(input = {}, current = {}) {
-  const value = { ...current, ...input };
-  return {
-    ...value, id: current.id || value.id,
-    name: String(value.name || "").trim().slice(0, 160), clientId: String(value.clientId || "").trim(), clientName: String(value.clientName || "").trim().slice(0, 160), site: String(value.site || "").trim().slice(0, 160),
-    startDate: String(value.startDate || "").slice(0, 10), endDate: String(value.endDate || "").slice(0, 10),
-    responseHours: Math.max(0, Number(value.responseHours) || 0), resolutionHours: Math.max(0, Number(value.resolutionHours) || 0), minimumBillableHours: Math.max(0, Number(value.minimumBillableHours) || 0),
-    hourlyRate: Math.max(0, Number(value.hourlyRate) || 0), includedHours: Math.max(0, Number(value.includedHours) || 0), coverage: String(value.coverage || "Horario laboral").trim().slice(0, 100),
-    active: value.active !== false, notes: String(value.notes || "").trim().slice(0, 1200), updatedAt: new Date().toISOString(),
-  };
-}
-function normalizeTechnicalDocument(input = {}, current = {}) {
-  const value = { ...current, ...input };
-  return {
-    ...value, id: current.id || value.id,
-    title: String(value.title || "").trim().slice(0, 180), type: String(value.type || "Programa PLC").trim().slice(0, 80), version: String(value.version || "1.0").trim().slice(0, 40),
-    assetId: String(value.assetId || "").trim(), projectId: String(value.projectId || "").trim(), fileReference: String(value.fileReference || "").trim().slice(0, 500), checksum: String(value.checksum || "").trim().slice(0, 160),
-    approvedBy: String(value.approvedBy || "").trim().slice(0, 120), status: ["Borrador", "En revisión", "Aprobado", "Obsoleto"].includes(value.status) ? value.status : "Borrador",
-    changeReason: String(value.changeReason || "").trim().slice(0, 1200), updatedAt: new Date().toISOString(),
-  };
-}
-const nextDomainId = (prefix) => `${prefix}-${new Date().getFullYear()}-${Date.now().toString(36).slice(-6).toUpperCase()}`;
-
-app.post("/api/assets", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const asset = normalizeAsset(req.body); asset.id = asset.id || nextDomainId("ACT"); asset.createdAt = new Date().toISOString();
-  if (!asset.tag || !asset.name || !asset.clientId) return res.status(400).json({ error: "TAG, nombre y cliente son obligatorios." });
-  if ((await pool.query("SELECT 1 FROM assets WHERE lower(data->>'tag')=lower($1) LIMIT 1", [asset.tag])).rowCount) return res.status(409).json({ error: "Ya existe un activo con ese TAG." });
-  await pool.query("INSERT INTO assets(id,data) VALUES($1,$2)", [asset.id, asset]); await auditChange({ entityType: "asset", entityId: asset.id, action: "create", user: req.user, afterData: asset }); res.json(asset);
-});
-app.patch("/api/assets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const current = (await pool.query("SELECT data FROM assets WHERE id=$1", [req.params.id])).rows[0]?.data; if (!current) return res.status(404).json({ error: "No existe" });
-  const asset = normalizeAsset(req.body, current); asset.id = req.params.id;
-  if (!asset.tag || !asset.name || !asset.clientId) return res.status(400).json({ error: "TAG, nombre y cliente son obligatorios." });
-  if ((await pool.query("SELECT 1 FROM assets WHERE id<>$1 AND lower(data->>'tag')=lower($2) LIMIT 1", [req.params.id, asset.tag])).rowCount) return res.status(409).json({ error: "Ya existe otro activo con ese TAG." });
-  await pool.query("UPDATE assets SET data=$2,updated_at=now() WHERE id=$1", [req.params.id, asset]); await auditChange({ entityType: "asset", entityId: asset.id, action: "update", user: req.user, beforeData: current, afterData: asset }); res.json(asset);
-});
-app.delete("/api/assets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const current = (await pool.query("SELECT data FROM assets WHERE id=$1", [req.params.id])).rows[0]?.data; if (!current) return res.status(404).json({ error: "No existe" });
-  const linked = Number((await pool.query("SELECT count(*) count FROM orders WHERE data->>'assetId'=$1", [req.params.id])).rows[0].count); if (linked) return res.status(409).json({ error: `El activo tiene ${linked} orden(es) vinculada(s); marcá el activo como Baja en lugar de eliminarlo.` });
-  await pool.query("DELETE FROM assets WHERE id=$1", [req.params.id]); await auditChange({ entityType: "asset", entityId: req.params.id, action: "delete", user: req.user, beforeData: current }); res.status(204).end();
-});
-
-app.post("/api/service-contracts", auth, requireRole("admin", "gerente"), async (req, res) => { const contract = normalizeContract(req.body); contract.id = contract.id || nextDomainId("SLA"); contract.createdAt = new Date().toISOString(); if (!contract.name || !contract.clientId) return res.status(400).json({ error: "Nombre y cliente son obligatorios." }); await pool.query("INSERT INTO service_contracts(id,data) VALUES($1,$2)", [contract.id, contract]); await auditChange({ entityType: "contract", entityId: contract.id, action: "create", user: req.user, afterData: contract }); res.json(contract); });
-app.patch("/api/service-contracts/:id", auth, requireRole("admin", "gerente"), async (req, res) => { const current = (await pool.query("SELECT data FROM service_contracts WHERE id=$1", [req.params.id])).rows[0]?.data; if (!current) return res.status(404).json({ error: "No existe" }); const contract = normalizeContract(req.body, current); contract.id = req.params.id; if (!contract.name || !contract.clientId) return res.status(400).json({ error: "Nombre y cliente son obligatorios." }); await pool.query("UPDATE service_contracts SET data=$2,updated_at=now() WHERE id=$1", [req.params.id, contract]); await auditChange({ entityType: "contract", entityId: contract.id, action: "update", user: req.user, beforeData: current, afterData: contract }); res.json(contract); });
-app.delete("/api/service-contracts/:id", auth, requireRole("admin", "gerente"), async (req, res) => { const current = (await pool.query("DELETE FROM service_contracts WHERE id=$1 RETURNING data", [req.params.id])).rows[0]?.data; if (!current) return res.status(404).json({ error: "No existe" }); await auditChange({ entityType: "contract", entityId: req.params.id, action: "delete", user: req.user, beforeData: current }); res.status(204).end(); });
-
-app.post("/api/technical-documents", auth, requireRole("admin", "gerente", "tecnico_oficina"), async (req, res) => { const document = normalizeTechnicalDocument(req.body); document.id = document.id || nextDomainId("DOC"); document.createdAt = new Date().toISOString(); document.createdBy = req.user.name; if (!document.title) return res.status(400).json({ error: "El título es obligatorio." }); await pool.query("INSERT INTO technical_documents(id,data) VALUES($1,$2)", [document.id, document]); await auditChange({ entityType: "technical_document", entityId: document.id, action: "create", user: req.user, afterData: document }); res.json(document); });
-app.patch("/api/technical-documents/:id", auth, requireRole("admin", "gerente", "tecnico_oficina"), async (req, res) => { const current = (await pool.query("SELECT data FROM technical_documents WHERE id=$1", [req.params.id])).rows[0]?.data; if (!current) return res.status(404).json({ error: "No existe" }); const document = normalizeTechnicalDocument(req.body, current); document.id = req.params.id; if (!document.title) return res.status(400).json({ error: "El título es obligatorio." }); await pool.query("UPDATE technical_documents SET data=$2,updated_at=now() WHERE id=$1", [req.params.id, document]); await auditChange({ entityType: "technical_document", entityId: document.id, action: "update", user: req.user, beforeData: current, afterData: document, reason: document.changeReason }); res.json(document); });
-app.delete("/api/technical-documents/:id", auth, requireRole("admin", "gerente"), async (req, res) => { const current = (await pool.query("DELETE FROM technical_documents WHERE id=$1 RETURNING data", [req.params.id])).rows[0]?.data; if (!current) return res.status(404).json({ error: "No existe" }); await auditChange({ entityType: "technical_document", entityId: req.params.id, action: "delete", user: req.user, beforeData: current }); res.status(204).end(); });
 app.get("/api/parts/:id/movements", auth, requireRole("admin", "gerente"), async (req, res) => { const rows = (await pool.query("SELECT * FROM stock_movements WHERE part_id=$1 ORDER BY created_at DESC LIMIT 200", [req.params.id])).rows; res.json(rows.map((row) => ({ id: row.id, partId: row.part_id, quantity: Number(row.quantity), balance: Number(row.balance), type: row.movement_type, sourceType: row.source_type, sourceId: row.source_id, note: row.note, at: row.created_at }))); });
 app.get("/api/audit-log", auth, requireRole("admin"), async (req, res) => { const rows = (await pool.query("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 300")).rows; res.json(rows); });
 
@@ -2213,23 +2140,6 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
     o.service = linkedBudget.service || o.service || "Automatización";
     o.projectId = linkedBudget.projectId || o.projectId || "";
   }
-  if (o.assetId) {
-    const asset = (await pool.query("SELECT data FROM assets WHERE id=$1", [o.assetId])).rows[0]?.data;
-    if (!asset) return res.status(400).json({ error: "El activo seleccionado ya no existe." });
-    o.equipo = asset.name; o.client = asset.clientName || o.client; o.site = asset.site || o.site;
-    o.technical = { ...(o.technical || {}), assetTag: asset.tag, manufacturer: asset.manufacturer, model: asset.model, serial: asset.serial };
-  }
-  // Aplica condiciones comerciales/SLA vigentes del cliente y sitio. La OT conserva una copia
-  // de la regla utilizada para que cambios futuros del contrato no alteren el histórico.
-  const linkedClient = (await pool.query("SELECT data FROM clients WHERE lower(data->>'name')=lower($1) LIMIT 1", [String(o.client || "")])).rows[0]?.data;
-  if (linkedClient) {
-    const today = new Date().toISOString().slice(0, 10);
-    const contract = (await pool.query("SELECT data FROM service_contracts WHERE data->>'clientId'=$1 AND COALESCE((data->>'active')::boolean,true)=true AND (COALESCE(data->>'startDate','')='' OR data->>'startDate'<=$2) AND (COALESCE(data->>'endDate','')='' OR data->>'endDate'>=$2) ORDER BY updated_at DESC LIMIT 1", [linkedClient.id, today])).rows[0]?.data;
-    if (contract && (!contract.site || contract.site === o.site)) {
-      o.contractId = contract.id; o.contractName = contract.name; o.responseSlaHours = contract.responseHours; o.resolutionSlaHours = contract.resolutionHours; o.minimumBillableHours = contract.minimumBillableHours || 2;
-      if (Number(contract.hourlyRate) > 0) o.rate = contract.hourlyRate;
-    }
-  }
   o.currency = "USD";
   if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
   o.rate = normalizedRateValue(o.rate);
@@ -2303,12 +2213,6 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
   if ("rate" in patch) patch.rate = normalizedRateValue(patch.rate);
   if ("laborCost" in patch) patch.laborCost = wholeMoneyValue(patch.laborCost);
   if (Array.isArray(patch.materials)) patch.materials = isTec(req.user.role) ? await materialsFromInventory(patch.materials) : patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
-  if (patch.assetId) {
-    const asset = (await pool.query("SELECT data FROM assets WHERE id=$1", [patch.assetId])).rows[0]?.data;
-    if (!asset) return res.status(400).json({ error: "El activo seleccionado ya no existe." });
-    patch.equipo = asset.name;
-    patch.technical = { ...(rows[0].data.technical || {}), ...(patch.technical || {}), assetTag: asset.tag, manufacturer: asset.manufacturer, model: asset.model, serial: asset.serial };
-  }
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   if (merged.status === "En progreso") merged.status = "En proceso de ejecución";

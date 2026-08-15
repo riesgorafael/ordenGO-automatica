@@ -17,7 +17,6 @@ import { budgetReportPDF, clientOrderReportPDF, dashboardReportPDF, financeRepor
 import { parseReceiptImage } from "./receiptOcr";
 import { warpPerspective, autoDetectCorners } from "./imagePerspective";
 import GanttChart from "./GanttChart";
-import IndustrialManagement from "./IndustrialManagement";
 import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, updateQueuedOrder } from "./offline";
 
 /* ===================================== CONFIG ===================================== */
@@ -564,9 +563,6 @@ export default function App() {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [materialLists, setMaterialLists] = useState([]);
   const [whiteboardNotes, setWhiteboardNotes] = useState([]);
-  const [assets, setAssets] = useState([]);
-  const [serviceContracts, setServiceContracts] = useState([]);
-  const [technicalDocuments, setTechnicalDocuments] = useState([]);
   const orderSyncCursor = useRef("");
   const taskSyncCursor = useRef("");
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
@@ -730,7 +726,6 @@ export default function App() {
     orderSyncCursor.current = (d.orders || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
     taskSyncCursor.current = (d.tasks || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current);
     setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setWhiteboardNotes(d.whiteboardNotes || []);
-    setAssets(d.assets || []); setServiceContracts(d.serviceContracts || []); setTechnicalDocuments(d.technicalDocuments || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
@@ -1178,13 +1173,6 @@ export default function App() {
   };
   const deleteWhiteboardNote = async (id) => { await api.deleteWhiteboardNote(id); setWhiteboardNotes((p) => p.filter((x) => x.id !== id)); };
 
-  /* Gestión industrial */
-  const saveAsset = async (form, id) => { const saved = id ? await api.updateAsset(id, form) : await api.createAsset(form); setAssets((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [...p, saved]); return saved; };
-  const deleteAsset = async (id) => { await api.deleteAsset(id); setAssets((p) => p.filter((x) => x.id !== id)); };
-  const saveServiceContract = async (form, id) => { const saved = id ? await api.updateServiceContract(id, form) : await api.createServiceContract(form); setServiceContracts((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [...p, saved]); return saved; };
-  const deleteServiceContract = async (id) => { await api.deleteServiceContract(id); setServiceContracts((p) => p.filter((x) => x.id !== id)); };
-  const saveTechnicalDocument = async (form, id) => { const saved = id ? await api.updateTechnicalDocument(id, form) : await api.createTechnicalDocument(form); setTechnicalDocuments((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [...p, saved]); return saved; };
-  const deleteTechnicalDocument = async (id) => { await api.deleteTechnicalDocument(id); setTechnicalDocuments((p) => p.filter((x) => x.id !== id)); };
 
   /* Repuestos */
   const addPart = async (pt) => { const s = await api.addPart(pt); setParts((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [...p, s])); };
@@ -1193,7 +1181,7 @@ export default function App() {
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
   if (!isOffice && module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} assets={assets} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
+    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
   // Los módulos se agrupan por área de trabajo: Inicio/Órdenes/Proyectos quedan
   // como núcleo operativo sin agrupar (uso diario, incluye técnicos de campo);
@@ -1210,7 +1198,6 @@ export default function App() {
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isMgr && !branding.hideAdminModules ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Administración" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Administración" }] : []),
-    ...(isMgr ? [{ id: "industrial", label: "Gestión", icon: Activity, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
@@ -1451,7 +1438,6 @@ export default function App() {
           </>
           ); })()}
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
-        {activeModule === "industrial" && isMgr && <IndustrialManagement assets={assets} contracts={serviceContracts} documents={technicalDocuments} clients={clients} projects={projects} orders={orders} tasks={tasks} users={users} me={me} onSaveAsset={saveAsset} onDeleteAsset={deleteAsset} onSaveContract={saveServiceContract} onDeleteContract={deleteServiceContract} onSaveDocument={saveTechnicalDocument} onDeleteDocument={deleteTechnicalDocument} onError={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
@@ -1469,7 +1455,7 @@ export default function App() {
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
-      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} assets={assets} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "asset") navigateModule("industrial"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
+      {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
       {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
@@ -1667,7 +1653,7 @@ function ProjectEditor({ value, onClose, onSave }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
-function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], assets = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
+function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const projectById = (id) => projects.find((p) => p.id === id);
@@ -1683,10 +1669,9 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], f
       ...(isMgr ? purchaseOrders.filter((po) => `${po.number || po.id} ${po.supplierName || ""} ${po.supplierInvoiceNumber || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "purchaseOrder", item, title: `${item.number || item.id} · ${item.supplierName}`, meta: `Orden de compra · ${item.stage} · ${money(item.grossAmountUsd)}`, icon: ShoppingCart })) : []),
       ...(canSeeMaterialLists ? materialLists.filter((ml) => `${ml.number || ml.id} ${ml.projectName || ""} ${ml.client || ""} ${ml.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "materialList", item, title: `${item.number || item.id} · ${item.projectName}`, meta: `Listado de materiales · ${item.discipline} · ${item.totalItems || 0} ítem(s)`, icon: Package })) : []),
       ...(isMgr ? parts.filter((p) => `${p.name} ${p.unit || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "part", item, title: item.name, meta: `Inventario · Stock ${item.stock ?? "—"}`, icon: Wrench })) : []),
-      ...(isMgr ? assets.filter((a) => `${a.tag} ${a.name} ${a.clientName} ${a.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "asset", item, title: `${item.tag} · ${item.name}`, meta: `Activo · ${item.clientName} · ${item.status}`, icon: Activity })) : []),
     ];
     return found.slice(0, 12);
-  }, [q, orders, tasks, clients, parts, projects, budgets, finances, suppliers, purchaseOrders, materialLists, assets, isMgr]);
+  }, [q, orders, tasks, clients, parts, projects, budgets, finances, suppliers, purchaseOrders, materialLists, isMgr]);
   const mouseDownOnBackdrop = useRef(false);
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-3 pt-[8vh] sm:p-6 sm:pt-[12vh]" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
@@ -4261,7 +4246,7 @@ function BarcodeScannerDialog({ onClose, onDetect }) {
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], assets = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
+function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
   const fieldTechs = users.filter((u) => u.active && ["admin", "gerente", "tecnico"].includes(u.role));
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
@@ -4485,7 +4470,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           <label className="mt-3 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} className="h-4 w-4" /> Marcar como urgente{URGENT_SERVICES.has(service) && <span className="text-xs text-slate-400">(ya lo es por ser {service})</span>}</label>
         </Section>
         <Section title="Identificación del activo">
-          {clientMode === "existing" && assets.some((asset) => asset.clientId === clientId && asset.status !== "Baja") && <L label="Activo del registro técnico" help="Al seleccionarlo se completan TAG, fabricante, modelo y serie, y la OT queda incorporada a su historial."><select value={assetId} onChange={(e) => { const id = e.target.value; const asset = assets.find((item) => item.id === id); setAssetId(id); if (asset) { setEquipo(asset.name || ""); setSiteLabel((current) => current || asset.site || ""); setTechnical((current) => ({ ...current, assetTag: asset.tag || "", manufacturer: asset.manufacturer || "", model: asset.model || "", serial: asset.serial || "" })); } }} className="u-input mt-1"><option value="">Equipo no registrado / carga manual</option>{assets.filter((asset) => asset.clientId === clientId && asset.status !== "Baja").map((asset) => <option key={asset.id} value={asset.id}>{asset.tag} · {asset.name}{asset.site ? ` · ${asset.site}` : ""}</option>)}</select></L>}
+          
           <ReqLabel>Equipo / sistema intervenido</ReqLabel>
           <input value={equipo} onChange={(e) => setEquipo(e.target.value)} placeholder="Ej. Tablero principal, línea 2" className={`u-input mt-1 ${errCls(!(equipo || technical.assetTag))}`} />
           <L label="Categoría" help="Etiqueta corta y libre para agrupar el tipo de falla o intervención (ej. Sobrecalentamiento, Falla eléctrica, Programación)."><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Sobrecalentamiento" className="u-input mt-1" /></L>

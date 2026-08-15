@@ -44,15 +44,6 @@ export const api = {
   updateClient: (id, patch) => req("/clients/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteClient: (id) => req("/clients/" + id, { method: "DELETE" }),
 
-  createAsset: (asset) => req("/assets", { method: "POST", body: JSON.stringify(asset) }),
-  updateAsset: (id, patch) => req("/assets/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteAsset: (id) => req("/assets/" + id, { method: "DELETE" }),
-  createServiceContract: (contract) => req("/service-contracts", { method: "POST", body: JSON.stringify(contract) }),
-  updateServiceContract: (id, patch) => req("/service-contracts/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteServiceContract: (id) => req("/service-contracts/" + id, { method: "DELETE" }),
-  createTechnicalDocument: (document) => req("/technical-documents", { method: "POST", body: JSON.stringify(document) }),
-  updateTechnicalDocument: (id, patch) => req("/technical-documents/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteTechnicalDocument: (id) => req("/technical-documents/" + id, { method: "DELETE" }),
   stockMovements: (partId) => req(`/parts/${partId}/movements`),
   auditLog: () => req("/audit-log"),
 
