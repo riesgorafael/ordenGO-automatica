@@ -997,6 +997,9 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
 /* ------------------------------------------------ Presupuestos ------------------------------------------------ */
 const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Pagado", "Rechazado"];
 const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Pagado": 100, "Rechazado": 0 };
+// Motivos de pérdida. Lista cerrada a propósito: en texto libre cada persona escribe distinto y
+// después no se puede agrupar ni comparar, que es justamente para lo que sirve el dato.
+const BUDGET_REJECTION_REASONS = ["Precio", "Plazo de entrega", "Competencia", "Alcance técnico", "Presupuesto del cliente", "Proyecto postergado", "Sin respuesta", "Otro"];
 const LABOR_ROLE_COST = { "Programador": 50, "Ingeniero": 25, "Asesor": 20, "Programador AUX": 45, "Tablerista": 17, "Dibujante": 17, "Administrativo": 6, "Ayudante": 5, "Programador Aprendiz": 7 };
 const LABOR_DEFAULT_ROLE = { "Mano de obra": "Ingeniero", "Ingeniería": "Ingeniero", "Programación": "Programador", "Montaje": "Tablerista", "Puesta en marcha": "Ingeniero" };
 const normalizeAdditionalCost = (cost) => ({ ...cost, id: String(cost?.id || ""), category: String(cost?.category || "Otro").slice(0, 50), description: String(cost?.description || "").trim().slice(0, 200), amount: Math.round(Math.max(0, Number(cost?.amount) || 0) * 100) / 100, date: String(cost?.date || "").slice(0, 10), notes: String(cost?.notes || "").trim().slice(0, 500) });
@@ -1009,6 +1012,13 @@ const normalizeBudget = (input, previous = {}) => {
   budget.probability = budget.probabilityOverridden ? Math.min(100, Math.max(0, Number(budget.probability) || 0)) : BUDGET_STAGE_PROBABILITY[budget.stage];
   if (budget.projectId && !["Facturado", "Pagado"].includes(budget.stage)) { budget.stage = "Aprobado"; budget.probability = 100; }
   budget.negativeMarginReason = String(budget.negativeMarginReason || "").trim().slice(0, 500);
+  // Motivo de pérdida. Sin esto, la tasa de conversión dice cuánto se pierde pero nunca por qué,
+  // y no hay forma de accionar sobre ella. Si el presupuesto deja de estar rechazado, se limpia:
+  // un motivo de rechazo colgando de un presupuesto ganado ensucia el análisis.
+  budget.rejectionReason = BUDGET_REJECTION_REASONS.includes(budget.rejectionReason) ? budget.rejectionReason : "";
+  budget.rejectionDetail = String(budget.rejectionDetail || "").trim().slice(0, 500);
+  if (budget.stage !== "Rechazado") { budget.rejectionReason = ""; budget.rejectionDetail = ""; budget.rejectedAt = ""; }
+  else budget.rejectedAt = budget.rejectedAt || new Date().toISOString();
   budget.number = String(budget.number || budget.id || "").trim().slice(0, 40);
   budget.purchaseOrderNumber = String(budget.purchaseOrderNumber || "").trim().slice(0, 80);
   budget.purchaseOrderDate = String(budget.purchaseOrderDate || "").slice(0, 10);
@@ -1549,6 +1559,7 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60)
   budget.number = budget.number || budget.id;
   if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
   if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
+  if (budget.stage === "Rechazado" && !budget.rejectionReason) return res.status(400).json({ error: "Indica el motivo del rechazo: es lo que permite analizar por qué se pierden oportunidades." });
   if (["Facturado", "Pagado"].includes(budget.stage) && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
   if (["Facturado", "Pagado"].includes(budget.stage) && (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 LIMIT 1", [String(budget.invoiceNumber).trim()])).rows[0]) return res.status(409).json({ error: "Ya existe una factura con ese número." });
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id=$1 OR data->>'number'=$1 LIMIT 1", [budget.number])).rows[0];
@@ -1599,6 +1610,7 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), apiRateLimi
   budget.number = budget.number || budget.id;
   if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
   if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (budget.amount - budget.estimatedCost) < 0 && !budget.negativeMarginReason) return res.status(400).json({ error: "El margen es negativo: indica el motivo para aprobar este presupuesto." });
+  if (budget.stage === "Rechazado" && !budget.rejectionReason) return res.status(400).json({ error: "Indica el motivo del rechazo: es lo que permite analizar por qué se pierden oportunidades." });
   if (["Facturado", "Pagado"].includes(budget.stage) && (!String(budget.invoicedAt || "").trim() || !String(budget.invoiceNumber || "").trim())) return res.status(400).json({ error: "Fecha y número de factura son obligatorios al marcar el presupuesto como Facturado." });
   if (["Facturado", "Pagado"].includes(budget.stage)) { const currentInvoiceId = (await pool.query("SELECT id FROM financial_movements WHERE data->>'sourceBudgetId'=$1 LIMIT 1", [budget.id])).rows[0]?.id; const duplicateInvoice = (await pool.query("SELECT id FROM financial_movements WHERE data->>'kind'='invoice' AND data->>'invoiceNumber'=$1 AND ($2::text IS NULL OR id<>$2) LIMIT 1", [String(budget.invoiceNumber).trim(), currentInvoiceId || null])).rows[0]; if (duplicateInvoice) return res.status(409).json({ error: "Ya existe una factura con ese número." }); }
   const duplicateNumber = (await pool.query("SELECT id FROM budgets WHERE id<>$2 AND (id=$1 OR data->>'number'=$1) LIMIT 1", [budget.number, req.params.id])).rows[0];

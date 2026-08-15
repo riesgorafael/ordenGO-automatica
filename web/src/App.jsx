@@ -119,6 +119,9 @@ const RESPONSE_SLA_MS = 2 * 60 * 60 * 1000;
 const isResponseOverdue = (o) => !o.technical?.arrivalAt && !!o.technical?.reportedAt && !["Completada", "Aprobada", "Facturada", "Suspendida"].includes(o.status) && (Date.now() - new Date(o.technical.reportedAt).getTime()) > RESPONSE_SLA_MS;
 const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Pagado", "Rechazado"];
 const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Pagado": 100, "Rechazado": 0 };
+// Debe coincidir con BUDGET_REJECTION_REASONS del servidor: ahí se valida que el motivo esté en
+// la lista, así que agregar uno solo de un lado lo haría rechazar el guardado.
+const BUDGET_REJECTION_REASONS = ["Precio", "Plazo de entrega", "Competencia", "Alcance técnico", "Presupuesto del cliente", "Proyecto postergado", "Sin respuesta", "Otro"];
 const LABOR_ROLES = [
   { name: "Programador", cost: 50 }, { name: "Ingeniero", cost: 25 }, { name: "Asesor", cost: 20 },
   { name: "Programador AUX", cost: 45 }, { name: "Tablerista", cost: 17 }, { name: "Dibujante", cost: 17 },
@@ -2731,6 +2734,15 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], onOpenOrder, on
           <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-3"><div><span className="block text-[10px] uppercase text-slate-400">Venta presupuestada</span><b>{money(amount)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Costo interno estimado</span><b>{money(cost)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Margen bruto estimado</span><b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{amount > 0 ? ` · ${Math.round((margin / amount) * 100)}%` : ""}</b></div></div>
           </fieldset>
           {margin < 0 && ["Aprobado", "Facturado"].includes(form.stage) && <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="mb-2 text-xs font-medium text-rose-700">El margen es negativo. Para aprobar o facturar este presupuesto, indicá el motivo (venta estratégica, cliente clave, riesgo de perder la cuenta, etc.).</p><textarea value={form.negativeMarginReason || ""} onChange={(event) => set("negativeMarginReason", event.target.value)} rows={2} placeholder="Motivo del margen negativo *" className="u-input resize-none bg-white" /></div>}
+          {/* El motivo es obligatorio al rechazar: una oportunidad perdida sin causa registrada no
+              se puede analizar después, y es el único dato que vuelve accionable la conversión. */}
+          {form.stage === "Rechazado" && <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <p className="mb-2 text-xs font-medium text-rose-700">¿Por qué se perdió? Elegí la causa principal: es lo que después permite ver contra qué se pierde y actuar.</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <L label="Motivo *"><select value={form.rejectionReason || ""} onChange={(event) => set("rejectionReason", event.target.value)} className="u-input bg-white"><option value="">Seleccionar…</option>{BUDGET_REJECTION_REASONS.map((reason) => <option key={reason}>{reason}</option>)}</select></L>
+              <L label="Detalle (opcional)" help="Contra quién se perdió, qué precio pedían, cuándo volver a intentar."><input value={form.rejectionDetail || ""} onChange={(event) => set("rejectionDetail", event.target.value)} placeholder="Ej. perdimos contra Siemens por 12% de diferencia" className="u-input bg-white" /></L>
+            </div>
+          </div>}
         </Section>
 
         {commerciallyLocked && <Section title="Costos adicionales posteriores a la aprobación">
@@ -2789,6 +2801,16 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
   const weighted = open.reduce((sum, budget) => sum + (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100, 0);
   const due = open.filter((budget) => budget.nextFollowUp && budget.nextFollowUp <= todayStr()).length;
   const decided = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage));
+  // Análisis de pérdidas: cuánto se perdió por cada causa, en plata y no solo en cantidad. Perder
+  // diez presupuestos chicos por plazo no es lo mismo que perder uno grande por precio.
+  const lostBudgets = budgets.filter((budget) => budget.stage === "Rechazado");
+  const lostTotal = lostBudgets.reduce((sum, budget) => sum + (Number(budget.amount) || 0), 0);
+  const lossReasons = Object.values(lostBudgets.reduce((map, budget) => {
+    const key = budget.rejectionReason || "Sin motivo registrado";
+    if (!map[key]) map[key] = { name: key, count: 0, value: 0 };
+    map[key].count++; map[key].value += Number(budget.amount) || 0;
+    return map;
+  }, {})).sort((a, b) => b.value - a.value);
   const wonCount = decided.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage)).length;
   const winRate = decided.length ? Math.round(wonCount / decided.length * 100) : 0;
   const approved = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage));
@@ -2812,6 +2834,24 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
     de facturados. Y filtra al tocarlo, igual que su vecino, en vez de ser un número muerto. */}
 <button onClick={() => setStage(stage === "Emitidas" ? "Todos" : "Emitidas")} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 font-medium ${stage === "Emitidas" ? "bg-sky-100 text-sky-800" : "bg-sky-50 text-sky-700"}`}><FileText className="h-3.5 w-3.5" /> Con factura emitida: {budgets.filter((budget) => ["Facturado", "Pagado"].includes(budget.stage)).length}</button></div></Box>
     {approvedByClient.length > 0 && <Box className="p-4"><div className="mb-3"><h3 className="text-sm font-semibold text-slate-900">Presupuestos aprobados por cliente</h3><p className="text-[11px] text-slate-500">Valor comercial contratado; todavía no representa facturación ni cobro.</p></div><div className="motion-list grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{approvedByClient.map((row) => <div key={`${row.name}||${row.site}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><span className="block truncate text-xs text-slate-500">{row.name}{row.site ? ` · ${row.site}` : ""}</span><b className="mt-1 block text-base text-slate-900">{money(row.total)}</b><span className="text-[10px] text-slate-400">{row.count} presupuesto(s) aprobado(s)</span></div>)}</div></Box>}
+    {/* Análisis de pérdidas: la contracara de la tasa de conversión. Sin esto se sabe cuánto se
+        pierde, nunca contra qué — y no hay nada sobre lo que actuar. */}
+    {lostBudgets.length > 0 && <Box className="p-4">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <div><h3 className="text-sm font-semibold text-slate-900">Por qué se pierden</h3><p className="text-[11px] text-slate-500">{lostBudgets.length} presupuesto(s) rechazado(s) por {money(lostTotal)} de valor comercial.</p></div>
+        <button onClick={() => setStage(stage === "Rechazado" ? "Todos" : "Rechazado")} className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${stage === "Rechazado" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Ver rechazados</button>
+      </div>
+      <div className="space-y-2">
+        {lossReasons.map((reason) => <div key={reason.name}>
+          <div className="flex items-baseline justify-between gap-3 text-xs">
+            <span className={`min-w-0 truncate font-medium ${reason.name === "Sin motivo registrado" ? "text-amber-600" : "text-slate-700"}`}>{reason.name}</span>
+            <span className="shrink-0 text-slate-400">{reason.count} · <b className="text-slate-700">{money(reason.value)}</b></span>
+          </div>
+          <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${reason.name === "Sin motivo registrado" ? "bg-amber-400" : "bg-rose-500"}`} style={{ width: `${lostTotal ? Math.min(100, (reason.value / lostTotal) * 100) : 0}%` }} /></div>
+        </div>)}
+      </div>
+      {lossReasons.some((reason) => reason.name === "Sin motivo registrado") && <p className="mt-3 text-[11px] text-amber-600">Los rechazos anteriores a esta versión no tienen motivo cargado. Editalos para completarlo y que entren en el análisis.</p>}
+    </Box>}
     <div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar presupuesto, cliente o planta…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={stage} onChange={(event) => setStage(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="Todos">Todos los presupuestos</option><optgroup label="Grupos del pipeline">{BUDGET_GROUPS.map((group) => <option key={group.id} value={`group:${group.id}`}>{group.label}</option>)}</optgroup><optgroup label="Estado detallado">{BUDGET_STAGE_GROUPS.flatMap((group) => group.stages).map((item) => <option key={item} value={item}>{item}</option>)}<option value="Vencido">Seguimiento vencido</option><option value="Emitidas">Con factura emitida</option></optgroup></select></div>
     {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><FileText className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin presupuestos para mostrar</h3><p className="mt-1 text-xs text-slate-400">Crea una oportunidad y registra su estimación técnica.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((budget) => { const displayStage = budgetDisplayStage(budget); const budgetCost = Number(budget.totalEstimatedCost ?? budget.estimatedCost) || 0; const margin = (Number(budget.amount) || 0) - budgetCost;
     // Sin costo cargado, el "margen" es el precio entero: daba 100% en verde, o sea el mejor
