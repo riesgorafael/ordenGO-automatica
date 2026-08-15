@@ -1210,7 +1210,7 @@ export default function App() {
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     ...(isMgr && !branding.hideAdminModules ? [{ id: "budgets", label: "Presupuestos", icon: FileText, group: "Administración" }] : []),
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Administración" }] : []),
-    ...(isMgr ? [{ id: "industrial", label: "Gestión industrial", icon: Activity, group: "Administración" }] : []),
+    ...(isMgr ? [{ id: "industrial", label: "Gestión", icon: Activity, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
