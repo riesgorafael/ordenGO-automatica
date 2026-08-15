@@ -1285,14 +1285,17 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateL
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await db.query("INSERT INTO purchase_orders(id,data) VALUES($1,$2)", [po.id, po]);
-    const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    // Si nace ya recibida, el stock entra acá y queda marcado, para que un cambio de estado
+    // posterior sepa que esta entrega ya fue aplicada y no la sume de nuevo.
     if (po.stage === "Recibida") {
       for (const item of po.items || []) {
         const partId = item.partId || await matchPartIdByName(item.description, db);
         if (partId) await adjustPartStock(partId, Number(item.qty) || 0, db);
       }
+      po.stockAppliedAt = new Date().toISOString();
     }
+    await db.query("INSERT INTO purchase_orders(id,data) VALUES($1,$2)", [po.id, po]);
+    const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
     await db.query("COMMIT");
     res.json({ ...po, _generatedMovement: generatedMovement });
   } catch (error) {
@@ -1324,14 +1327,28 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await db.query("UPDATE purchase_orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, po]);
-    const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
-    if (receivingNow) {
+    // El ingreso de stock se marca con stockAppliedAt, igual que stockDeductedAt en las OT.
+    // Sin ese marcador, el ciclo Recibida → Cancelada → Recibida volvía a sumar la misma entrega
+    // (porque el estado anterior ya no era "Recibida"), y salir de Recibida no devolvía nada:
+    // el stock quedaba inflado por mercadería que nunca entró. Va antes del UPDATE para que el
+    // marcador se persista en la misma escritura.
+    const alreadyApplied = Boolean(current.stockAppliedAt);
+    const leavingReceived = current.stage === "Recibida" && po.stage !== "Recibida";
+    if (receivingNow && !alreadyApplied) {
       for (const item of po.items || []) {
         const partId = item.partId || await matchPartIdByName(item.description, db);
         if (partId) await adjustPartStock(partId, Number(item.qty) || 0, db);
       }
+      po.stockAppliedAt = new Date().toISOString();
+    } else if (leavingReceived && alreadyApplied) {
+      for (const item of po.items || []) {
+        const partId = item.partId || await matchPartIdByName(item.description, db);
+        if (partId) await adjustPartStock(partId, -(Number(item.qty) || 0), db);
+      }
+      po.stockAppliedAt = "";
     }
+    await db.query("UPDATE purchase_orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, po]);
+    const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
     await db.query("COMMIT");
     res.json({ ...po, _generatedMovement: generatedMovement });
   } catch (error) {
