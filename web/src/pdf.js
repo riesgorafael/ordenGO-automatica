@@ -17,13 +17,18 @@ const formatStamp = (value) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 };
+// OJO: esta función replica billableLaborHours de App.jsx. Están duplicadas a propósito para que
+// pdf.js no dependa del bundle de la app, pero cualquier cambio en la regla de facturación tiene
+// que hacerse en las DOS o el PDF le factura al cliente un importe distinto del que se ve en
+// pantalla. El mínimo sale del contrato del cliente (minimumBillableHours) cuando la orden lo trae.
 const billedHours = (o) => {
   if (o.billableHours !== undefined && o.billableHours !== null && o.billableHours !== "") return Math.max(0, Number(o.billableHours) || 0);
   const effective = Math.max(0, Number(o.laborHours) || 0), waiting = Math.max(0, Number(o.technical?.billableWaitMinutes) || 0) / 60;
   const arrival = o.technical?.arrivalAt ? new Date(o.technical.arrivalAt).getTime() : NaN;
   const end = o.technical?.completedAt ? new Date(o.technical.completedAt).getTime() : Date.now();
   const onSite = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
-  return onSite > 0 && onSite < 3600000 ? 2 : Math.round((effective + waiting) * 100) / 100;
+  const minimum = Number(o.minimumBillableHours) > 0 ? Number(o.minimumBillableHours) : 2;
+  return onSite > 0 && onSite < 3600000 ? minimum : Math.round((effective + waiting) * 100) / 100;
 };
 function totals(o) {
   const hours = billedHours(o);

@@ -117,7 +117,12 @@ const isUrgentOrder = (o) => URGENT_SERVICES.has(o.service) || !!o.urgent;
 // por otra vía (completada/aprobada/facturada/suspendida). RESPONSE_SLA_MS es el umbral desde que
 // se generó el aviso (technical.reportedAt, cargado automáticamente al crear la orden).
 const RESPONSE_SLA_MS = 2 * 60 * 60 * 1000;
-const isResponseOverdue = (o) => !o.technical?.arrivalAt && !!o.technical?.reportedAt && !["Completada", "Aprobada", "Facturada", "Suspendida"].includes(o.status) && (Date.now() - new Date(o.technical.reportedAt).getTime()) > RESPONSE_SLA_MS;
+// El contrato del cliente manda cuando la orden tiene uno vinculado: el servidor le copia
+// responseSlaHours al crearla. Antes ese dato se guardaba y se ignoraba — se avisaba "respuesta
+// demorada" a las 2 horas aunque el SLA pactado fuera de 8. Las 2 horas quedan como valor por
+// defecto para las órdenes sin contrato.
+const responseSlaMs = (o) => (Number(o?.responseSlaHours) > 0 ? Number(o.responseSlaHours) * 60 * 60 * 1000 : RESPONSE_SLA_MS);
+const isResponseOverdue = (o) => !o.technical?.arrivalAt && !!o.technical?.reportedAt && !["Completada", "Aprobada", "Facturada", "Suspendida"].includes(o.status) && (Date.now() - new Date(o.technical.reportedAt).getTime()) > responseSlaMs(o);
 const BUDGET_STAGES = ["Borrador", "En preparación", "Enviado", "En seguimiento", "Aprobado", "Facturado", "Pagado", "Rechazado"];
 const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Enviado": 50, "En seguimiento": 70, "Aprobado": 100, "Facturado": 100, "Pagado": 100, "Rechazado": 0 };
 // Debe coincidir con BUDGET_REJECTION_REASONS del servidor: ahí se valida que el motivo esté en
@@ -429,6 +434,10 @@ const timelineErrors = (technical, now = Date.now()) => {
   if ((Number(technical?.billableWaitMinutes) || 0) > 0 && !technical?.billableWaitReason?.trim()) errors.push("Indica el motivo de la espera por condiciones del sitio.");
   return errors;
 };
+// Mínimo facturable de una visita corta. Sale del contrato del cliente cuando la orden tiene uno
+// (el servidor le copia minimumBillableHours); 2 h para las que no. Se cambia SOLO el valor del
+// mínimo, no cuándo se aplica: la regla sigue siendo "visita de menos de 1 hora", como estaba.
+const minimumBillableHours = (order) => (Number(order?.minimumBillableHours) > 0 ? Number(order.minimumBillableHours) : 2);
 const billableLaborHours = (order, now = Date.now()) => {
   if (order?.billableHours !== undefined && order?.billableHours !== null && order?.billableHours !== "") return Math.max(0, Number(order.billableHours) || 0);
   const effective = Math.max(0, Number(order?.laborHours) || 0);
@@ -436,7 +445,7 @@ const billableLaborHours = (order, now = Date.now()) => {
   const arrival = order?.technical?.arrivalAt ? new Date(order.technical.arrivalAt).getTime() : NaN;
   const end = order?.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : now;
   const onSiteMs = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
-  return onSiteMs > 0 && onSiteMs < 3600000 ? 2 : round2(effective + waiting);
+  return onSiteMs > 0 && onSiteMs < 3600000 ? minimumBillableHours(order) : round2(effective + waiting);
 };
 const compactDuration = (milliseconds) => {
   const minutes = Math.max(0, Math.round((Number(milliseconds) || 0) / 60000));
@@ -3699,7 +3708,7 @@ function OrderRow({ order: o, ger, projects = [], onOpen }) {
           <span className="font-mono text-sm font-semibold text-slate-800">{o.id}</span>
           <Chip className={O_STYLE[o.status]}>{o.status}</Chip>
           {isUrgentOrder(o) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><AlertTriangle className="h-3 w-3" />Urgente</Chip>}
-          {isResponseOverdue(o) && <Chip className="bg-rose-50 text-rose-700 ring-rose-600/20"><Clock className="h-3 w-3" />Respuesta demorada</Chip>}
+          {isResponseOverdue(o) && <Chip title={o.contractName ? `SLA de ${o.responseSlaHours} h según el contrato ${o.contractName}` : "SLA por defecto de 2 h (sin contrato vinculado)"} className="bg-rose-50 text-rose-700 ring-rose-600/20"><Clock className="h-3 w-3" />Respuesta demorada{Number(o.responseSlaHours) > 0 ? ` · SLA ${o.responseSlaHours} h` : ""}</Chip>}
           {o._offline && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><WifiOff className="h-3 w-3" />Pendiente de sincronizar</Chip>}
           {o.category && <Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{o.category}</Chip>}
           {(o.quoteNumber || o.budgetNumber) && <Chip title="Presupuesto vinculado" className="bg-sky-50 text-sky-700 ring-sky-600/20"><FileText className="h-3 w-3" />{o.quoteNumber || o.budgetNumber}</Chip>}
