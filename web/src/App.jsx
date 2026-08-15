@@ -3230,8 +3230,28 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   const mix = mixIsCount ? mixByCount : mixByAmount;
 
   // 6) Productividad por técnico (período)
+  // Las horas se reparten entre TODAS las personas que trabajaron en la OT, no solo entre quien la
+  // creó. Antes se acumulaba laborHours × technicians entero al titular: si Facundo cargaba una OT
+  // de 13 h acompañado por Augusto, Facundo figuraba con 26 h y Augusto con cero.
+  // Cada persona suma las horas efectivas de la OT (no multiplicadas): si dos personas trabajaron
+  // 13 h, cada una aporta 13 y el total sigue dando las 26 horas-técnico facturadas.
   const byTech = {};
-  periodOrders.forEach((o) => { const k = o.tech || "—"; if (!byTech[k]) byTech[k] = { name: k.split(" ")[0], horas: 0, ordenes: 0 }; byTech[k].horas += (Number(o.laborHours) || 0) * (Number(o.technicians) || 1); byTech[k].ordenes += 1; });
+  const addTech = (name, hours, countOrder) => {
+    const key = name || "—";
+    if (!byTech[key]) byTech[key] = { name: key.split(" ")[0], horas: 0, ordenes: 0 };
+    byTech[key].horas += hours;
+    if (countOrder) byTech[key].ordenes += 1;
+  };
+  periodOrders.forEach((o) => {
+    const hours = Number(o.laborHours) || 0;
+    const crew = [...new Set([o.tech, ...(o.assignedTechs || [])].map((name) => String(name || "").trim()).filter(Boolean))];
+    if (!crew.length) { addTech("—", hours * (Number(o.technicians) || 1), true); return; }
+    crew.forEach((name) => addTech(name, hours, true));
+    // Si se facturaron más técnicos que los identificados por nombre (alguien sin acceso a la app),
+    // el remanente se muestra aparte en vez de repartirse: atribuirlo falsearía la productividad.
+    const unnamed = Math.max(0, (Number(o.technicians) || 1) - crew.length);
+    if (unnamed > 0) addTech("Sin identificar", hours * unnamed, false);
+  });
   const tech = Object.values(byTech).map((t) => ({ ...t, horas: Math.round(t.horas * 100) / 100 })).sort((a, b) => b.horas - a.horas);
 
   const periodLabel = { mes: "este mes", trim: "último trimestre", anio: "este año" }[period];
