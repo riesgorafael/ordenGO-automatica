@@ -2027,7 +2027,24 @@ app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, r
   res.json(merged);
 });
 app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  await pool.query("DELETE FROM parts WHERE id=$1", [req.params.id]);
+  // Clientes y proveedores ya se protegían contra el borrado con registros vinculados; los
+  // materiales no. Al borrar uno referenciado, adjustPartStock encuentra la fila vacía y sale sin
+  // hacer nada: la OT se completa o la OC se recibe y el stock NO se mueve, sin error ni aviso.
+  // Solo se bloquea cuando el movimiento de stock todavía está pendiente — las referencias
+  // históricas ya se aplicaron y borrar el material no altera nada.
+  const reference = JSON.stringify([{ partId: req.params.id }]);
+  const [orders, purchases] = await Promise.all([
+    pool.query("SELECT count(*)::int count FROM orders WHERE data->'materials' @> $1::jsonb AND data->>'stockDeductedAt' IS NULL", [reference]),
+    pool.query("SELECT count(*)::int count FROM purchase_orders WHERE data->'items' @> $1::jsonb AND data->>'stockAppliedAt' IS NULL AND data->>'stage' <> 'Cancelada'", [reference]),
+  ]);
+  const pendingOrders = Number(orders.rows[0]?.count || 0);
+  const pendingPurchases = Number(purchases.rows[0]?.count || 0);
+  if (pendingOrders || pendingPurchases) {
+    const detail = [pendingOrders ? `${pendingOrders} orden(es) de trabajo sin completar` : "", pendingPurchases ? `${pendingPurchases} orden(es) de compra sin recibir` : ""].filter(Boolean).join(" y ");
+    return res.status(409).json({ error: `No se puede eliminar: el material figura en ${detail}. Al completarlas, su stock no se movería. Quitalo de esos documentos primero.` });
+  }
+  const deleted = await pool.query("DELETE FROM parts WHERE id=$1 RETURNING id", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
   res.status(204).end();
 });
 

@@ -2182,6 +2182,22 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
     })
     .filter((invoice) => invoice.balance > 0.005)
     .sort((a, b) => b.days - a.days);
+  // Días promedio de cobro: cuánto tarda en entrar la plata desde que se emite la factura. Se
+  // pondera por importe — que una factura chica se pague rápido no compensa que una grande demore.
+  // Solo se miden cobros imputados a una factura concreta; sin esa vinculación no hay par de fechas.
+  const invoiceById = new Map(projectRows.filter((movement) => movement.kind === "invoice").map((movement) => [movement.id, movement]));
+  const collectionSpans = [];
+  projectRows.filter((movement) => movement.kind === "income" && movement.date).forEach((movement) => {
+    (movement.allocations || []).filter((allocation) => allocation.invoiceId && Number(allocation.amountUsd) > 0).forEach((allocation) => {
+      const invoice = invoiceById.get(allocation.invoiceId);
+      if (!invoice?.date) return;
+      const days = Math.round((new Date(`${String(movement.date).slice(0, 10)}T12:00:00`).getTime() - new Date(`${String(invoice.date).slice(0, 10)}T12:00:00`).getTime()) / 86400000);
+      if (days >= 0) collectionSpans.push({ days, amount: Number(allocation.amountUsd) });
+    });
+  });
+  const collectionWeight = collectionSpans.reduce((sum, row) => sum + row.amount, 0);
+  const avgCollectionDays = collectionWeight > 0 ? Math.round(collectionSpans.reduce((sum, row) => sum + row.days * row.amount, 0) / collectionWeight) : null;
+
   // Diferencia de cambio: facturás en una cotización y cobrás en otra. Sobre las facturas del
   // período ya saldadas, es lo cobrado (en USD al cambio del día del cobro) menos lo facturado
   // (en USD al cambio del día de la factura). Se informa aparte y NO se mezcla con el resultado
@@ -2499,6 +2515,34 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       </Panel>
       <Panel title="Concentración por proveedor">
         <div className="space-y-3">{suppliers.length ? suppliers.map((row, index) => <div key={row.name}><div className="flex justify-between gap-3 text-[11px]"><span className="min-w-0 truncate font-medium text-slate-600">{index + 1}. {row.name}</span><b className="shrink-0">{fmt(row.value)}</b></div><div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-violet-500" style={{ width: `${expense ? Math.min(100, (row.value / expense) * 100) : 0}%` }} /></div><span className="mt-1 block text-right text-[9px] text-slate-400">{expense ? ((row.value / expense) * 100).toFixed(0) : 0}% de los egresos</span></div>) : <EmptyChart>Sin gastos asociados a proveedores.</EmptyChart>}{supplierRanking.length > suppliers.length && <p className="text-[10px] text-slate-400">+{supplierRanking.length - suppliers.length} proveedor(es) más, fuera del top 6.</p>}</div>
+      </Panel>
+      {/* Acompañan a "Exposición por moneda", que quedaba sola en su fila. Las dos muestran datos
+          que hasta ahora no aparecían en ningún lado: cuánto tarda en entrar la plata y qué
+          proporción del gasto tiene respaldo. No repiten ninguna tarjeta de arriba. */}
+      <Panel title={<>Días promedio de cobro <HelpHint text="Desde la fecha de la factura hasta la del pago que la canceló, ponderado por importe: una factura grande que demora pesa más que una chica que se paga rápido. Solo considera cobros vinculados a una factura concreta." /></>}>
+        {avgCollectionDays == null ? <EmptyChart>Todavía no hay cobros vinculados a una factura.</EmptyChart> : <div>
+          <div className="flex items-baseline gap-2">
+            <b className={`text-3xl ${avgCollectionDays > 60 ? "text-rose-600" : avgCollectionDays > 30 ? "text-amber-600" : "text-emerald-600"}`}>{avgCollectionDays}</b>
+            <span className="text-sm text-slate-500">días</span>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Sobre {collectionSpans.length} cobro(s) imputado(s) a factura, por {fmt(collectionWeight)}.</p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className={`h-full rounded-full ${avgCollectionDays > 60 ? "bg-rose-500" : avgCollectionDays > 30 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, (avgCollectionDays / 90) * 100)}%` }} />
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">Escala de referencia: 90 días.</p>
+        </div>}
+      </Panel>
+      <Panel title={<>Respaldo documental <HelpHint text="Proporción de gastos del período que tienen comprobante adjunto o número de factura cargado. Los que no lo tienen no son deducibles ni auditables." /></>}>
+        {expenseRows.length === 0 ? <EmptyChart>Sin gastos en el período.</EmptyChart> : <div>
+          <div className="flex items-baseline gap-2">
+            <b className={`text-3xl ${receiptCompliance >= 90 ? "text-emerald-600" : receiptCompliance >= 70 ? "text-amber-600" : "text-rose-600"}`}>{receiptCompliance.toFixed(0)}%</b>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">{documented} de {expenseRows.length} gasto(s) con respaldo.</p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className={`h-full rounded-full ${receiptCompliance >= 90 ? "bg-emerald-500" : receiptCompliance >= 70 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${receiptCompliance}%` }} />
+          </div>
+          {undocumented.length > 0 && <button onClick={() => { setAlertFilter("undocumented"); setKindFilter("all"); setQuery(""); }} className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-brand-600 hover:text-brand-700">Ver los {undocumented.length} sin comprobante <ChevronRight className="h-3 w-3" /></button>}
+        </div>}
       </Panel>
       <Panel title="Exposición por moneda">
         <div className="space-y-3">{currencyExposure.length ? currencyExposure.map((row) => { const share = currencyExposureTotal ? (row.value / currencyExposureTotal) * 100 : 0; return <div key={row.name} className="rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-center justify-between gap-3"><span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-slate-600 shadow-sm">{row.name}</span><div className="text-right"><b className="block text-sm text-slate-800">{fmt(row.value)}</b><span className="text-[9px] text-slate-400">{share.toFixed(0)}% del período</span></div></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-sky-500" style={{ width: `${share}%` }} /></div></div>; }) : <EmptyChart>Sin movimientos en el período.</EmptyChart>}</div>
@@ -5018,11 +5062,22 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
   const grouped = MATERIAL_LIST_DISCIPLINES.map((category) => ({ category, items: sorted.filter((p) => categoryOf(p) === category) })).filter((group) => group.items.length > 0);
   // Sin checkboxes por ítem: la eliminación masiva actúa sobre lo que el filtro de categoría deja
   // visible (ej. elegís "Otro" y borrás todos los de esa categoría de una sola vez).
+  // Secuencial y tolerante a fallos: el servidor rechaza los materiales que figuran en documentos
+  // con stock pendiente, y con Promise.all un solo rechazo abortaba todo sin decir cuál fue.
+  // Ahora se borra lo que se puede y se informa exactamente qué quedó y por qué.
   const bulkDelete = async () => {
     setBulkDeleting(true);
-    try { await Promise.all(sorted.map((p) => onRemove(p.id))); setBulkDeleteOpen(false); }
-    catch (e) { onErr(e); }
-    finally { setBulkDeleting(false); }
+    const blocked = [];
+    let removed = 0;
+    for (const part of sorted) {
+      try { await onRemove(part.id); removed++; }
+      catch (error) { blocked.push({ name: part.name, reason: error?.message || "No se pudo eliminar" }); }
+    }
+    setBulkDeleting(false);
+    setBulkDeleteOpen(false);
+    setImportResult(blocked.length
+      ? { created: removed, failed: blocked.length, total: sorted.length, blocked, action: "delete" }
+      : { created: removed, failed: 0, total: sorted.length, action: "delete" });
   };
   const exportCSV = () => {
     const head = ["Nombre", "SKU", "Marca", "Categoría", "Unidad", "Precio venta", "Costo", "Stock", "Stock mínimo"];
@@ -5088,7 +5143,18 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
           <button onClick={exportCSV} disabled={!parts.length} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
           <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">{importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Importar CSV<input type="file" accept=".csv,text/csv" className="hidden" disabled={importBusy} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) importCSV(file); }} /></label>
         </div>
-        {importResult && <div className="mb-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />Importación terminada: {importResult.created} de {importResult.total} material(es) cargado(s){importResult.failed > 0 ? `, ${importResult.failed} con error` : ""}.<button onClick={() => setImportResult(null)} className="ml-auto text-emerald-600 hover:text-emerald-800"><X className="h-4 w-4" /></button></div>}
+        {importResult && <div className={`mb-3 rounded-lg border p-3 text-sm ${importResult.failed > 0 ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+          <div className="flex items-start gap-2">
+            {importResult.failed > 0 ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span>{importResult.action === "delete" ? `Eliminación terminada: ${importResult.created} de ${importResult.total} material(es) eliminado(s)` : `Importación terminada: ${importResult.created} de ${importResult.total} material(es) cargado(s)`}{importResult.failed > 0 ? `, ${importResult.failed} sin procesar` : ""}.</span>
+            <button onClick={() => setImportResult(null)} className="ml-auto shrink-0 opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
+          </div>
+          {/* Detalle de los rechazados: sin esto, "3 sin procesar" no dice cuáles ni por qué. */}
+          {importResult.blocked?.length > 0 && <ul className="mt-2 space-y-1 border-t border-amber-200 pt-2 text-[11px] leading-relaxed">
+            {importResult.blocked.slice(0, 5).map((item, index) => <li key={index}><b>{item.name}</b> — {item.reason}</li>)}
+            {importResult.blocked.length > 5 && <li>+{importResult.blocked.length - 5} más.</li>}
+          </ul>}
+        </div>}
         {scannerTarget && <BarcodeScannerDialog onClose={() => setScannerTarget(null)} onDetect={(value) => { if (scannerTarget === "search") setQuery(value); else if (scannerTarget === "new") setNf((current) => ({ ...current, sku: value })); else if (scannerTarget === "edit") setEf((current) => ({ ...current, sku: value })); setScannerTarget(null); }} />}
         {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} material(es) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
         <Panel title={`Catálogo de materiales (${parts.length})`} action={parts.length > 0 && <div className="flex flex-wrap items-center gap-2"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"><option value="Todas">Todas las categorías</option>{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select>{sorted.length > 0 && <button onClick={() => setBulkDeleteOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Eliminar visibles ({sorted.length})</button>}</div>}>
