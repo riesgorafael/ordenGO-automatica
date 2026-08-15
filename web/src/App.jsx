@@ -3239,20 +3239,29 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
   const addTech = (name, hours, countOrder) => {
     const key = name || "—";
     // Nombre completo: la lista tiene ancho de sobra y recortar al primer nombre confundía dos
-    // personas con el mismo nombre de pila, además de dejar "Sin identificar" como "Sin".
-    if (!byTech[key]) byTech[key] = { name: key, horas: 0, ordenes: 0, unnamed: key === "Sin identificar" };
+    // personas con el mismo nombre de pila.
+    if (!byTech[key]) byTech[key] = { name: key, horas: 0, ordenes: 0 };
     byTech[key].horas += hours;
     if (countOrder) byTech[key].ordenes += 1;
   };
+  // Órdenes donde se facturaron más técnicos de los que están cargados por nombre. No se inventa
+  // una barra con esas horas —no pertenecen a nadie identificable— pero tampoco se ocultan: se
+  // avisa al pie, porque el desvío está en el campo "Técnicos en planta" de esas OT, no en el
+  // gráfico. Corregir ahí también corrige la facturación.
+  const crewMismatch = [];
   periodOrders.forEach((o) => {
     const hours = Number(o.laborHours) || 0;
-    const crew = [...new Set([o.tech, ...(o.assignedTechs || [])].map((name) => String(name || "").trim()).filter(Boolean))];
+    // La deduplicación ignora mayúsculas y espacios: "Augusto Roldan" y "augusto roldan" son la
+    // misma persona y contarlas dos veces inflaría la dotación.
+    const seen = new Map();
+    [o.tech, ...(o.assignedTechs || [])].forEach((name) => {
+      const clean = String(name || "").trim();
+      if (clean && !seen.has(clean.toLowerCase())) seen.set(clean.toLowerCase(), clean);
+    });
+    const crew = [...seen.values()];
     if (!crew.length) { addTech("—", hours * (Number(o.technicians) || 1), true); return; }
     crew.forEach((name) => addTech(name, hours, true));
-    // Si se facturaron más técnicos que los identificados por nombre (alguien sin acceso a la app),
-    // el remanente se muestra aparte en vez de repartirse: atribuirlo falsearía la productividad.
-    const unnamed = Math.max(0, (Number(o.technicians) || 1) - crew.length);
-    if (unnamed > 0) addTech("Sin identificar", hours * unnamed, false);
+    if ((Number(o.technicians) || 1) > crew.length) crewMismatch.push(o.id);
   });
   const tech = Object.values(byTech).map((t) => ({ ...t, horas: Math.round(t.horas * 100) / 100 })).sort((a, b) => b.horas - a.horas);
 
@@ -3397,18 +3406,20 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
             {tech.map((t) => (
               <div key={t.name}>
                 <div className="flex items-baseline justify-between gap-2 text-xs">
-                  <span className={`min-w-0 truncate font-medium ${t.unnamed ? "italic text-slate-400" : "text-slate-700"}`}>{t.name}</span>
+                  <span className="min-w-0 truncate font-medium text-slate-700">{t.name}</span>
                   <span className="shrink-0 tabular-nums text-slate-500"><b className="text-slate-800">{t.horas} h</b>{t.ordenes > 0 ? ` · ${t.ordenes} OT` : ""}</span>
                 </div>
                 <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-100">
-                  <div className={`h-full rounded-full ${t.unnamed ? "bg-slate-300" : "bg-brand-500"}`} style={{ width: `${(t.horas / maxHoras) * 100}%` }} />
+                  <div className="h-full rounded-full bg-brand-500" style={{ width: `${(t.horas / maxHoras) * 100}%` }} />
                 </div>
               </div>
             ))}
             <p className="border-t border-slate-100 pt-2 text-[11px] text-slate-400">
               Total {Math.round(totalHoras * 100) / 100} horas-técnico en el período. Las horas de una OT se cuentan para cada persona que trabajó en ella.
-              {tech.some((t) => t.unnamed) && " «Sin identificar» son las horas facturadas por encima de los técnicos cargados por nombre."}
             </p>
+            {crewMismatch.length > 0 && <p className="text-[11px] text-amber-600">
+              En {crewMismatch.length === 1 ? "la orden" : `${crewMismatch.length} órdenes`} {crewMismatch.slice(0, 3).join(", ")}{crewMismatch.length > 3 ? "…" : ""} se factura más gente de la que figura por nombre. Revisá «Técnicos en planta»: ese número también define lo que se cobra.
+            </p>}
           </div>;
         })()}
       </Panel>
