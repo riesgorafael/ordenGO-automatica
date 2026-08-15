@@ -2177,8 +2177,13 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       const pool = unappliedByClient[key] || 0;
       if (pool > 0 && paid < gross) { const take = Math.min(pool - 0, gross - paid); paid += take; unappliedByClient[key] = pool - take; }
       const balance = Math.round((gross - paid) * 100) / 100;
-      const days = invoice.date ? Math.floor((Date.now() - new Date(`${String(invoice.date).slice(0, 10)}T12:00:00`).getTime()) / 86400000) : 0;
-      return { ...invoice, gross, paid, balance, days };
+      // Se mide contra la fecha de vencimiento pactada cuando existe, no contra la de emisión: una
+      // factura a 30 días recién está atrasada pasado ese plazo. El campo ya se cargaba al facturar
+      // ("Vencimiento") pero no se leía en ningún lado, así que el atraso salía sobrestimado.
+      const hasDueDate = Boolean(invoice.dueDate);
+      const reference = invoice.dueDate || invoice.date;
+      const days = reference ? Math.floor((Date.now() - new Date(`${String(reference).slice(0, 10)}T12:00:00`).getTime()) / 86400000) : 0;
+      return { ...invoice, gross, paid, balance, days, hasDueDate };
     })
     .filter((invoice) => invoice.balance > 0.005)
     .sort((a, b) => b.days - a.days);
@@ -2300,7 +2305,15 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   // La concentración solo tiene sentido con volumen: con uno o dos gastos siempre da cerca del 100%.
   if (expenseRows.length >= MIN_SAMPLE && topCategoryShare > 40) insights.push({ severity: 1, tone: "violet", title: "Concentración de costos", text: `${fullCostDistribution[0]?.name} representa ${topCategoryShare.toFixed(0)}% del gasto mensual, sobre ${expenseRows.length} gastos.` });
   if (settledInvoices.length && isMaterial(fxDifference)) insights.push({ severity: 1, tone: fxDifference >= 0 ? "emerald" : "amber", title: fxDifference >= 0 ? "Diferencia de cambio a favor" : "Diferencia de cambio en contra", text: `Sobre ${settledInvoices.length} factura(s) del mes con cobros imputados, lo cobrado difiere de lo facturado en ${fmt(Math.abs(fxDifference))} por la variación del tipo de cambio entre la emisión y el cobro. No se incluye en el resultado operativo: es efecto cambiario, no margen.` });
-  if (openInvoices.some((invoice) => invoice.days > 90)) insights.push({ severity: 3, tone: "rose", title: "Deuda con más de 90 días", text: `${fmt(aging[3].value)} en ${aging[3].count} factura(s) con más de 90 días de antigüedad. La más vieja acumula ${openInvoices[0].days} días.` });
+  if (openInvoices.some((invoice) => invoice.days > 90)) insights.push({ severity: 3, tone: "rose", title: "Deuda con más de 90 días", text: `${fmt(aging[3].value)} en ${aging[3].count} factura(s) con más de 90 días. La más vieja acumula ${openInvoices[0].days} días.` });
+  // Aviso propio de las facturas con vencimiento pactado: acá el atraso no es una estimación por
+  // antigüedad, es incumplimiento de una fecha acordada — por eso va como crítico aparte.
+  const pastDueInvoices = openInvoices.filter((invoice) => invoice.hasDueDate && invoice.days > 0);
+  const pastDueTotal = pastDueInvoices.reduce((sum, invoice) => sum + invoice.balance, 0);
+  if (pastDueInvoices.length) insights.push({ severity: 3, tone: "rose", title: `${pastDueInvoices.length} factura(s) con el vencimiento pasado`, text: `${fmt(pastDueTotal)} pendiente(s) de cobro con la fecha de pago ya vencida. La de mayor atraso lleva ${pastDueInvoices[0].days} día(s): ${pastDueInvoices[0].receiptNumber || pastDueInvoices[0].id}, de ${pastDueInvoices[0].clientName || "cliente sin identificar"}.` });
+  // Aviso anticipado: lo que vence en los próximos 7 días todavía se puede gestionar.
+  const dueSoonInvoices = openInvoices.filter((invoice) => invoice.hasDueDate && invoice.days <= 0 && invoice.days > -8);
+  if (dueSoonInvoices.length) insights.push({ severity: 2, tone: "amber", title: `${dueSoonInvoices.length} factura(s) vencen esta semana`, text: `${fmt(dueSoonInvoices.reduce((sum, invoice) => sum + invoice.balance, 0))} con vencimiento dentro de los próximos 7 días. Conviene confirmar la fecha de pago antes de que entren en atraso.` });
   if (inMonth.length && !insights.length) insights.push({ severity: 0, tone: "emerald", title: "Sin desvíos relevantes", text: `No se detectaron desvíos por encima del umbral de materialidad (${fmt(materialityUsd)}).` });
   insights.sort((a, b) => b.severity - a.severity);
   const shownInsights = insights.slice(0, 4);
@@ -2507,7 +2520,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       <Panel title="Ejecución del presupuesto">
         <div className="space-y-2">{budgetExecution.length ? budgetExecution.map((budget) => <div key={budget.id} className="rounded-xl border border-slate-100 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="truncate font-semibold">{budget.number || budget.id} · {budget.title}</span><b className={budget.progress > 100 ? "text-rose-600" : "text-slate-700"}>{budget.baseline ? `${budget.progress.toFixed(0)}%` : "Sin costo estimado"}</b></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budget.progress > 100 ? "bg-rose-500" : budget.progress > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, budget.progress)}%` }} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-400"><span>Real <b className="text-slate-600">{fmt(budget.actual)}</b></span><span>{budget.baseline ? <>Plan <b className="text-slate-600">{fmt(budget.baseline)}</b></> : "Completar costo estimado"}</span></div></div>) : <EmptyChart>No hay presupuestos aprobados vinculados.</EmptyChart>}{unbudgetedExpense > 0 && <p className="text-[10px] text-amber-600">{fmt(unbudgetedExpense)} en gastos del proyecto sin presupuesto asignado: no se computan en ninguna barra.</p>}</div>
       </Panel>
-      <Panel title={<>Antigüedad de la deuda <HelpHint text="Saldo en bruto (con IVA), que es lo que paga el cliente. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente." /></>}>
+      <Panel title={<>Antigüedad de la deuda <HelpHint text="Saldo en bruto (con IVA), que es lo que paga el cliente. Los días se cuentan desde la fecha de vencimiento pactada cuando la factura la tiene cargada, y desde la emisión cuando no. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente." /></>}>
         {!openInvoices.length ? <EmptyChart>Sin facturas pendientes de cobro.</EmptyChart> : <div className="space-y-3">
           <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
             {aging.map((bucket) => bucket.value > 0 && <div key={bucket.label} className={bucket.tone} style={{ width: `${agingTotal ? (bucket.value / agingTotal) * 100 : 0}%` }} title={`${bucket.label}: ${fmt(bucket.value)}`} />)}
@@ -2519,7 +2532,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
           <div className="space-y-1.5 border-t border-slate-100 pt-2">
             {openInvoices.slice(0, 5).map((invoice) => <button key={invoice.id} onClick={() => openEdit(invoice)} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-slate-50">
               <span className={`h-2 w-2 shrink-0 rounded-full ${invoice.days > 90 ? "bg-rose-500" : invoice.days > 60 ? "bg-orange-500" : invoice.days > 30 ? "bg-amber-500" : "bg-emerald-500"}`} />
-              <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium text-slate-700">{invoice.receiptNumber || invoice.id}</span><span className="block truncate text-[10px] text-slate-400">{invoice.clientName || "Sin cliente"} · {invoice.days} días</span></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium text-slate-700">{invoice.receiptNumber || invoice.id}</span><span className="block truncate text-[10px] text-slate-400">{invoice.clientName || "Sin cliente"} · {invoice.hasDueDate ? (invoice.days > 0 ? `${invoice.days} días de atraso` : `vence en ${Math.abs(invoice.days)} día(s)`) : `${invoice.days} días desde emisión`}</span></span>
               <b className="shrink-0 text-[11px] text-slate-800">{fmt(invoice.balance)}</b>
             </button>)}
             {openInvoices.length > 5 && <p className="text-[10px] text-slate-400">+{openInvoices.length - 5} factura(s) más.</p>}

@@ -2421,6 +2421,20 @@ async function runDailyDigest() {
   const tasks = (await pool.query("SELECT data FROM tasks")).rows.map((row) => row.data);
   const budgets = (await pool.query("SELECT data FROM budgets")).rows.map((row) => row.data);
   const purchaseOrders = (await pool.query("SELECT data FROM purchase_orders")).rows.map((row) => row.data);
+  const movements = (await pool.query("SELECT data FROM financial_movements")).rows.map((row) => row.data);
+  // Facturas con vencimiento pactado ya pasado y saldo pendiente. El cobro se descuenta por las
+  // partidas que apuntan a cada factura, que es como se imputa en el resto del módulo.
+  const collectedByInvoice = movements.filter((movement) => movement.kind === "income").reduce((acc, movement) => {
+    for (const allocation of movement.allocations || []) {
+      if (allocation?.invoiceId) acc[allocation.invoiceId] = (acc[allocation.invoiceId] || 0) + (Number(allocation.amountUsd) || 0);
+    }
+    return acc;
+  }, {});
+  const overdueInvoices = movements.filter((movement) => {
+    if (movement.kind !== "invoice" || !movement.dueDate || movement.dueDate >= today) return false;
+    const gross = Number(movement.grossAmountUsd) || ((Number(movement.amountUsd) || 0) + (Number(movement.vatAmountUsd) || 0));
+    return gross - (collectedByInvoice[movement.id] || 0) > 0.01;
+  });
   const soon = new Date(arDate().getTime() + 4 * 86400000).toISOString().slice(0, 10);
   const pending = tasks.filter((task) => task.status !== "Hecho" && task.due);
   let sent = 0;
@@ -2438,6 +2452,7 @@ async function runDailyDigest() {
       const latePurchases = purchaseOrders.filter((po) => po.dueDate && po.dueDate < today && !["Recibida", "Cancelada"].includes(po.stage)).length;
       if (followUps) parts.push(`${followUps} seguimiento(s) de presupuesto atrasado(s)`);
       if (latePurchases) parts.push(`${latePurchases} orden(es) de compra demorada(s)`);
+      if (overdueInvoices.length) parts.push(`${overdueInvoices.length} factura(s) con el cobro vencido`);
     }
     if (!parts.length) continue; // a quien no tiene nada pendiente no se le escribe
     await notify(user.id, `Resumen de hoy: ${parts.join(" · ")}.`, null);
