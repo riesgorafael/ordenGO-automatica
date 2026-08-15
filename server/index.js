@@ -2358,8 +2358,74 @@ const dist = path.join(__dirname, "public");
 app.use(express.static(dist));
 app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
 
+/* ---------------------------------- Resumen diario de pendientes ----------------------------------
+Todo el vencimiento del sistema era "de tirar": había que abrir Mi Día para enterarse de que una
+tarea venció, un seguimiento de presupuesto se pasó o una orden de compra está demorada. Nadie
+avisaba nada. Esto recorre una vez por día lo que ya está vencido o por vencer y deja UNA
+notificación por persona — una sola, con el total: varias por día se vuelven ruido y se ignoran. */
+const DIGEST_KEY = "daily_digest_v1";
+const DIGEST_HOUR = 8; // hora de Argentina en la que se emite
+// Argentina no aplica horario de verano, así que un desplazamiento fijo alcanza y evita depender
+// de la zona horaria del contenedor, que en el hosting suele estar en UTC.
+const AR_OFFSET_MS = 3 * 60 * 60 * 1000;
+const arDate = () => new Date(Date.now() - AR_OFFSET_MS);
+const arDayKey = () => arDate().toISOString().slice(0, 10);
+
+async function runDailyDigest() {
+  const today = arDayKey();
+  // El marcado es atómico y va ANTES de notificar: si dos instancias arrancan a la vez, solo una
+  // gana el UPDATE y la otra sale sin mandar nada. Un resumen perdido es preferible a uno doble.
+  const claimed = await pool.query(
+    `INSERT INTO app_settings(key, value, updated_at) VALUES($1, $2, now())
+     ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+     WHERE app_settings.value->>'day' IS DISTINCT FROM $3
+     RETURNING key`,
+    [DIGEST_KEY, { day: today }, today]);
+  if (claimed.rowCount === 0) return 0;
+
+  const users = (await pool.query("SELECT id, role FROM users WHERE active = true")).rows.filter((user) => !isMonitor(user.role));
+  const tasks = (await pool.query("SELECT data FROM tasks")).rows.map((row) => row.data);
+  const budgets = (await pool.query("SELECT data FROM budgets")).rows.map((row) => row.data);
+  const purchaseOrders = (await pool.query("SELECT data FROM purchase_orders")).rows.map((row) => row.data);
+  const soon = new Date(arDate().getTime() + 4 * 86400000).toISOString().slice(0, 10);
+  const pending = tasks.filter((task) => task.status !== "Hecho" && task.due);
+  let sent = 0;
+
+  for (const user of users) {
+    const mine = pending.filter((task) => task.assignee === user.id);
+    const overdue = mine.filter((task) => task.due < today).length;
+    const dueSoon = mine.filter((task) => task.due >= today && task.due <= soon).length;
+    const parts = [];
+    if (overdue) parts.push(`${overdue} tarea(s) vencida(s)`);
+    if (dueSoon) parts.push(`${dueSoon} por vencer en 4 días`);
+    // Lo comercial y las compras solo le importan a quien puede accionarlas.
+    if (["admin", "gerente"].includes(user.role)) {
+      const followUps = budgets.filter((budget) => !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= today).length;
+      const latePurchases = purchaseOrders.filter((po) => po.dueDate && po.dueDate < today && !["Recibida", "Cancelada"].includes(po.stage)).length;
+      if (followUps) parts.push(`${followUps} seguimiento(s) de presupuesto atrasado(s)`);
+      if (latePurchases) parts.push(`${latePurchases} orden(es) de compra demorada(s)`);
+    }
+    if (!parts.length) continue; // a quien no tiene nada pendiente no se le escribe
+    await notify(user.id, `Resumen de hoy: ${parts.join(" · ")}.`, null);
+    sent++;
+  }
+  console.log(`Resumen diario ${today}: ${sent} notificación(es).`);
+  return sent;
+}
+
+function scheduleDailyDigest() {
+  // Se revisa cada 15 minutos en vez de programar un timer largo: sobrevive a reinicios de
+  // contenedor sin perder el día, y el marcado en base evita que se repita.
+  const tick = () => {
+    if (arDate().getUTCHours() < DIGEST_HOUR) return;
+    runDailyDigest().catch((error) => console.error("Resumen diario:", error));
+  };
+  setInterval(tick, 15 * 60 * 1000);
+  tick();
+}
+
 /* ------------------------------------------------ Arranque ------------------------------------------------ */
 const PORT = process.env.PORT || 3000;
 initDb()
-  .then(() => app.listen(PORT, () => console.log(`OrdenGO API + web escuchando en :${PORT}`)))
+  .then(() => app.listen(PORT, () => { console.log(`OrdenGO API + web escuchando en :${PORT}`); scheduleDailyDigest(); }))
   .catch((e) => { console.error("Error iniciando la base de datos:", e); process.exit(1); });
