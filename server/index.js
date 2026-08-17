@@ -1486,7 +1486,7 @@ async function upsertPurchaseOrderPayable(po, user, db = pool) {
     vatIncluded: true, vatRate: effectiveVatRate, netAmountUsd: po.netAmountUsd, vatAmountUsd: po.vatAmountUsd, grossAmountUsd: po.grossAmountUsd,
     date: String(po.receivedAt || existing?.data?.date || new Date().toISOString()).slice(0, 10),
     projectId: po.projectId || "", supplier: po.supplierName || "", receiptNumber: po.supplierInvoiceNumber || po.number || po.id,
-    paymentStatus: existing?.data?.paymentStatus || "pending", paidAt: existing?.data?.paidAt || "",
+    paymentStatus: existing?.data?.paymentStatus || "pending", paidAt: existing?.data?.paidAt || "", dueDate: po.dueDate || existing?.data?.dueDate || "",
     sourcePurchaseOrderId: po.id, purchaseOrderNumber: po.number || po.id,
     detail: `Generado automáticamente al recibir la orden de compra ${po.number || po.id}. Se actualiza si cambian los ítems.`,
     createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name,
@@ -2181,6 +2181,7 @@ const normalizeFinancialMovement = (input, previous = {}) => {
     movement.vatAmountUsd = vat.vat; movement.computableVatAmountUsd = vat.computableVat;
     movement.paymentStatus = ["paid", "pending"].includes(movement.paymentStatus) ? movement.paymentStatus : "paid";
     movement.paidAt = movement.paymentStatus === "paid" ? String(movement.paidAt || movement.date || "").slice(0, 10) : "";
+    movement.dueDate = movement.paymentStatus === "pending" ? String(movement.dueDate || "").slice(0, 10) : "";
   }
   return movement;
 };
@@ -2241,6 +2242,8 @@ app.put("/api/finance-period-locks/:period", auth, requireRole("admin"), async (
 });
 
 app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
+  if ((req.body?.kind || "expense") === "expense" && !["paid", "pending"].includes(req.body?.paymentStatus)) return res.status(400).json({ error: "Indica si el gasto está pagado o pendiente de pago." });
+  if ((req.body?.kind || "expense") === "expense" && req.body?.paymentStatus === "pending" && !String(req.body?.dueDate || "").slice(0, 10)) return res.status(400).json({ error: "Indica el vencimiento del gasto pendiente." });
   let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
   try { await assertFinancePeriodOpen(movement.date); } catch (error) { if (error.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message }); throw error; }
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
@@ -2309,6 +2312,8 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   if (current.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo y no se edita manualmente." });
   if (current.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra y no se edita manualmente." });
   let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
+  if (movement.kind === "expense" && !["paid", "pending"].includes(req.body?.paymentStatus ?? current.paymentStatus)) return res.status(400).json({ error: "Indica si el gasto está pagado o pendiente de pago." });
+  if (movement.kind === "expense" && movement.paymentStatus === "pending" && !movement.dueDate) return res.status(400).json({ error: "Indica el vencimiento del gasto pendiente." });
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });

@@ -1850,8 +1850,11 @@ function FinanceEntryModal({
       vatRate: 21,
       vatComputablePercent: 100,
       deductions: "",
-      paymentStatus: "paid",
-      paidAt: todayStr(),
+      // En un gasto nuevo el usuario debe declarar si ya se pagó o si genera deuda. No asumirlo
+      // evita que una factura de proveedor desaparezca silenciosamente de Cuentas por pagar.
+      paymentStatus: "",
+      paidAt: "",
+      dueDate: "",
       ...(movement || {}),
     };
     return { ...base, attachments: attachmentsOf(base) };
@@ -3116,7 +3119,7 @@ function FinanceEntryModal({
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <L label="Estado de pago">
                       <select
-                        value={form.paymentStatus || "paid"}
+                        value={form.paymentStatus || ""}
                         onChange={(event) => {
                           const paymentStatus = event.target.value;
                           setForm((current) => ({
@@ -3130,6 +3133,7 @@ function FinanceEntryModal({
                         }}
                         className="u-input"
                       >
+                        <option value="" disabled>Seleccionar estado *</option>
                         <option value="paid">Pagado</option>
                         <option value="pending">Pendiente de pago</option>
                       </select>
@@ -3148,10 +3152,7 @@ function FinanceEntryModal({
                     )}
                   </div>
                   {form.paymentStatus === "pending" && (
-                    <p className="mt-2 text-[11px] text-amber-600">
-                      Este gasto quedará como cuenta por pagar hasta que
-                      actualices su estado.
-                    </p>
+                    <div className="mt-3"><L label="Vencimiento *"><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} className="u-input" /></L><p className="mt-1 text-[11px] text-amber-600">Este gasto quedará como cuenta por pagar hasta que actualices su estado.</p></div>
                   )}
                 </div>
               )}
@@ -3261,6 +3262,7 @@ function FinanceEntryModal({
                 (form.kind === "expense" &&
                   companyMismatch &&
                   !mismatchConfirmed) ||
+                (form.kind === "expense" && (!form.paymentStatus || (form.paymentStatus === "pending" && !form.dueDate))) ||
                 (unusualAmount && !unusualConfirmed)
               }
               onClick={submit}
@@ -3337,7 +3339,9 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     setEditor({
       ...rest,
       date: todayStr(),
-      paidAt: rest.paymentStatus === "pending" ? "" : todayStr(),
+      paymentStatus: rest.kind === "expense" ? "" : rest.paymentStatus,
+      paidAt: "",
+      dueDate: rest.kind === "expense" ? "" : rest.dueDate,
       // La cotización del original puede tener meses: se vuelve a pedir la vigente al abrir.
       ...(rest.currency !== "USD" ? { exchangeRate: "", exchangeRateSource: "", exchangeRateUpdatedAt: "" } : {}),
     });
@@ -3421,6 +3425,16 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   const invoiceGross = (movement) => (Number(movement.grossAmountUsd) || ((Number(movement.amountUsd) || 0) + (Number(movement.vatAmountUsd) || 0)));
   const payableRows = projectRows.filter((movement) => movement.kind === "expense" && movement.paymentStatus === "pending");
   const payable = payableRows.reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
+  const todayKey = todayStr();
+  const sevenDaysDate = new Date(`${todayKey}T12:00:00`); sevenDaysDate.setDate(sevenDaysDate.getDate() + 7);
+  const sevenDaysKey = sevenDaysDate.toISOString().slice(0, 10);
+  const overduePayables = payableRows.filter((movement) => movement.dueDate && movement.dueDate < todayKey);
+  const dueSoonPayables = payableRows.filter((movement) => movement.dueDate && movement.dueDate >= todayKey && movement.dueDate <= sevenDaysKey);
+  const undatedPayables = payableRows.filter((movement) => !movement.dueDate);
+  // Una OC enviada o confirmada todavía no es deuda contable: se informa por separado como
+  // compromiso futuro. Al recibirse, deja esta cifra y genera la cuenta por pagar formal.
+  const committedPurchaseOrders = purchaseOrders.filter((po) => ["Enviada", "Confirmada"].includes(po.stage) && (projectFilter === "all" || po.projectId === projectFilter));
+  const committedPurchases = committedPurchaseOrders.reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
   // Antigüedad de la deuda factura por factura. "Por cobrar" daba un total sin decir si eran 30 o
   // 180 días, que es justamente el dato con el que se decide a quién reclamar.
   // Lo cobrado se imputa a cada factura por su partida; lo que no está imputado a una factura
@@ -3552,6 +3566,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     ...expenseRows.filter((movement) => !movement.receiptNumber && !movement.hasAttachment && !movement.attachmentUrl).map((movement) => ({ id: movement.id, issue: "Gasto sin comprobante" })),
     ...inMonth.filter((movement) => !movement.projectId && !movement.budgetId).map((movement) => ({ id: movement.id, issue: "Sin imputación a proyecto/presupuesto" })),
     ...inMonth.filter((movement) => movement.currency !== "USD" && !(Number(movement.exchangeRate) > 0)).map((movement) => ({ id: movement.id, issue: "Sin cotización histórica" })),
+    ...payableRows.filter((movement) => !movement.dueDate).map((movement) => ({ id: movement.id, issue: "Cuenta por pagar sin vencimiento" })),
   ];
   // Solo los gastos vinculados a ESTE presupuesto. Antes se sumaba además cualquier gasto del
   // proyecto (`|| movement.projectId === budget.projectId`): con dos presupuestos aprobados en el
@@ -3744,6 +3759,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
         { label: "Egresos", value: fmt(expense), hint: `${receiptCompliance.toFixed(0)}% con comprobante` },
         { label: "Por cobrar", value: fmt(receivable), hint: aging[3].count ? `+90 días: ${fmt(aging[3].value)}` : "Bruto con IVA" },
         { label: "Por pagar", value: fmt(payable), hint: "Gastos pendientes de pago" },
+        { label: "Compras comprometidas", value: fmt(committedPurchases), hint: `${committedPurchaseOrders.length} OC enviadas o confirmadas` },
         { label: "Posición de IVA", value: fmt(Math.abs(vatPayable)), hint: vatPayable > 0 ? "A pagar" : "Saldo a favor" },
         { label: "Margen", value: `${margin.toFixed(1)}%`, hint: "Sobre facturación neta" },
       ],
@@ -3820,14 +3836,14 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
 
     <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
       <Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={Clock} tint={receivable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Saldo bruto pendiente, con IVA" description="Saldo comercial de facturas abiertas, luego de imputar cobros y retenciones. Se conserva la cotización histórica de cada operación." />
-      <Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={Clock} tint={payable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Obligaciones pendientes" description="Suma bruta de gastos aún no pagados, según el proyecto seleccionado." />
+      <Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={Clock} tint={overduePayables.length ? "text-rose-600" : payable > 0 ? "text-amber-600" : "text-emerald-600"} detail={`${overduePayables.length} vencida(s) · ${dueSoonPayables.length} en 7 días · ${undatedPayables.length} sin fecha`} description="Suma bruta de facturas y gastos devengados pendientes. Las órdenes de compra aún no recibidas se muestran aparte como compras comprometidas." />
       <Kpi label="Posición estimada de IVA" value={fmt(Math.abs(vatPayable))} alt={alt(Math.abs(vatPayable))} icon={AlertTriangle} tint={vatPayable > 0 ? "text-amber-600" : "text-emerald-600"} detail={vatPayable > 0 ? `A pagar · débito ${fmt(vatDebit)} − crédito computable ${fmt(vatCredit)}` : "Saldo a favor"} description="Estimación: débito fiscal de ventas menos crédito fiscal computable de compras. Debe conciliarse con el Libro IVA antes de presentar." />
     </div>
 
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,0.85fr)]"><Panel title="Resultado devengado · 12 meses"><div className="mb-2 text-[11px] text-slate-400">Facturación neta y costos operativos netos de IVA recuperable. Los movimientos de caja se analizan en Tesorería.</div><div className="h-72">{trend.some((row) => row.Facturado || row.Egresos) ? <ResponsiveContainer><BarChart data={trend} margin={{ top: 8, right: 12, left: 6, bottom: 0 }} barCategoryGap="28%"><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis tickFormatter={axisFmt} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={72} /><Tooltip formatter={chartTooltip} cursor={{ fill: "#f8fafc" }} /><Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} /><Bar dataKey="Facturado" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={28} /><Bar dataKey="Egresos" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={28} /></BarChart></ResponsiveContainer> : <EmptyChart />}</div></Panel><Panel title="Alertas e interpretación"><div className="space-y-2">{shownInsights.map((item, index) => <div key={`${item.title}-${index}`} className={`rounded-xl border p-3 ${item.tone === "rose" ? "border-rose-200 bg-rose-50" : item.tone === "amber" ? "border-amber-200 bg-amber-50" : item.tone === "violet" ? "border-violet-200 bg-violet-50" : item.tone === "emerald" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}><b className="block text-xs text-slate-800">{item.title}</b><span className="mt-1 block text-[11px] leading-relaxed text-slate-600">{item.text}</span>{item.action && <button type="button" onClick={() => { setAlertFilter(item.action.filter); setKindFilter("all"); setQuery(""); }} className="mt-2 inline-flex items-center gap-1 rounded-md bg-white/80 px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-white">{item.action.label} <ChevronRight className="h-3 w-3" /></button>}</div>)}<p className="text-[11px] leading-relaxed text-slate-400">Umbral: {fmt(materialityUsd)}.</p></div></Panel></div></>}
 
     {financeView === "treasury" && <>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={TrendingUp} tint="text-emerald-600" detail={`${openInvoices.length} factura(s) abierta(s)`} description="Saldo bruto pendiente de clientes." /><Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={TrendingDown} tint="text-rose-600" detail={`${payableRows.length} obligación(es)`} description="Gastos brutos pendientes de pago." /><Kpi label="Flujo de caja del mes" value={fmt(cashFlow)} alt={alt(cashFlow)} icon={DollarSign} tint={cashFlow >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Cobrado neto − pagos realizados" description="Caja real del período, separada del resultado devengado." /></div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"><Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={TrendingUp} tint="text-emerald-600" detail={`${openInvoices.length} factura(s) abierta(s)`} description="Saldo bruto pendiente de clientes." /><Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={TrendingDown} tint={overduePayables.length ? "text-rose-600" : "text-amber-600"} detail={`${payableRows.length} obligación(es) · ${overduePayables.length} vencida(s) · ${dueSoonPayables.length} en 7 días · ${undatedPayables.length} sin fecha`} description="Facturas y gastos ya devengados pendientes de pago." /><Kpi label="Compras comprometidas" value={fmt(committedPurchases)} alt={alt(committedPurchases)} icon={ShoppingCart} tint="text-violet-600" detail={`${committedPurchaseOrders.length} OC enviada(s) o confirmada(s)`} description="Compromisos futuros todavía no recibidos. No forman parte de Cuentas por pagar hasta la recepción y factura del proveedor." /><Kpi label="Flujo de caja del mes" value={fmt(cashFlow)} alt={alt(cashFlow)} icon={DollarSign} tint={cashFlow >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Cobrado neto − pagos realizados" description="Caja real del período, separada del resultado devengado." /></div>
       <Panel title="Proyección de caja · 13 semanas"><p className="mb-3 text-[11px] text-slate-400">Cobros y pagos previstos según vencimientos cargados. Los atrasados se concentran en la primera semana.</p><div className="h-72"><ResponsiveContainer><BarChart data={cashForecast} margin={{ top: 8, right: 10, left: 8, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis tickFormatter={axisFmt} tick={{ fontSize: 9 }} width={72} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Legend wrapperStyle={{ fontSize: 11 }} /><Bar dataKey="Cobros" fill="#10b981" radius={[4,4,0,0]} /><Bar dataKey="Pagos" fill="#ef4444" radius={[4,4,0,0]} /></BarChart></ResponsiveContainer></div></Panel>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Antigüedad de cuentas por cobrar"><div className="space-y-2">{aging.map((bucket) => <div key={bucket.label} className="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-xs"><span>{bucket.label}</span><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full ${bucket.tone}`} style={{ width: `${agingTotal ? bucket.value / agingTotal * 100 : 0}%` }} /></div><b>{fmt(bucket.value)}</b></div>)}</div></Panel><Panel title="Antigüedad de cuentas por pagar"><div className="space-y-2">{payableAging.map((bucket) => <div key={bucket.label} className="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-xs"><span>{bucket.label}</span><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full ${bucket.tone}`} style={{ width: `${payable ? bucket.value / payable * 100 : 0}%` }} /></div><b>{fmt(bucket.value)}</b></div>)}</div></Panel></div>
       <Panel title="Clientes · facturación y cobranzas"><div className="overflow-x-auto"><table className="w-full min-w-[44rem] text-left text-xs"><thead className="text-slate-400"><tr><th className="pb-2">Cliente</th><th>Neto</th><th>IVA</th><th>Total</th><th>Cobrado</th><th>Pendiente</th></tr></thead><tbody>{clientFinancials.map((row) => <tr key={row.name} className="border-t border-slate-100"><td className="py-2 font-medium">{row.name}</td><td>{fmt(row.net)}</td><td>{fmt(row.vat)}</td><td>{fmt(row.gross)}</td><td className="text-emerald-700">{fmt(row.collected)}</td><td className="text-amber-700">{fmt(row.outstanding)}</td></tr>)}</tbody></table>{!clientFinancials.length && <EmptyChart>Sin facturación en el período.</EmptyChart>}</div></Panel>
