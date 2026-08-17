@@ -86,6 +86,8 @@ export const api = {
   getFinance: (id) => req("/finances/" + id),
   updateFinance: (id, patch) => req("/finances/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteFinance: (id) => req("/finances/" + id, { method: "DELETE" }),
+  financePeriodLocks: () => req("/finance-period-locks"),
+  setFinancePeriodLock: (period, locked) => req("/finance-period-locks/" + period, { method: "PUT", body: JSON.stringify({ locked }) }),
   // force omite la caché del servidor: lo usa el botón de refrescar manual.
   wholesaleExchangeRate: (force = false) => req("/exchange-rates/wholesale" + (force ? "?force=1" : "")),
 

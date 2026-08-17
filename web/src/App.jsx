@@ -1344,7 +1344,7 @@ export default function App() {
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} projects={projects} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} onGoToProject={(projectId) => { navigateModule("projects"); setPTab("board"); setPProj(projectId); }} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} finances={finances} clients={clients} parts={parts} projects={projects} users={users} orders={orders} onOpenOrder={setODetail} me={me} createSignal={budgetCreateSignal} onConsumeCreate={() => setBudgetCreateSignal(0)} onSave={saveBudget} onDelete={deleteBudget} onDuplicate={duplicateBudget} onConvert={convertBudget} onCreateOrder={createOrderFromBudget} onInvoice={saveFinance} />}
-        {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} branding={branding} me={me} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
+        {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} purchaseOrders={purchaseOrders} branding={branding} me={me} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
         {activeModule === "inventory" && isMgr && <Inventory parts={parts} orders={orders} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
         {activeModule === "orders" && (
           <>
@@ -3292,7 +3292,7 @@ function FinanceEntryModal({
   );
 }
 
-function FinanceModule({ movements, projects, budgets, clients, branding, me, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
+function FinanceModule({ movements, projects, budgets, clients, purchaseOrders = [], branding, me, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
   const [period, setPeriod] = useState(currentMonth());
   const [projectFilter, setProjectFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -3308,6 +3308,10 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   const [alertFilter, setAlertFilter] = useState(null); // null | "undocumented" | "pending" — lo activa una alerta
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [invoiceDocs, setInvoiceDocs] = useState(null); // factura cuyos documentos se están gestionando
+  const [financeView, setFinanceView] = useState("summary");
+  const [periodLocks, setPeriodLocks] = useState([]);
+  const [periodLockBusy, setPeriodLockBusy] = useState(false);
+  const [periodLockError, setPeriodLockError] = useState("");
   const openInvoiceDocs = async (movement) => {
     setLoadingEdit(movement.id);
     const full = onLoad ? await onLoad(movement.id) : movement;
@@ -3352,6 +3356,14 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
     document.addEventListener("visibilitychange", onVisible);
     return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
+  useEffect(() => { api.financePeriodLocks().then((result) => setPeriodLocks(result.lockedPeriods || [])).catch(() => setPeriodLocks([])); }, []);
+  const periodLocked = periodLocks.includes(period);
+  const togglePeriodLock = async () => {
+    setPeriodLockBusy(true); setPeriodLockError("");
+    try { const result = await api.setFinancePeriodLock(period, !periodLocked); setPeriodLocks(result.lockedPeriods || []); }
+    catch (error) { setPeriodLockError(error.message || "No se pudo actualizar el cierre."); }
+    finally { setPeriodLockBusy(false); }
+  };
 
   // Un cobro puede repartirse entre varios proyectos (`allocations`). Para el resto del módulo, un
   // movimiento sin reparto se comporta como una única imputación por su total, así todas las sumas
@@ -3376,7 +3388,18 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       return { ...movement, amountUsd: share, deductionsUsd: (Number(movement.deductionsUsd) || 0) * ratio, vatAmountUsd: (Number(movement.vatAmountUsd) || 0) * ratio, netAmountUsd: (Number(movement.netAmountUsd) || 0) * ratio, grossAmountUsd: (Number(movement.grossAmountUsd) || 0) * ratio };
     });
   const monthRows = (key) => projectRows.filter((movement) => String(movement.date || "").slice(0, 7) === key);
-  const sumKind = (rows, kind) => rows.filter((movement) => movement.kind === kind).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
+  const invoiceNet = (movement) => Number(movement.netAmountUsd ?? movement.amountUsd) || 0;
+  const computableVat = (movement) => {
+    if (movement.kind !== "expense" || !movement.vatIncluded) return 0;
+    const explicit = Number(movement.computableVatAmountUsd);
+    if (Number.isFinite(explicit)) return Math.max(0, explicit);
+    const percent = movement.vatComputablePercent == null ? 100 : Number(movement.vatComputablePercent);
+    return Math.max(0, (Number(movement.vatAmountUsd) || 0) * (Number.isFinite(percent) ? percent : 100) / 100);
+  };
+  // El costo operativo excluye el IVA recuperable. El IVA no computable sí forma parte del costo.
+  const expenseNet = (movement) => Math.max(0, (Number(movement.amountUsd) || 0) - computableVat(movement));
+  const movementValue = (movement) => movement.kind === "invoice" ? invoiceNet(movement) : movement.kind === "expense" ? expenseNet(movement) : (Number(movement.amountUsd) || 0);
+  const sumKind = (rows, kind) => rows.filter((movement) => movement.kind === kind).reduce((sum, movement) => sum + movementValue(movement), 0);
   const periodDate = new Date(`${period}-01T12:00:00`);
   const previousDate = new Date(periodDate); previousDate.setMonth(previousDate.getMonth() - 1);
   const previousPeriod = `${previousDate.getFullYear()}-${String(previousDate.getMonth() + 1).padStart(2, "0")}`;
@@ -3389,14 +3412,15 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   const collectedNet = income - deductions;
   const cashFlow = collectedNet - paidExpense;
   const vatDebit = inMonth.filter((movement) => movement.kind === "invoice").reduce((sum, movement) => sum + (Number(movement.vatAmountUsd) || 0), 0);
-  const vatCredit = inMonth.filter((movement) => movement.kind === "expense" && movement.vatIncluded).reduce((sum, movement) => sum + (Number(movement.vatAmountUsd) || 0), 0);
+  const vatCredit = inMonth.filter((movement) => movement.kind === "expense").reduce((sum, movement) => sum + computableVat(movement), 0);
   const vatPayable = vatDebit - vatCredit;
   // El cliente paga la factura con IVA, así que la deuda hay que medirla en bruto. Antes se
   // comparaba el facturado NETO (amountUsd de la factura) contra el cobro BRUTO: cada cobro
   // descontaba ~21% de más y "Por cobrar" quedaba subestimado — con el Math.max(0) tapando el
   // negativo cuando la factura ya estaba saldada.
   const invoiceGross = (movement) => (Number(movement.grossAmountUsd) || ((Number(movement.amountUsd) || 0) + (Number(movement.vatAmountUsd) || 0)));
-  const payable = projectRows.filter((movement) => movement.kind === "expense" && movement.paymentStatus === "pending").reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
+  const payableRows = projectRows.filter((movement) => movement.kind === "expense" && movement.paymentStatus === "pending");
+  const payable = payableRows.reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
   // Antigüedad de la deuda factura por factura. "Por cobrar" daba un total sin decir si eran 30 o
   // 180 días, que es justamente el dato con el que se decide a quién reclamar.
   // Lo cobrado se imputa a cada factura por su partida; lo que no está imputado a una factura
@@ -3455,14 +3479,6 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   const collectionWeight = collectionSpans.reduce((sum, row) => sum + row.amount, 0);
   const avgCollectionDays = collectionWeight > 0 ? Math.round(collectionSpans.reduce((sum, row) => sum + row.days * row.amount, 0) / collectionWeight) : null;
 
-  // Diferencia de cambio: facturás en una cotización y cobrás en otra. Sobre las facturas del
-  // período ya saldadas, es lo cobrado (en USD al cambio del día del cobro) menos lo facturado
-  // (en USD al cambio del día de la factura). Se informa aparte y NO se mezcla con el resultado
-  // operativo: no es margen del negocio, es efecto cambiario.
-  const settledInvoices = projectRows.filter((movement) => movement.kind === "invoice" && String(movement.date || "").slice(0, 7) === period)
-    .map((invoice) => ({ invoice, gross: invoiceGross(invoice), collected: collectedByInvoice[invoice.id] || 0 }))
-    .filter((row) => row.collected > 0.005);
-  const fxDifference = settledInvoices.reduce((sum, row) => sum + (row.collected - row.gross), 0);
   // `tone` es la clase Tailwind para pantalla; `color` el hex equivalente para el PDF.
   const AGING_BUCKETS = [{ label: "0-30 días", max: 30, tone: "bg-emerald-500", color: "#10b981" }, { label: "31-60 días", max: 60, tone: "bg-amber-500", color: "#f59e0b" }, { label: "61-90 días", max: 90, tone: "bg-orange-500", color: "#f97316" }, { label: "+90 días", max: Infinity, tone: "bg-rose-500", color: "#e11d48" }];
   const aging = AGING_BUCKETS.map((bucket, index) => {
@@ -3471,6 +3487,31 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
     return { ...bucket, value: rows.reduce((sum, invoice) => sum + invoice.balance, 0), count: rows.length };
   });
   const agingTotal = aging.reduce((sum, bucket) => sum + bucket.value, 0);
+  const payableAging = AGING_BUCKETS.map((bucket, index) => {
+    const min = index === 0 ? -Infinity : AGING_BUCKETS[index - 1].max;
+    const rows = payableRows.filter((movement) => {
+      const reference = movement.dueDate || movement.date;
+      const days = reference ? Math.floor((Date.now() - new Date(`${String(reference).slice(0, 10)}T12:00:00`).getTime()) / 86400000) : 0;
+      return days > min && days <= bucket.max;
+    });
+    return { ...bucket, value: rows.reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0), count: rows.length };
+  });
+  const forecastStart = new Date();
+  forecastStart.setHours(12, 0, 0, 0);
+  const cashForecast = Array.from({ length: 13 }, (_, index) => {
+    const start = new Date(forecastStart); start.setDate(start.getDate() + index * 7);
+    const end = new Date(start); end.setDate(end.getDate() + 7);
+    const inWeek = (value) => {
+      if (!value) return index === 0;
+      const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+      return index === 0 ? date < end : date >= start && date < end;
+    };
+    return {
+      name: index === 0 ? "Esta semana" : `S${index + 1}`,
+      Cobros: openInvoices.filter((invoice) => inWeek(invoice.dueDate || invoice.date)).reduce((sum, invoice) => sum + invoice.balance, 0),
+      Pagos: payableRows.filter((movement) => inWeek(movement.dueDate || movement.date)).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0),
+    };
+  });
   const previousIncome = sumKind(previousRows, "income"); const previousBilled = sumKind(previousRows, "invoice"); const previousExpense = sumKind(previousRows, "expense"); const previousResult = previousBilled - previousExpense;
   const margin = billed > 0 ? (result / billed) * 100 : 0;
   const expenseRows = inMonth.filter((movement) => movement.kind === "expense");
@@ -3484,7 +3525,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   // suele venir de una lectura fallida del OCR. Se agrupa con los vacíos en vez de listarse como
   // si fuera un proveedor más, que era lo que ensuciaba "Concentración por proveedor".
   const cleanName = (value) => { const text = String(value || "").trim(); return (text.match(/[\p{L}\p{N}]/gu) || []).length >= 2 ? text : ""; };
-  const grouped = (rows, field, fallback) => Object.entries(rows.reduce((map, movement) => { const key = (field === "supplier" ? cleanName(movement[field]) : movement[field]) || fallback; map[key] = (map[key] || 0) + (Number(movement.amountUsd) || 0); return map; }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const grouped = (rows, field, fallback) => Object.entries(rows.reduce((map, movement) => { const key = (field === "supplier" ? cleanName(movement[field]) : movement[field]) || fallback; map[key] = (map[key] || 0) + movementValue(movement); return map; }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   const categoryRows = categoryFilter === "all" ? expenseRows : expenseRows.filter((movement) => movement.category === categoryFilter);
   const fullCostDistribution = grouped(expenseRows, "category", "Sin categoría");
   const costDistribution = grouped(categoryRows, "category", "Sin categoría").slice(0, 8);
@@ -3493,19 +3534,47 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   const supplierRanking = grouped(expenseRows, "supplier", "Sin proveedor");
   const suppliers = supplierRanking.slice(0, 6);
   // Suma la porción de cada movimiento imputada al proyecto: un cobro repartido aporta a varios.
-  const shareForProject = (movement, projectId) => allocationsOf(movement).filter((allocation) => allocation.projectId === projectId).reduce((sum, allocation) => sum + allocation.amountUsd, 0);
+  const shareForProject = (movement, projectId) => {
+    const raw = Number(movement.amountUsd) || 0;
+    const allocated = allocationsOf(movement).filter((allocation) => allocation.projectId === projectId).reduce((sum, allocation) => sum + allocation.amountUsd, 0);
+    return raw > 0 ? movementValue(movement) * allocated / raw : 0;
+  };
   const projectProfitability = projects.map((project) => { const inv = inMonth.filter((movement) => movement.kind === "invoice").reduce((sum, movement) => sum + shareForProject(movement, project.id), 0); const exp = inMonth.filter((movement) => movement.kind === "expense").reduce((sum, movement) => sum + shareForProject(movement, project.id), 0); return { name: project.key || project.name, Facturado: inv, Egresos: exp, Resultado: inv - exp }; }).filter((row) => row.Facturado || row.Egresos).sort((a, b) => b.Resultado - a.Resultado).slice(0, 8);
   const billedByClient = Object.values(inMonth.filter((movement) => movement.kind === "invoice").reduce((map, movement) => { const key = movement.clientName || "Sin cliente"; if (!map[key]) map[key] = { name: key, net: 0, vat: 0, gross: 0, value: 0 }; const net = Number(movement.netAmountUsd ?? movement.amountUsd) || 0; const vat = Number(movement.vatAmountUsd) || 0; map[key].net += net; map[key].vat += vat; map[key].gross += Number(movement.grossAmountUsd) || net + vat; map[key].value = map[key].gross; return map; }, {})).sort((a, b) => b.gross - a.gross);
+  const clientFinancials = billedByClient.map((row) => {
+    const invoices = inMonth.filter((movement) => movement.kind === "invoice" && (movement.clientName || "Sin cliente") === row.name);
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
+    const collected = inMonth.filter((movement) => movement.kind === "income").reduce((sum, movement) => sum + (movement.allocations || []).filter((allocation) => invoiceIds.has(allocation.invoiceId)).reduce((subtotal, allocation) => subtotal + (Number(allocation.amountUsd) || 0), 0), 0);
+    const outstanding = openInvoices.filter((invoice) => (invoice.clientName || "Sin cliente") === row.name).reduce((sum, invoice) => sum + invoice.balance, 0);
+    return { ...row, collected, outstanding };
+  });
+  const dataQualityIssues = [
+    ...expenseRows.filter((movement) => !movement.receiptNumber && !movement.hasAttachment && !movement.attachmentUrl).map((movement) => ({ id: movement.id, issue: "Gasto sin comprobante" })),
+    ...inMonth.filter((movement) => !movement.projectId && !movement.budgetId).map((movement) => ({ id: movement.id, issue: "Sin imputación a proyecto/presupuesto" })),
+    ...inMonth.filter((movement) => movement.currency !== "USD" && !(Number(movement.exchangeRate) > 0)).map((movement) => ({ id: movement.id, issue: "Sin cotización histórica" })),
+  ];
   // Solo los gastos vinculados a ESTE presupuesto. Antes se sumaba además cualquier gasto del
   // proyecto (`|| movement.projectId === budget.projectId`): con dos presupuestos aprobados en el
   // mismo proyecto, el mismo gasto se contaba entero en los dos y ambas barras se inflaban.
   // El servidor ya asigna budgetId solo al crear el movimiento, así que ese OR era redundante.
-  const budgetExecution = projectFilter === "all" ? [] : budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && budget.projectId === projectFilter).map((budget) => { const actual = movements.filter((movement) => movement.kind === "expense" && movement.budgetId === budget.id).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0); const baseline = Number(budget.estimatedCost) || 0; return { ...budget, actual, baseline, deviation: baseline ? actual - baseline : 0, progress: baseline ? (actual / baseline) * 100 : 0 }; }).sort((a, b) => b.progress - a.progress).slice(0, 6);
+  const budgetExecution = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (projectFilter === "all" || budget.projectId === projectFilter)).map((budget) => {
+    const actual = movements.filter((movement) => movement.kind === "expense" && movement.budgetId === budget.id).reduce((sum, movement) => sum + expenseNet(movement), 0);
+    const linkedProject = projects.find((project) => project.id === budget.projectId);
+    const committed = purchaseOrders.filter((po) => (po.budgetId === budget.id || (!po.budgetId && po.projectId === budget.projectId && linkedProject?.budgetId === budget.id)) && !["Recibida", "Cancelada"].includes(po.stage)).reduce((sum, po) => sum + (Number(po.netAmountUsd ?? po.amountUsd) || 0), 0);
+    const baseline = Number(budget.estimatedCost || budget.frozenEstimatedCost) || 0;
+    const remaining = Math.max(0, baseline - actual - committed);
+    const eac = actual + committed + remaining;
+    const sale = Number(budget.amountUsd ?? budget.amount) || 0;
+    return { ...budget, actual, committed, remaining, eac, sale, projectedMargin: sale - eac, baseline, deviation: baseline ? eac - baseline : 0, progress: baseline ? (actual / baseline) * 100 : 0 };
+  }).sort((a, b) => b.actual - a.actual).slice(0, 10);
   // Gastos del proyecto que no quedaron vinculados a ningún presupuesto (cargados antes de que
   // existiera el vínculo automático). Se muestran aparte para que no desaparezcan del control.
   const unbudgetedExpense = projectFilter === "all" ? 0 : movements.filter((movement) => movement.kind === "expense" && movement.projectId === projectFilter && !movement.budgetId).reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
+  // Se conserva únicamente para compatibilidad con el bloque legado oculto; la exposición no se
+  // presenta como KPI porque todos los saldos operativos se normalizan y liquidan según la política USD/ARS.
   const currencyExposure = grouped(inMonth, "currency", "USD");
   const currencyExposureTotal = currencyExposure.reduce((sum, row) => sum + row.value, 0);
+  const costPareto = fullCostDistribution.map((row, index, all) => ({ ...row, cumulative: expense ? all.slice(0, index + 1).reduce((sum, item) => sum + item.value, 0) / expense * 100 : 0 }));
   const topCategoryShare = expense && fullCostDistribution.length ? (fullCostDistribution[0].value / expense) * 100 : 0;
   const negativeProjects = projectProfitability.filter((row) => row.Resultado < 0).length;
   // Los importes se guardan siempre en USD. La conversión es solo de presentación: se aplica la
@@ -3556,7 +3625,6 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   if (pendingExpenses.length && isMaterial(payable)) insights.push({ severity: 2, tone: "amber", title: "Cuentas por pagar", text: `${fmt(payable)} en ${pendingExpenses.length} gasto(s) marcados como pendientes de pago.`, action: { label: "Ver pendientes", filter: "pending" } });
   // La concentración solo tiene sentido con volumen: con uno o dos gastos siempre da cerca del 100%.
   if (expenseRows.length >= MIN_SAMPLE && topCategoryShare > 40) insights.push({ severity: 1, tone: "violet", title: "Concentración de costos", text: `${fullCostDistribution[0]?.name} representa ${topCategoryShare.toFixed(0)}% del gasto mensual, sobre ${expenseRows.length} gastos.` });
-  if (settledInvoices.length && isMaterial(fxDifference)) insights.push({ severity: 1, tone: fxDifference >= 0 ? "emerald" : "amber", title: fxDifference >= 0 ? "Diferencia de cambio a favor" : "Diferencia de cambio en contra", text: `Sobre ${settledInvoices.length} factura(s) del mes con cobros imputados, lo cobrado difiere de lo facturado en ${fmt(Math.abs(fxDifference))} por la variación del tipo de cambio entre la emisión y el cobro. No se incluye en el resultado operativo: es efecto cambiario, no margen.` });
   if (openInvoices.some((invoice) => invoice.days > 90)) insights.push({ severity: 3, tone: "rose", title: "Deuda con más de 90 días", text: `${fmt(aging[3].value)} en ${aging[3].count} factura(s) con más de 90 días. La más vieja acumula ${openInvoices[0].days} días.` });
   // Aviso propio de las facturas con vencimiento pactado: acá el atraso no es una estimación por
   // antigüedad, es incumplimiento de una fecha acordada — por eso va como crítico aparte.
@@ -3678,7 +3746,6 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
         { label: "Por pagar", value: fmt(payable), hint: "Gastos pendientes de pago" },
         { label: "Posición de IVA", value: fmt(Math.abs(vatPayable)), hint: vatPayable > 0 ? "A pagar" : "Saldo a favor" },
         { label: "Margen", value: `${margin.toFixed(1)}%`, hint: "Sobre facturación neta" },
-        ...(settledInvoices.length && fxDifference ? [{ label: "Dif. de cambio", value: fmt(fxDifference), hint: "Efecto cambiario, fuera del resultado" }] : []),
       ],
       trend,
       // Se manda el total real y cuántas filas quedaron fuera: los porcentajes del PDF tienen que
@@ -3729,7 +3796,11 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       </div>
     </div>
 
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1" role="tablist" aria-label="Vistas de finanzas">
+      {[{ id: "summary", label: "Resumen" }, { id: "treasury", label: "Tesorería" }, { id: "profitability", label: "Rentabilidad" }, { id: "control", label: "Impuestos y control" }].map((view) => <button key={view.id} type="button" role="tab" aria-selected={financeView === view.id} onClick={() => setFinanceView(view.id)} className={`min-h-10 shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition sm:flex-1 ${financeView === view.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}>{view.label}</button>)}
+    </div>
+
+    {financeView === "summary" && <><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <Kpi size="lg" label="Resultado operativo" value={fmt(result)} alt={alt(result)} comparison={delta(result, previousResult)} icon={BarChart3} tint={result >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Neto facturado − egresos incurridos" description="Resultado contable simplificado del período: facturación neta menos egresos incurridos (devengado). No representa caja disponible." />
       <Kpi size="lg" label="Flujo de caja" value={fmt(cashFlow)} alt={alt(cashFlow)} icon={DollarSign} tint={cashFlow >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Neto acreditado − egresos pagados" description="Movimiento real de efectivo del período: cobros netos de retenciones, menos egresos efectivamente pagados (excluye gastos marcados como pendientes de pago)." />
       <Panel title={<>Días promedio de cobro <HelpHint text="Desde la fecha de la factura hasta la del pago que la canceló, ponderado por importe: una factura grande que demora pesa más que una chica que se paga rápido. Solo considera cobros vinculados a una factura concreta." /></>}>
@@ -3747,22 +3818,38 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       </Panel>
     </div>
 
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
-      <Kpi label="Facturado neto" value={fmt(billed)} alt={alt(billed)} comparison={delta(billed, previousBilled)} icon={FileText} tint="text-sky-600" description="Facturas emitidas en el período sin IVA. No implica que el importe ya haya sido cobrado." />
-      <Kpi label="Cobrado" value={fmt(income)} alt={alt(income)} comparison={delta(income, previousIncome)} icon={TrendingUp} tint="text-emerald-600" detail={deductions > 0 ? `Neto acreditado ${fmt(collectedNet)} · retenciones ${fmt(deductions)}` : undefined} description="Importe bruto de los cobros registrados en el período: es lo que cancela deuda del cliente. Si hubo retenciones, el neto que entró a la caja es menor y se detalla abajo." />
-      <Kpi label="Por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={Clock} tint={receivable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Saldo acumulado vinculado" description="Diferencia acumulada entre facturación neta y cobros vinculados a proyectos o presupuestos." />
-      <Kpi label="Por pagar" value={fmt(payable)} alt={alt(payable)} icon={Clock} tint={payable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Gastos pendientes de pago" description="Suma de los gastos marcados como 'Pendiente de pago', acumulados según el filtro de proyecto elegido." />
-      <Kpi label="Egresos" value={fmt(expense)} alt={alt(expense)} comparison={delta(expense, previousExpense) == null ? null : -delta(expense, previousExpense)} icon={TrendingDown} tint="text-rose-600" detail={fmtDelta(delta(expense, previousExpense))} description="Total de gastos incurridos en el período seleccionado, normalizados a USD (independiente de si ya se pagaron)." />
-      <Kpi label="Posición de IVA" value={fmt(Math.abs(vatPayable))} alt={alt(Math.abs(vatPayable))} icon={AlertTriangle} tint={vatPayable > 0 ? "text-amber-600" : "text-emerald-600"} detail={vatPayable > 0 ? `A pagar · débito ${fmt(vatDebit)} − crédito ${fmt(vatCredit)}` : "Saldo a favor"} description="Débito fiscal (IVA de facturas emitidas) menos crédito fiscal (IVA de gastos marcados como 'incluye IVA'). Requiere cargar el IVA en los gastos para ser preciso." />
+    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+      <Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={Clock} tint={receivable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Saldo bruto pendiente, con IVA" description="Saldo comercial de facturas abiertas, luego de imputar cobros y retenciones. Se conserva la cotización histórica de cada operación." />
+      <Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={Clock} tint={payable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Obligaciones pendientes" description="Suma bruta de gastos aún no pagados, según el proyecto seleccionado." />
+      <Kpi label="Posición estimada de IVA" value={fmt(Math.abs(vatPayable))} alt={alt(Math.abs(vatPayable))} icon={AlertTriangle} tint={vatPayable > 0 ? "text-amber-600" : "text-emerald-600"} detail={vatPayable > 0 ? `A pagar · débito ${fmt(vatDebit)} − crédito computable ${fmt(vatCredit)}` : "Saldo a favor"} description="Estimación: débito fiscal de ventas menos crédito fiscal computable de compras. Debe conciliarse con el Libro IVA antes de presentar." />
     </div>
 
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,0.85fr)]"><Panel title="Evolución financiera · 12 meses"><div className="mb-2 text-[11px] text-slate-400">Comparación mensual de facturación neta, IVA, cobros y egresos en {showArs ? "ARS" : "USD"}.</div><div className="h-72">{trend.some((row) => row.Facturado || row.Cobrado || row.Egresos) ? <ResponsiveContainer><BarChart data={trend} margin={{ top: 8, right: 12, left: 6, bottom: 0 }} barCategoryGap="28%"><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis tickFormatter={axisFmt} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={72} /><Tooltip formatter={chartTooltip} cursor={{ fill: "#f8fafc" }} /><Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} /><Bar dataKey="Facturado" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={24} /><Bar dataKey="IVA" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={24} /><Bar dataKey="Cobrado" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={24} /><Bar dataKey="Egresos" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={24} /></BarChart></ResponsiveContainer> : <EmptyChart />}</div></Panel><Panel title="Alertas e interpretación"><div className="space-y-2">{shownInsights.map((item, index) => <div key={`${item.title}-${index}`} className={`rounded-xl border p-3 ${item.tone === "rose" ? "border-rose-200 bg-rose-50" : item.tone === "amber" ? "border-amber-200 bg-amber-50" : item.tone === "violet" ? "border-violet-200 bg-violet-50" : item.tone === "emerald" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}><b className="block text-xs text-slate-800">{item.title}</b><span className="mt-1 block text-[11px] leading-relaxed text-slate-600">{item.text}</span>{item.action && <button type="button" onClick={() => { setAlertFilter(item.action.filter); setKindFilter("all"); setQuery(""); }} className="mt-2 inline-flex items-center gap-1 rounded-md bg-white/80 px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-white">{item.action.label} <ChevronRight className="h-3 w-3" /></button>}</div>)}{insights.length > shownInsights.length && <p className="text-[11px] text-slate-400">+{insights.length - shownInsights.length} aviso(s) de menor prioridad, incluidos en el PDF.</p>}<p className="text-[11px] leading-relaxed text-slate-400">Solo se avisan desvíos por encima de {fmt(materialityUsd)} (5% de la facturación del mes, con un piso de {fmt(MATERIALITY_FLOOR_USD)}).</p></div></Panel></div>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,0.85fr)]"><Panel title="Resultado devengado · 12 meses"><div className="mb-2 text-[11px] text-slate-400">Facturación neta y costos operativos netos de IVA recuperable. Los movimientos de caja se analizan en Tesorería.</div><div className="h-72">{trend.some((row) => row.Facturado || row.Egresos) ? <ResponsiveContainer><BarChart data={trend} margin={{ top: 8, right: 12, left: 6, bottom: 0 }} barCategoryGap="28%"><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis tickFormatter={axisFmt} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={72} /><Tooltip formatter={chartTooltip} cursor={{ fill: "#f8fafc" }} /><Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} /><Bar dataKey="Facturado" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={28} /><Bar dataKey="Egresos" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={28} /></BarChart></ResponsiveContainer> : <EmptyChart />}</div></Panel><Panel title="Alertas e interpretación"><div className="space-y-2">{shownInsights.map((item, index) => <div key={`${item.title}-${index}`} className={`rounded-xl border p-3 ${item.tone === "rose" ? "border-rose-200 bg-rose-50" : item.tone === "amber" ? "border-amber-200 bg-amber-50" : item.tone === "violet" ? "border-violet-200 bg-violet-50" : item.tone === "emerald" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}><b className="block text-xs text-slate-800">{item.title}</b><span className="mt-1 block text-[11px] leading-relaxed text-slate-600">{item.text}</span>{item.action && <button type="button" onClick={() => { setAlertFilter(item.action.filter); setKindFilter("all"); setQuery(""); }} className="mt-2 inline-flex items-center gap-1 rounded-md bg-white/80 px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-white">{item.action.label} <ChevronRight className="h-3 w-3" /></button>}</div>)}<p className="text-[11px] leading-relaxed text-slate-400">Umbral: {fmt(materialityUsd)}.</p></div></Panel></div></>}
 
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Distribución de costos"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[11px] text-slate-400">Comparación por categoría · {showArs ? "ARS" : "USD"}</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs"><option value="all">Todas las categorías</option>{EXPENSE_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></div><div className="h-64">{costDistribution.length ? <ResponsiveContainer><BarChart data={costDistribution} layout="vertical" margin={{ top: 4, right: 18, left: 10, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} /><XAxis type="number" tickFormatter={axisFmt} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="name" width={125} tick={{ fontSize: 10, fill: "#475569" }} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Bar dataKey="value" name="Costo" fill="#F18700" radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer> : <EmptyChart />}</div></Panel><Panel title="Rentabilidad por proyecto"><div className="mb-2 text-[11px] text-slate-400">Ingresos menos egresos imputados en el período · {showArs ? "ARS" : "USD"}</div><div className="h-64">{projectProfitability.length ? <ResponsiveContainer><BarChart data={projectProfitability} layout="vertical" margin={{ top: 4, right: 18, left: 8, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} /><XAxis type="number" tickFormatter={axisFmt} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="name" width={85} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Bar dataKey="Resultado" name="Resultado" radius={[0, 5, 5, 0]}>{projectProfitability.map((row) => <Cell key={row.name} fill={row.Resultado >= 0 ? "#10b981" : "#ef4444"} />)}</Bar></BarChart></ResponsiveContainer> : <EmptyChart>Asociá ingresos y egresos a proyectos para medir rentabilidad.</EmptyChart>}</div></Panel></div>
+    {financeView === "treasury" && <>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={TrendingUp} tint="text-emerald-600" detail={`${openInvoices.length} factura(s) abierta(s)`} description="Saldo bruto pendiente de clientes." /><Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={TrendingDown} tint="text-rose-600" detail={`${payableRows.length} obligación(es)`} description="Gastos brutos pendientes de pago." /><Kpi label="Flujo de caja del mes" value={fmt(cashFlow)} alt={alt(cashFlow)} icon={DollarSign} tint={cashFlow >= 0 ? "text-emerald-600" : "text-rose-600"} detail="Cobrado neto − pagos realizados" description="Caja real del período, separada del resultado devengado." /></div>
+      <Panel title="Proyección de caja · 13 semanas"><p className="mb-3 text-[11px] text-slate-400">Cobros y pagos previstos según vencimientos cargados. Los atrasados se concentran en la primera semana.</p><div className="h-72"><ResponsiveContainer><BarChart data={cashForecast} margin={{ top: 8, right: 10, left: 8, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis tickFormatter={axisFmt} tick={{ fontSize: 9 }} width={72} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Legend wrapperStyle={{ fontSize: 11 }} /><Bar dataKey="Cobros" fill="#10b981" radius={[4,4,0,0]} /><Bar dataKey="Pagos" fill="#ef4444" radius={[4,4,0,0]} /></BarChart></ResponsiveContainer></div></Panel>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Antigüedad de cuentas por cobrar"><div className="space-y-2">{aging.map((bucket) => <div key={bucket.label} className="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-xs"><span>{bucket.label}</span><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full ${bucket.tone}`} style={{ width: `${agingTotal ? bucket.value / agingTotal * 100 : 0}%` }} /></div><b>{fmt(bucket.value)}</b></div>)}</div></Panel><Panel title="Antigüedad de cuentas por pagar"><div className="space-y-2">{payableAging.map((bucket) => <div key={bucket.label} className="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-xs"><span>{bucket.label}</span><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full ${bucket.tone}`} style={{ width: `${payable ? bucket.value / payable * 100 : 0}%` }} /></div><b>{fmt(bucket.value)}</b></div>)}</div></Panel></div>
+      <Panel title="Clientes · facturación y cobranzas"><div className="overflow-x-auto"><table className="w-full min-w-[44rem] text-left text-xs"><thead className="text-slate-400"><tr><th className="pb-2">Cliente</th><th>Neto</th><th>IVA</th><th>Total</th><th>Cobrado</th><th>Pendiente</th></tr></thead><tbody>{clientFinancials.map((row) => <tr key={row.name} className="border-t border-slate-100"><td className="py-2 font-medium">{row.name}</td><td>{fmt(row.net)}</td><td>{fmt(row.vat)}</td><td>{fmt(row.gross)}</td><td className="text-emerald-700">{fmt(row.collected)}</td><td className="text-amber-700">{fmt(row.outstanding)}</td></tr>)}</tbody></table>{!clientFinancials.length && <EmptyChart>Sin facturación en el período.</EmptyChart>}</div></Panel>
+    </>}
+
+    {financeView === "profitability" && <>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Pareto de costos"><p className="mb-3 text-[11px] text-slate-400">Costos netos de IVA recuperable, ordenados por impacto. La línea de referencia es el 80% acumulado.</p><div className="space-y-2">{costPareto.slice(0, 8).map((row) => <div key={row.name}><div className="flex justify-between text-xs"><span>{row.name}</span><span><b>{fmt(row.value)}</b> · {row.cumulative.toFixed(0)}% acum.</span></div><div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${expense ? row.value / expense * 100 : 0}%` }} /></div></div>)}{!costPareto.length && <EmptyChart />}</div></Panel><Panel title="Resultado por proyecto"><div className="h-72">{projectProfitability.length ? <ResponsiveContainer><BarChart data={projectProfitability} layout="vertical" margin={{ top: 4, right: 18, left: 8, bottom: 0 }}><XAxis type="number" tickFormatter={axisFmt} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip formatter={chartTooltip} /><Bar dataKey="Resultado" radius={[0,5,5,0]}>{projectProfitability.map((row) => <Cell key={row.name} fill={row.Resultado >= 0 ? "#10b981" : "#ef4444"} />)}</Bar></BarChart></ResponsiveContainer> : <EmptyChart>Imputá ventas y costos a proyectos.</EmptyChart>}</div></Panel></div>
+      <Panel title="Economía del proyecto · presupuesto a completar"><div className="overflow-x-auto"><table className="w-full min-w-[58rem] text-left text-xs"><thead className="text-slate-400"><tr><th className="pb-2">Presupuesto / proyecto</th><th>Venta</th><th>Costo plan</th><th>Comprometido</th><th>Real</th><th>Por ejecutar</th><th>EAC</th><th>Margen proyectado</th></tr></thead><tbody>{budgetExecution.map((row) => <tr key={row.id} className="border-t border-slate-100"><td className="py-2 font-medium">{row.number || row.id} · {row.title}</td><td>{fmt(row.sale)}</td><td>{fmt(row.baseline)}</td><td>{fmt(row.committed)}</td><td>{fmt(row.actual)}</td><td>{fmt(row.remaining)}</td><td>{fmt(row.eac)}</td><td className={row.projectedMargin >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-rose-700"}>{fmt(row.projectedMargin)}</td></tr>)}</tbody></table>{!budgetExecution.length && <EmptyChart>Sin presupuestos aprobados o facturados.</EmptyChart>}</div></Panel>
+      <Panel title="Concentración por proveedor"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{suppliers.map((row, index) => <div key={row.name} className="rounded-xl border border-slate-100 p-3"><span className="block truncate text-xs font-medium">{index + 1}. {row.name}</span><b className="mt-1 block">{fmt(row.value)}</b><span className="text-[10px] text-slate-400">{expense ? (row.value / expense * 100).toFixed(1) : 0}% del costo del período</span></div>)}{!suppliers.length && <EmptyChart>Sin costos de proveedores.</EmptyChart>}</div></Panel>
+    </>}
+
+    {financeView === "control" && <>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3"><Panel title="Posición estimada de IVA"><b className={`text-2xl ${vatPayable > 0 ? "text-amber-600" : "text-emerald-600"}`}>{fmt(Math.abs(vatPayable))}</b><p className="mt-2 text-xs text-slate-500">Débito {fmt(vatDebit)} − crédito computable {fmt(vatCredit)}</p><p className="mt-2 text-[10px] text-slate-400">Estimación gerencial; conciliar contra Libro IVA antes de presentar.</p></Panel><Panel title="Respaldo documental"><b className={`text-2xl ${receiptCompliance >= 90 ? "text-emerald-600" : "text-amber-600"}`}>{receiptCompliance.toFixed(0)}%</b><p className="mt-2 text-xs text-slate-500">{documented} de {expenseRows.length} gastos respaldados.</p>{undocumented.length > 0 && <button onClick={() => setAlertFilter("undocumented")} className="mt-2 text-xs font-medium text-brand-600">Revisar {undocumented.length}</button>}</Panel><Panel title="Calidad de datos"><b className={`text-2xl ${dataQualityIssues.length ? "text-amber-600" : "text-emerald-600"}`}>{dataQualityIssues.length}</b><p className="mt-2 text-xs text-slate-500">inconsistencia(s) detectada(s) en el período.</p></Panel></div>
+      <Panel title="Conciliación y control"><div className="grid gap-2 sm:grid-cols-3"><div className="rounded-xl bg-slate-50 p-3 text-xs"><span className="text-slate-400">Facturas netas</span><b className="mt-1 block text-base">{fmt(billed)}</b></div><div className="rounded-xl bg-slate-50 p-3 text-xs"><span className="text-slate-400">IVA ventas</span><b className="mt-1 block text-base">{fmt(vatDebit)}</b></div><div className="rounded-xl bg-slate-50 p-3 text-xs"><span className="text-slate-400">Total comercial emitido</span><b className="mt-1 block text-base">{fmt(billed + vatDebit)}</b></div></div>{dataQualityIssues.length > 0 && <div className="mt-3 space-y-1">{dataQualityIssues.slice(0, 8).map((item) => <div key={`${item.id}-${item.issue}`} className="flex justify-between rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs"><span>{item.issue}</span><code>{item.id}</code></div>)}</div>}</Panel>
+      <Panel title="Cierre mensual"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><b className={periodLocked ? "text-rose-700" : "text-emerald-700"}>{periodLocked ? `Período ${period} cerrado` : `Período ${period} abierto`}</b><p className="mt-1 text-xs text-slate-500">Al cerrar, el servidor bloquea altas, ediciones y eliminaciones de movimientos del mes. La reapertura queda auditada.</p>{periodLockError && <p className="mt-1 text-xs text-rose-600">{periodLockError}</p>}</div>{me?.role === "admin" ? <button type="button" disabled={periodLockBusy} onClick={togglePeriodLock} className={`min-h-10 rounded-lg px-4 text-sm font-medium text-white disabled:opacity-50 ${periodLocked ? "bg-amber-600" : "bg-slate-900"}`}>{periodLockBusy ? "Procesando…" : periodLocked ? "Reabrir período" : "Cerrar período"}</button> : <span className="text-xs text-slate-400">Sólo un administrador puede cerrar o reabrir.</span>}</div></Panel>
+    </>}
+
+    <div className="hidden"><Panel title="Distribución de costos"><div className="h-64">{costDistribution.length ? <ResponsiveContainer><BarChart data={costDistribution} /></ResponsiveContainer> : null}</div></Panel></div>
 
     {/* items-start: sin esto todas las tarjetas de la fila toman el alto de la más alta, y un panel
         vacío ("Sin facturas en el período") quedaba estirado ocupando media pantalla. */}
-    <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="hidden grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Panel title="Facturación por cliente">
         <div className="space-y-2">{billedByClient.length ? billedByClient.map((row) => <div key={row.name} className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
           <div className="flex items-start justify-between gap-3"><span className="min-w-0 truncate text-xs font-semibold text-slate-700" title={row.name}>{row.name}</span><div className="shrink-0 text-right"><span className="block text-[9px] uppercase tracking-wide text-sky-600">Total c/IVA</span><b className="text-sm text-sky-700">{fmt(row.gross)}</b></div></div>
@@ -3811,7 +3898,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       </Panel>
     </div>
 
-    <div><Box className="p-4"><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar concepto, proveedor o comprobante…" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"><option value="all">Todos los movimientos</option><option value="expense">Gastos</option><option value="income">Cobros</option><option value="invoice">Facturas</option></select><button type="button" onClick={exportMovementsCSV} disabled={!visible.length} title="Exporta el detalle de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>{withAttachment.length > 0 && <button type="button" onClick={downloadAllAttachments} disabled={!!bulkProgress} title="Descarga los comprobantes de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">{bulkProgress ? <><Loader2 className="h-4 w-4 animate-spin" /> {bulkProgress.done}/{bulkProgress.total}</> : <><Download className="h-4 w-4" /> Comprobantes ({withAttachment.length})</>}</button>}</div>{alertFilter && <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span>Mostrando solo {alertFilter === "undocumented" ? "gastos sin comprobante" : "gastos pendientes de pago"} ({visible.length}).</span><button type="button" onClick={() => setAlertFilter(null)} className="ml-auto inline-flex items-center gap-1 rounded-md bg-white/70 px-2 py-1 font-medium hover:bg-white">Quitar filtro <X className="h-3 w-3" /></button></div>}<div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto">{visible.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">No hay movimientos registrados.</div> : visible.map((movement) => { const project = projects.find((item) => item.id === movement.projectId); const invoice = movement.kind === "invoice"; const editable = !invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId; return <div key={movement.id} onClick={editable ? () => openEdit(movement) : undefined} className={`flex flex-col gap-3 rounded-xl border border-slate-200 p-3 sm:flex-row sm:items-center ${editable ? "cursor-pointer transition hover:border-brand-300 hover:bg-slate-50/60" : ""}`}>
+    {financeView === "control" && <div><Box className="p-4"><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar concepto, proveedor o comprobante…" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"><option value="all">Todos los movimientos</option><option value="expense">Gastos</option><option value="income">Cobros</option><option value="invoice">Facturas</option></select><button type="button" onClick={exportMovementsCSV} disabled={!visible.length} title="Exporta el detalle de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>{withAttachment.length > 0 && <button type="button" onClick={downloadAllAttachments} disabled={!!bulkProgress} title="Descarga los comprobantes de los movimientos que se ven con el filtro actual" className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">{bulkProgress ? <><Loader2 className="h-4 w-4 animate-spin" /> {bulkProgress.done}/{bulkProgress.total}</> : <><Download className="h-4 w-4" /> Comprobantes ({withAttachment.length})</>}</button>}</div>{alertFilter && <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span>Mostrando solo {alertFilter === "undocumented" ? "gastos sin comprobante" : "gastos pendientes de pago"} ({visible.length}).</span><button type="button" onClick={() => setAlertFilter(null)} className="ml-auto inline-flex items-center gap-1 rounded-md bg-white/70 px-2 py-1 font-medium hover:bg-white">Quitar filtro <X className="h-3 w-3" /></button></div>}<div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto">{visible.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">No hay movimientos registrados.</div> : visible.map((movement) => { const project = projects.find((item) => item.id === movement.projectId); const invoice = movement.kind === "invoice"; const editable = !invoice && !movement.sourceOrderId && !movement.sourcePurchaseOrderId; return <div key={movement.id} onClick={editable ? () => openEdit(movement) : undefined} className={`flex flex-col gap-3 rounded-xl border border-slate-200 p-3 sm:flex-row sm:items-center ${editable ? "cursor-pointer transition hover:border-brand-300 hover:bg-slate-50/60" : ""}`}>
                 <div className="flex min-w-0 flex-1 items-start gap-3">
                   <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${invoice ? "bg-sky-50 text-sky-600" : movement.kind === "income" ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>{invoice ? <FileText className="h-5 w-5" /> : movement.kind === "income" ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}</span>
                   <div className="min-w-0 flex-1">
@@ -3833,7 +3920,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
                     {!movement.sourceBudgetId && !movement.sourceOrderId && !movement.sourcePurchaseOrderId && <button onClick={() => onDelete(movement)} className="grid h-10 w-10 place-items-center rounded-lg border border-rose-200 text-rose-500"><Trash2 className="h-4 w-4" /></button>}
                   </div>
                 </div>
-              </div>; })}</div></Box></div>
+              </div>; })}</div></Box></div>}
     {invoiceDocs && <InvoiceDocsDialog invoice={invoiceDocs} onClose={() => setInvoiceDocs(null)} onSave={onSave} />}
     {editor && <FinanceEntryModal movement={editor.mode === "new" ? null : editor} duplicating={isDuplicate} initialKind={newKind} projects={projects} budgets={budgets} clients={clients} invoices={movements.filter((item) => item.kind === "invoice")} branding={branding} onClose={closeEditor} onSave={onSave} />}
   </div>;

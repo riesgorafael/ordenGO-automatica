@@ -903,6 +903,8 @@ const orderBusinessErrors = (order) => {
 // para que "Ejecución del presupuesto" refleje costos reales sin carga manual duplicada.
 async function upsertOrderCostExpense(order, db = pool) {
   const id = `EXP-ORDER-${order.id}`;
+  const currentMovement = (await db.query("SELECT data FROM financial_movements WHERE id=$1", [id])).rows[0]?.data;
+  if (currentMovement?.date) await assertFinancePeriodOpen(currentMovement.date, db);
   if (!order.projectId || !["Aprobada", "Facturada"].includes(order.status)) {
     await db.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
     return null;
@@ -931,6 +933,7 @@ async function upsertOrderCostExpense(order, db = pool) {
     createdAt: existing?.createdAt || new Date().toISOString(), createdBy: existing?.createdBy || "system", createdByName: existing?.createdByName || "Sistema (OT aprobada)",
     updatedAt: new Date().toISOString(),
   };
+  await assertFinancePeriodOpen(movement.date, db);
   await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
   return movement;
 }
@@ -1323,6 +1326,8 @@ const normalizeBudget = (input, previous = {}) => {
 };
 
 async function upsertBudgetInvoice(budget, user, db = pool) {
+  const currentInvoice = (await db.query("SELECT data FROM financial_movements WHERE data->>'sourceBudgetId'=$1 LIMIT 1", [budget.id])).rows[0]?.data;
+  if (currentInvoice?.date) await assertFinancePeriodOpen(currentInvoice.date, db);
   if (!["Facturado", "Pagado"].includes(budget.stage)) {
     await db.query("DELETE FROM financial_movements WHERE data->>'sourceBudgetId'=$1", [budget.id]);
     return null;
@@ -1330,6 +1335,7 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   const invoiceDate = String(budget.invoicedAt || "").slice(0, 10);
   const invoiceNumber = String(budget.invoiceNumber || "").trim();
   if (!invoiceDate || !invoiceNumber) throw new Error("INVOICE_FIELDS_REQUIRED");
+  await assertFinancePeriodOpen(invoiceDate, db);
   const net = Math.round((Number(budget.amount) || 0) * 100) / 100;
   const vatRate = 21;
   const vatAmount = Math.round(net * vatRate) / 100;
@@ -1465,6 +1471,8 @@ const normalizePurchaseOrder = (input, previous = {}) => {
 // Genera/actualiza el compromiso de pago en Finanzas al recibir la orden de compra; lo retira si se reabre o cancela.
 async function upsertPurchaseOrderPayable(po, user, db = pool) {
   const id = `EXP-PO-${po.id}`;
+  const currentMovement = (await db.query("SELECT data FROM financial_movements WHERE id=$1", [id])).rows[0]?.data;
+  if (currentMovement?.date) await assertFinancePeriodOpen(currentMovement.date, db);
   if (po.stage !== "Recibida") {
     await db.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourcePurchaseOrderId' IS NOT NULL", [id]);
     return null;
@@ -1484,6 +1492,7 @@ async function upsertPurchaseOrderPayable(po, user, db = pool) {
     createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name,
     updatedAt: new Date().toISOString(),
   };
+  await assertFinancePeriodOpen(movement.date, db);
   await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
   return movement;
 }
@@ -2202,8 +2211,38 @@ const applyApprovedBudgetLink = async (movement) => {
   return movement;
 };
 
+const financePeriodKey = (value) => /^\d{4}-\d{2}/.test(String(value || "")) ? String(value).slice(0, 7) : "";
+const financePeriodLocks = async (db = pool) => {
+  const value = (await db.query("SELECT value FROM app_settings WHERE key='finance_period_locks_v1'")).rows[0]?.value;
+  return Array.isArray(value?.lockedPeriods) ? value.lockedPeriods : [];
+};
+const assertFinancePeriodOpen = async (date, db = pool) => {
+  const period = financePeriodKey(date);
+  if (period && (await financePeriodLocks(db)).includes(period)) {
+    const error = new Error(`El período ${period} está cerrado. Un administrador debe reabrirlo antes de modificar movimientos.`);
+    error.code = "FINANCE_PERIOD_LOCKED";
+    throw error;
+  }
+};
+
+app.get("/api/finance-period-locks", auth, requireRole("admin", "gerente"), async (_req, res) => {
+  res.json({ lockedPeriods: await financePeriodLocks() });
+});
+
+app.put("/api/finance-period-locks/:period", auth, requireRole("admin"), async (req, res) => {
+  const period = financePeriodKey(req.params.period);
+  if (!period || period !== req.params.period) return res.status(400).json({ error: "El período debe tener formato AAAA-MM." });
+  const current = await financePeriodLocks();
+  const locked = req.body?.locked !== false;
+  const lockedPeriods = [...new Set(locked ? [...current, period] : current.filter((item) => item !== period))].sort();
+  await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('finance_period_locks_v1',$1,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()", [{ lockedPeriods, updatedBy: req.user.id, updatedAt: new Date().toISOString() }]);
+  await auditChange({ entityType: "finance_period", entityId: period, action: locked ? "close" : "reopen", user: req.user, beforeData: { locked: current.includes(period) }, afterData: { locked } });
+  res.json({ lockedPeriods });
+});
+
 app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
   let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
+  try { await assertFinancePeriodOpen(movement.date); } catch (error) { if (error.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message }); throw error; }
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
   if (movement.attachments.reduce((sum, item) => sum + String(item?.url || "").length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
@@ -2254,6 +2293,7 @@ app.get("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, 
 app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const current = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
+  try { await assertFinancePeriodOpen(current.date); if (req.body?.date) await assertFinancePeriodOpen(req.body.date); } catch (error) { if (error.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message }); throw error; }
   const isAutoGenerated = !!(current.sourceOrderId || current.sourcePurchaseOrderId);
   const patchKeys = Object.keys(req.body || {});
   const onlyPaymentFields = patchKeys.length > 0 && patchKeys.every((key) => ["paymentStatus", "paidAt"].includes(key));
@@ -2306,6 +2346,8 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
 
 app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const movement = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!movement) return res.status(404).json({ error: "No existe" });
+  try { await assertFinancePeriodOpen(movement.date); } catch (error) { if (error.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message }); throw error; }
   if (movement?.sourceBudgetId) return res.status(409).json({ error: "Esta factura se administra desde el presupuesto. Cambia su etapa para quitarla de Finanzas." });
   if (movement?.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo. Se actualiza o se quita solo si la OT deja de estar aprobada o vinculada a un proyecto." });
   if (movement?.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra. Cambia su estado para quitarla de Finanzas." });
@@ -2838,6 +2880,7 @@ app.use((error, req, res, _next) => {
   if (res.headersSent) return;
   if (error?.type === "entity.too.large") return res.status(413).json({ error: "El archivo o formulario supera el tamaño permitido" });
   if (error?.message === "Origen no permitido") return res.status(403).json({ error: "Origen no permitido" });
+  if (error?.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message });
   return res.status(500).json({ error: "Ocurrió un error interno. Intenta nuevamente." });
 });
 
