@@ -10,6 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # corepack va ANTES de setup-node: con `cache: pnpm`, setup-node ejecuta pnpm para ubicar el
+      # store y cachearlo. Si corepack se habilita después, ese paso falla con
+      # "Unable to locate executable file: pnpm".
+      # La versión se fija igual que en el Dockerfile para que CI y la imagen resuelvan idéntico.
+      - name: Habilitar pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.2 --activate
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -17,7 +25,6 @@ jobs:
           cache-dependency-path: |
             server/pnpm-lock.yaml
             web/pnpm-lock.yaml
-      - run: corepack enable
       - name: Instalar backend
         working-directory: server
         run: pnpm install --frozen-lockfile
