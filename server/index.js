@@ -2187,7 +2187,19 @@ const normalizeFinancialMovement = (input, previous = {}) => {
 };
 
 const applyApprovedBudgetLink = async (movement) => {
-  if (!movement.projectId) return movement;
+  if (!movement.projectId) {
+    // Los gastos generales de la empresa (viáticos corporativos, administración, etc.) no deben
+    // quedar asociados al primer presupuesto aprobado que tampoco tenga proyecto convertido.
+    if (movement.kind === "expense") {
+      movement.budgetId = "";
+      movement.budgetNumber = "";
+      movement.budgetTitle = "";
+      movement.purchaseOrderNumber = "";
+      movement.purchaseOrderDate = "";
+      movement.linkageSource = "general-expense";
+    }
+    return movement;
+  }
   const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [movement.projectId])).rows[0]?.data;
   if (!project) return movement;
   let budget = null;

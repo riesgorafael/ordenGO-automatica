@@ -1892,6 +1892,9 @@ function FinanceEntryModal({
   const set = (field, value) =>
     setForm((current) => ({ ...current, [field]: value }));
   const projectLink = (projectId) => {
+    // "General / sin proyecto" nunca debe coincidir con presupuestos cuyo projectId también está
+    // vacío. Sin este corte, Array.find devolvía el primer presupuesto aprobado sin convertir.
+    if (!projectId) return { project: null, budget: null, clientId: "", clientName: "" };
     const project = projects.find((item) => item.id === projectId);
     const budget = budgets.find(
       (item) =>
@@ -1930,6 +1933,10 @@ function FinanceEntryModal({
       };
     });
   const selectedLink = projectLink(form.projectId);
+  useEffect(() => {
+    if (form.kind !== "expense" || form.projectId || !form.budgetId) return;
+    setForm((current) => ({ ...current, budgetId: "", budgetNumber: "", budgetTitle: "", purchaseOrderNumber: "", purchaseOrderDate: "", linkageSource: "general-expense" }));
+  }, [form.kind, form.projectId, form.budgetId]);
   const [cropPending, setCropPending] = useState(null); // { dataUrl, fileName } | null — foto recién elegida, esperando recorte
   // Corre el OCR sobre la imagen ya recortada (o la original, si el usuario eligió no recortar) y
   // pre-completa el formulario. Nunca guarda solo — el usuario siempre revisa/corrige antes de
@@ -3577,7 +3584,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     return { ...row, collected, outstanding };
   });
   const qualityIssue = (movement, issue) => ({ id: movement.id, issue, concept: movement.concept || "Sin concepto", kind: movement.kind, date: movement.date || "", amountUsd: Number(movement.amountUsd) || 0 });
-  const hasFinancialAssignment = (movement) => Boolean(movement.projectId || movement.budgetId || allocationsOf(movement).some((allocation) => allocation.projectId || allocation.budgetId));
+  const hasFinancialAssignment = (movement) => Boolean((movement.kind === "expense" && !movement.projectId) || movement.linkageSource === "general-expense" || movement.projectId || movement.budgetId || allocationsOf(movement).some((allocation) => allocation.projectId || allocation.budgetId));
   const dataQualityIssues = [
     ...expenseRows.filter((movement) => !movement.receiptNumber && !movement.hasAttachment && !movement.attachmentUrl).map((movement) => qualityIssue(movement, "Gasto sin comprobante")),
     ...inMonth.filter((movement) => !hasFinancialAssignment(movement)).map((movement) => qualityIssue(movement, "Sin imputación a proyecto/presupuesto")),
@@ -3589,7 +3596,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   // mismo proyecto, el mismo gasto se contaba entero en los dos y ambas barras se inflaban.
   // El servidor ya asigna budgetId solo al crear el movimiento, así que ese OR era redundante.
   const budgetExecution = budgets.filter((budget) => ["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && (projectFilter === "all" || budget.projectId === projectFilter)).map((budget) => {
-    const actual = movements.filter((movement) => movement.kind === "expense" && movement.budgetId === budget.id).reduce((sum, movement) => sum + expenseNet(movement), 0);
+    const actual = movements.filter((movement) => movement.kind === "expense" && movement.projectId === budget.projectId && movement.budgetId === budget.id).reduce((sum, movement) => sum + expenseNet(movement), 0);
     const linkedProject = projects.find((project) => project.id === budget.projectId);
     const committed = purchaseOrders.filter((po) => (po.budgetId === budget.id || (!po.budgetId && po.projectId === budget.projectId && linkedProject?.budgetId === budget.id)) && !["Recibida", "Cancelada"].includes(po.stage)).reduce((sum, po) => sum + (Number(po.netAmountUsd ?? po.amountUsd) || 0), 0);
     const baseline = Number(budget.estimatedCost || budget.frozenEstimatedCost) || 0;
