@@ -62,11 +62,21 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null) {
   doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
 
   const heading = (text, y) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, y); };
+  // Esta primera hoja es un resumen de posiciones fijas (la firma va a una altura fija), así que
+  // los textos largos se acotan a unas pocas líneas. El detalle completo va en la hoja siguiente.
+  // Lo que faltaba era avisarlo: antes la frase se cortaba a mitad y nada indicaba que seguía, así
+  // que el cliente firmaba creyendo que eso era todo lo que decía el informe.
+  const clampLines = (text, width, maxLines) => {
+    const lines = doc.splitTextToSize(String(text ?? "—"), width);
+    if (lines.length <= maxLines) return lines;
+    const kept = lines.slice(0, maxLines);
+    kept[maxLines - 1] = `${String(kept[maxLines - 1]).replace(/\s+\S*$/, "")} […]`;
+    return kept;
+  };
   const field = (label, value, x, y, width = 70) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, y);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
-    const lines = doc.splitTextToSize(String(value || "—"), width);
-    doc.text(lines.slice(0, 2), x + 31, y);
+    doc.text(clampLines(value, width, 2), x + 31, y);
   };
 
   heading("Cliente y servicio", 58);
@@ -81,7 +91,7 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null) {
   const summaryLine = (label, value, y) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, M + 4, y);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
-    doc.text(doc.splitTextToSize(String(value || "—"), 139).slice(0, 2), M + 34, y);
+    doc.text(clampLines(value, 139, 2), M + 34, y);
   };
   summaryLine("Solicitud", order.sintoma, 118);
   summaryLine("Trabajo", order.solucion, 129);
@@ -104,7 +114,7 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null) {
   heading("Observaciones y compromisos", observationsY);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
   const observations = [technical.recommendations, technical.pendingActions].filter(Boolean).join("  ");
-  doc.text(doc.splitTextToSize(observations || "Sin observaciones adicionales.", W - 2 * M).slice(0, valued ? 6 : 10), M, observationsY + 7);
+  doc.text(clampLines(observations || "Sin observaciones adicionales.", W - 2 * M, valued ? 6 : 10), M, observationsY + 7);
 
   const signatureY = 245;
   if (order.signatureUrl && order.signatureUrl !== "signed") { try { doc.addImage(order.signatureUrl, "PNG", M + 8, signatureY - 23, 44, 20); } catch {} }
@@ -463,8 +473,11 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   const field = (label, value, x, atY, width = 60) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, atY);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+    // El encabezado tiene alto fijo, así que un valor largo se acota a dos líneas — pero con "[…]"
+    // para que se vea que hay más. Antes se cortaba sin ninguna marca.
     const lines = doc.splitTextToSize(String(value || "—"), width);
-    doc.text(lines.slice(0, 2), x + 28, atY);
+    if (lines.length > 2) { lines.length = 2; lines[1] = `${String(lines[1]).replace(/\s+\S*$/, "")} […]`; }
+    doc.text(lines, x + 28, atY);
   };
 
   heading("DATOS PROVEEDOR", 58);
@@ -712,8 +725,11 @@ export function budgetReportPDF(budget, client, audience = "cliente") {
   const field = (label, value, x, atY, width = 60) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, atY);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+    // El encabezado tiene alto fijo, así que un valor largo se acota a dos líneas — pero con "[…]"
+    // para que se vea que hay más. Antes se cortaba sin ninguna marca.
     const lines = doc.splitTextToSize(String(value || "—"), width);
-    doc.text(lines.slice(0, 2), x + 28, atY);
+    if (lines.length > 2) { lines.length = 2; lines[1] = `${String(lines[1]).replace(/\s+\S*$/, "")} […]`; }
+    doc.text(lines, x + 28, atY);
   };
 
   heading("DATOS DEL CLIENTE", 58);
