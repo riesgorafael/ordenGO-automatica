@@ -1310,7 +1310,7 @@ export default function App() {
         </div>
         <div className={`mx-auto flex max-w-6xl items-stretch gap-1 px-2 ${tvMode ? "hidden" : "hidden sm:flex"}`}>
           <div className="relative min-w-0 flex-1">
-            {navScroll.left && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8" style={{ background: "linear-gradient(to right, #2E2E2D, transparent)" }} />}
+            {navScroll.left && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8" style={{ background: "linear-gradient(to right, var(--color-ink-900), transparent)" }} />}
             <div ref={setNavTabsRef} onScroll={updateNavScroll} className="nav-tabs-scroll min-w-0 overflow-x-auto">
               <nav className="flex gap-0.5 pb-1">
                 {modTabs.map(({ id, label, icon: Icon, badge, group }, index) => {
@@ -1325,7 +1325,7 @@ export default function App() {
                 })}
               </nav>
             </div>
-            {navScroll.right && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8" style={{ background: "linear-gradient(to left, #2E2E2D, transparent)" }} />}
+            {navScroll.right && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8" style={{ background: "linear-gradient(to left, var(--color-ink-900), transparent)" }} />}
           </div>
           {bizGroupTabs.length > 0 && (
             <>
