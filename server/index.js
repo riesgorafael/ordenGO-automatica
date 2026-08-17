@@ -564,13 +564,18 @@ function stripMoney(o) {
   if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; delete y.cost; return y; });
   return x;
 }
-async function materialsFromInventory(materials, onlyMissing = false) {
+// `trustClientPrices` en false ignora por completo los importes que llegan del cliente para los
+// materiales que no están en el catálogo. Es el modo que se usa con los técnicos: no ven precios
+// (stripMoney se los quita) y no deben fijarlos, pero antes un material con un nombre que no
+// existiera en el catálogo pasaba su price/cost del payload directo a la facturación del cliente.
+// Quedan en cero y los valoriza gerencia, que es quien tiene la información y el permiso.
+async function materialsFromInventory(materials, onlyMissing = false, trustClientPrices = true) {
   if (!Array.isArray(materials) || materials.length === 0) return [];
   const inventory = (await pool.query("SELECT data FROM parts")).rows.map((row) => row.data);
   return materials.map((material) => {
     const normalizedName = String(material.name || "").trim().toLowerCase();
     const part = inventory.find((item) => (material.partId && item.id === material.partId) || String(item.name || "").trim().toLowerCase() === normalizedName);
-    if (!part) return { ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) };
+    if (!part) return { ...material, price: trustClientPrices ? wholeMoneyValue(material.price) : 0, cost: trustClientPrices ? wholeMoneyValue(material.cost) : 0 };
     return {
       ...material,
       partId: part.id,
@@ -2232,7 +2237,7 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
   }
   if ("rate" in patch) patch.rate = normalizedRateValue(patch.rate);
   if ("laborCost" in patch) patch.laborCost = wholeMoneyValue(patch.laborCost);
-  if (Array.isArray(patch.materials)) patch.materials = isTec(req.user.role) ? await materialsFromInventory(patch.materials) : patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
+  if (Array.isArray(patch.materials)) patch.materials = isTec(req.user.role) ? await materialsFromInventory(patch.materials, false, false) : patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
   const prev = rows[0].data;
   const merged = { ...prev, ...patch };
   if (merged.status === "En progreso") merged.status = "En proceso de ejecución";
