@@ -5332,23 +5332,22 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
                 </div>
               );
               return (
-                <div key={p.id} onClick={() => startEdit(p)} className={`cursor-pointer rounded-lg border p-3 hover:border-brand-300 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
-                  <div className="min-w-0">
+                // Tarjeta compacta: la fila con el separador y el botón "Editar" ocupaba casi la
+                // mitad del alto para repetir algo que ya hace el clic sobre la tarjeta entera.
+                // El stock sube a la línea de datos y solo queda el botón de eliminar.
+                <div key={p.id} onClick={() => startEdit(p)} title="Tocá para editar" className={`flex cursor-pointer items-start gap-3 rounded-lg border p-2.5 hover:border-brand-300 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                  <div className="min-w-0 flex-1">
                     <div className="break-words text-sm font-semibold text-slate-800">{p.name}{p.sku && <span className="ml-1.5 font-mono text-[11px] font-normal text-slate-400">· {p.sku}</span>}</div>
-                    {p.brand && <div className="text-xs text-slate-500">{p.brand}</div>}
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <span className={`rounded-md px-1.5 py-0.5 font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>{p.stock} {p.unit}<span className="font-normal opacity-70"> / mín {p.minStock}</span></span>
                       <span>Venta <b className="font-medium text-slate-700">{money(p.price)}</b></span>
                       <span>Costo <b className="font-medium text-slate-700">{money(p.cost)}</b></span>
-                      {margin != null && <span className="font-medium text-emerald-600">Margen {margin}%</span>}
+                      {margin != null && <span className="font-medium text-emerald-600">{margin}%</span>}
+                      {p.brand && <span className="text-slate-400">{p.brand}</span>}
                       {consumption90d[p.id] > 0 && <span className="text-slate-400">Consumo 90d: <b className="font-medium text-slate-600">{consumption90d[p.id]} {p.unit}</b></span>}
                     </div>
-                    <div className="mt-3 flex w-full flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3" onClick={(e) => e.stopPropagation()}>
-                      <span className={`rounded-md px-2 py-1.5 text-xs font-medium ${isLow ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}>Stock: {p.stock} {p.unit}</span>
-                      <span className="rounded-md border border-slate-200 bg-white/60 px-2 py-1.5 text-xs text-slate-500">Mín: {p.minStock}</span>
-                      <button onClick={() => startEdit(p)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Editar</button>
-                      <button onClick={() => setPendingDelete(p)} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
-                    </div>
                   </div>
+                  <button onClick={(e) => { e.stopPropagation(); setPendingDelete(p); }} title="Eliminar" aria-label={`Eliminar ${p.name}`} className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
                 </div>
               );
                   })}

@@ -212,7 +212,11 @@ async function initDb() {
     else console.log(`→ Usuario administrador sembrado: ${adminEmail} · contraseña temporal generada (cambiala al ingresar): ${adminPass}`);
   }
 
-  if ((await pool.query("SELECT count(*)::int n FROM clients")).rows[0].n === 0) {
+  // Mismo criterio que el catálogo: la demo se siembra una vez y nunca se reintenta, así borrar
+  // los clientes de ejemplo es definitivo.
+  const clientsSeedDone = (await pool.query("SELECT 1 FROM app_settings WHERE key='demo_clients_seed_v1'")).rowCount > 0;
+  if (!clientsSeedDone) await pool.query("INSERT INTO app_settings(key,value) VALUES('demo_clients_seed_v1',$1) ON CONFLICT(key) DO NOTHING", [{ seededAt: new Date().toISOString() }]);
+  if (!clientsSeedDone && (await pool.query("SELECT count(*)::int n FROM clients")).rows[0].n === 0) {
     const clients = [
       { id: "c1", code: "LDV", name: "Lácteos del Valle", site: "Planta Norte, Nave 2" },
       { id: "c2", code: "EMB", name: "Embotelladora Andina", site: "Línea de llenado 3" },
@@ -244,14 +248,23 @@ async function initDb() {
     console.log("→ Datos de demostración sembrados.");
   }
 
-  if ((await pool.query("SELECT count(*)::int n FROM parts")).rows[0].n === 0) {
-    const parts = [
-      { id: "sp1", name: "Ventilador disipador VFD", unit: "u", price: 1200, cost: 780, stock: 4, minStock: 2 },
-      { id: "sp2", name: "Cable de red blindado (m)", unit: "m", price: 350, cost: 210, stock: 120, minStock: 50 },
-      { id: "sp3", name: "Sensor inductivo M12", unit: "u", price: 4200, cost: 2600, stock: 1, minStock: 3 },
-      { id: "sp4", name: "Fuente 24VDC 5A", unit: "u", price: 9800, cost: 6100, stock: 2, minStock: 1 },
-    ];
-    for (const p of parts) await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]);
+  // La siembra de demo corre UNA sola vez, marcada en app_settings — no "cada vez que la tabla
+  // está vacía". Con la condición anterior, borrar todo el catálogo y reiniciar el servidor
+  // resucitaba los cuatro materiales de ejemplo, y no había forma de dejar el inventario vacío.
+  // Mismo criterio que ya se usa para el alta del monitor unas líneas más abajo.
+  if ((await pool.query("SELECT 1 FROM app_settings WHERE key='demo_parts_seed_v1'")).rowCount === 0) {
+    if ((await pool.query("SELECT count(*)::int n FROM parts")).rows[0].n === 0) {
+      const parts = [
+        { id: "sp1", name: "Ventilador disipador VFD", unit: "u", price: 1200, cost: 780, stock: 4, minStock: 2 },
+        { id: "sp2", name: "Cable de red blindado (m)", unit: "m", price: 350, cost: 210, stock: 120, minStock: 50 },
+        { id: "sp3", name: "Sensor inductivo M12", unit: "u", price: 4200, cost: 2600, stock: 1, minStock: 3 },
+        { id: "sp4", name: "Fuente 24VDC 5A", unit: "u", price: 9800, cost: 6100, stock: 2, minStock: 1 },
+      ];
+      for (const p of parts) await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]);
+    }
+    // Se marca igual aunque no se haya sembrado: en instalaciones que ya tienen catálogo, esto
+    // deja registrado que la siembra no debe volver a intentarse nunca.
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('demo_parts_seed_v1',$1) ON CONFLICT(key) DO NOTHING", [{ seededAt: new Date().toISOString() }]);
   }
 
   // Alta única del monitor para instalaciones existentes. El marcador evita recrearlo
