@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Permite lanzarlo a mano desde Actions → Run workflow, usando el YAML de la rama elegida.
+  # Sin esto, un workflow corregido solo se puede probar esperando al próximo push: los re-runs
+  # reutilizan el archivo del commit que disparó el run original.
+  workflow_dispatch:
 
 jobs:
   verify:
