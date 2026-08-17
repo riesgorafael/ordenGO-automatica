@@ -3739,11 +3739,24 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   const chartTooltip = (value) => fmt(value);
   const wholesaleUpdatedAt = wholesaleQuote?.updatedAt ? new Date(wholesaleQuote.updatedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
   const wholesaleFetchedAt = wholesaleQuote?.fetchedAt ? new Date(wholesaleQuote.fetchedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "";
-  // Días transcurridos desde que el BCRA publicó la cotización. Si no publica hace
-  // varios días, el problema es de la fuente y no de nuestra consulta: hay que decirlo distinto,
-  // porque antes ambas situaciones se veían igual y parecía que la app no actualizaba.
-  const wholesaleQuoteAgeDays = wholesaleQuote?.updatedAt ? Math.floor((Date.now() - new Date(wholesaleQuote.updatedAt).getTime()) / 86400000) : null;
-  const wholesaleSourceStale = wholesaleQuoteAgeDays != null && wholesaleQuoteAgeDays >= 2;
+  // El BCRA no publica los fines de semana. La antigüedad debe medirse en días hábiles posteriores
+  // a la cotización; de otro modo, el lunes una referencia del viernes aparece erróneamente como
+  // atrasada tres días. Se avisa recién al acumular dos jornadas hábiles sin una nueva publicación.
+  const businessDaysSince = (value) => {
+    const published = new Date(value);
+    if (Number.isNaN(published.getTime())) return null;
+    const cursor = new Date(published.getFullYear(), published.getMonth(), published.getDate() + 1, 12);
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    let count = 0;
+    while (cursor <= today) {
+      const day = cursor.getDay();
+      if (day !== 0 && day !== 6) count += 1;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return count;
+  };
+  const wholesaleQuoteAgeBusinessDays = wholesaleQuote?.updatedAt ? businessDaysSince(wholesaleQuote.updatedAt) : null;
+  const wholesaleSourceStale = wholesaleQuoteAgeBusinessDays != null && wholesaleQuoteAgeBusinessDays >= 2;
   const exportPdf = () => {
     // Si el tablero se está viendo en pesos, el PDF sale en pesos y deja asentada la cotización
     // aplicada: sin ese dato el importe no sería reproducible más adelante.
@@ -3806,7 +3819,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
         </>}
       </span>
       {wholesaleQuote?.stale && <span className="rounded-md bg-rose-100 px-2 py-0.5 font-medium text-rose-700">Falló la consulta · se muestra la última disponible</span>}
-      {!wholesaleQuote?.stale && wholesaleSourceStale && <span className="rounded-md bg-amber-100 px-2 py-0.5 font-medium text-amber-800">La fuente no publica hace {wholesaleQuoteAgeDays} día(s)</span>}
+      {!wholesaleQuote?.stale && wholesaleSourceStale && <span className="rounded-md bg-amber-100 px-2 py-0.5 font-medium text-amber-800">La fuente lleva {wholesaleQuoteAgeBusinessDays} días hábiles sin publicar</span>}
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <div className="flex rounded-lg bg-white p-0.5 ring-1 ring-sky-200" role="group" aria-label="Moneda de visualización">
           {["USD", "ARS"].map((currency) => (
