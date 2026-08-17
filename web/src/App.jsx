@@ -3396,19 +3396,24 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
   // descontaba ~21% de más y "Por cobrar" quedaba subestimado — con el Math.max(0) tapando el
   // negativo cuando la factura ya estaba saldada.
   const invoiceGross = (movement) => (Number(movement.grossAmountUsd) || ((Number(movement.amountUsd) || 0) + (Number(movement.vatAmountUsd) || 0)));
-  const cumulativeBilled = projectRows.filter((movement) => movement.kind === "invoice").reduce((sum, movement) => sum + invoiceGross(movement), 0);
-  const cumulativeCollected = projectRows.filter((movement) => movement.kind === "income").reduce((sum, movement) => sum + allocationsOf(movement).filter((allocation) => allocation.projectId || allocation.budgetId).reduce((share, allocation) => share + allocation.amountUsd, 0), 0);
-  const receivable = Math.max(0, cumulativeBilled - cumulativeCollected);
   const payable = projectRows.filter((movement) => movement.kind === "expense" && movement.paymentStatus === "pending").reduce((sum, movement) => sum + (Number(movement.amountUsd) || 0), 0);
   // Antigüedad de la deuda factura por factura. "Por cobrar" daba un total sin decir si eran 30 o
   // 180 días, que es justamente el dato con el que se decide a quién reclamar.
   // Lo cobrado se imputa a cada factura por su partida; lo que no está imputado a una factura
   // concreta se aplica contra las más viejas del mismo cliente (criterio FIFO, declarado abajo).
   const collectedByInvoice = {};
+  const settledInvoiceIds = new Set();
   const unappliedByClient = {};
   projectRows.filter((movement) => movement.kind === "income").forEach((movement) => {
     const rows = (movement.allocations || []).filter((allocation) => allocation.invoiceId && Number(allocation.amountUsd) > 0);
-    const applied = rows.reduce((sum, allocation) => { collectedByInvoice[allocation.invoiceId] = (collectedByInvoice[allocation.invoiceId] || 0) + Number(allocation.amountUsd); return sum + Number(allocation.amountUsd); }, 0);
+    const applied = rows.reduce((sum, allocation) => {
+      collectedByInvoice[allocation.invoiceId] = (collectedByInvoice[allocation.invoiceId] || 0) + Number(allocation.amountUsd);
+      // Un cobro marcado como total cancela la factura comercial. Como el cliente paga en ARS
+      // al tipo de cambio pactado del día anterior, su reconversión informativa a USD puede dejar
+      // centavos/dólares residuales que no constituyen deuda real.
+      if (movement.paymentStatus !== "partial") settledInvoiceIds.add(allocation.invoiceId);
+      return sum + Number(allocation.amountUsd);
+    }, 0);
     const rest = (Number(movement.amountUsd) || 0) - applied;
     if (rest > 0.005) { const key = movement.clientId || movement.clientName || "—"; unappliedByClient[key] = (unappliedByClient[key] || 0) + rest; }
   });
@@ -3417,7 +3422,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
     .map((invoice) => {
       const key = invoice.clientId || invoice.clientName || "—";
       const gross = invoiceGross(invoice);
-      let paid = collectedByInvoice[invoice.id] || 0;
+      let paid = invoice.paymentStatus === "paid" || settledInvoiceIds.has(invoice.id) ? gross : (collectedByInvoice[invoice.id] || 0);
       const pool = unappliedByClient[key] || 0;
       if (pool > 0 && paid < gross) { const take = Math.min(pool - 0, gross - paid); paid += take; unappliedByClient[key] = pool - take; }
       const balance = Math.round((gross - paid) * 100) / 100;
@@ -3431,6 +3436,9 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
     })
     .filter((invoice) => invoice.balance > 0.005)
     .sort((a, b) => b.days - a.days);
+  // "Por cobrar" se deriva de los saldos comerciales abiertos, no de restar dos equivalentes en
+  // USD calculados con cotizaciones de fechas distintas.
+  const receivable = Math.round(openInvoices.reduce((sum, invoice) => sum + invoice.balance, 0) * 100) / 100;
   // Días promedio de cobro: cuánto tarda en entrar la plata desde que se emite la factura. Se
   // pondera por importe — que una factura chica se pague rápido no compensa que una grande demore.
   // Solo se miden cobros imputados a una factura concreta; sin esa vinculación no hay par de fechas.
@@ -3764,7 +3772,7 @@ function FinanceModule({ movements, projects, budgets, clients, branding, me, cr
       <Panel title="Ejecución del presupuesto">
         <div className="space-y-2">{budgetExecution.length ? budgetExecution.map((budget) => <div key={budget.id} className="rounded-xl border border-slate-100 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="truncate font-semibold">{budget.number || budget.id} · {budget.title}</span><b className={budget.progress > 100 ? "text-rose-600" : "text-slate-700"}>{budget.baseline ? `${budget.progress.toFixed(0)}%` : "Sin costo estimado"}</b></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budget.progress > 100 ? "bg-rose-500" : budget.progress > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, budget.progress)}%` }} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-400"><span>Real <b className="text-slate-600">{fmt(budget.actual)}</b></span><span>{budget.baseline ? <>Plan <b className="text-slate-600">{fmt(budget.baseline)}</b></> : "Completar costo estimado"}</span></div></div>) : <EmptyChart>No hay presupuestos aprobados vinculados.</EmptyChart>}{unbudgetedExpense > 0 && <p className="text-[10px] text-amber-600">{fmt(unbudgetedExpense)} en gastos del proyecto sin presupuesto asignado: no se computan en ninguna barra.</p>}</div>
       </Panel>
-      <Panel title={<>Antigüedad de la deuda <HelpHint text="Saldo en bruto (con IVA), que es lo que paga el cliente. Los días se cuentan desde la fecha de vencimiento pactada cuando la factura la tiene cargada, y desde la emisión cuando no. Los cobros se imputan por la factura indicada en cada partida; los que no tienen factura vinculada se aplican a las más antiguas del mismo cliente." /></>}>
+      <Panel title={<>Antigüedad de la deuda <HelpHint text="Solo muestra facturas comercialmente pendientes. Los pagos totales en ARS al tipo de cambio pactado del día anterior cancelan la factura completa: una diferencia al reconvertirla a USD no se considera deuda. Los días se cuentan desde el vencimiento y, si no está cargado, desde la emisión." /></>}>
         {!openInvoices.length ? <EmptyChart>Sin facturas pendientes de cobro.</EmptyChart> : <div className="space-y-3">
           <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
             {aging.map((bucket) => bucket.value > 0 && <div key={bucket.label} className={bucket.tone} style={{ width: `${agingTotal ? (bucket.value / agingTotal) * 100 : 0}%` }} title={`${bucket.label}: ${fmt(bucket.value)}`} />)}
