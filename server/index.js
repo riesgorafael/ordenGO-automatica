@@ -2212,6 +2212,34 @@ const applyApprovedBudgetLink = async (movement) => {
   return movement;
 };
 
+// Los cobros pueden cancelar facturas de varios proyectos. Su imputación vive en cada partida,
+// no necesariamente en el encabezado del movimiento. Se reconstruye desde la factura y, para
+// registros históricos sin projectId, desde el presupuesto o el proyecto convertido.
+const hydrateIncomeAllocationLinks = async (movement, db = pool) => {
+  if (movement.kind !== "income" || !movement.allocations?.length) return movement;
+  const invoiceIds = [...new Set(movement.allocations.map((allocation) => allocation.invoiceId).filter(Boolean))];
+  const invoiceRows = invoiceIds.length ? (await db.query("SELECT id,data FROM financial_movements WHERE id=ANY($1::text[])", [invoiceIds])).rows : [];
+  const invoiceById = new Map(invoiceRows.map((row) => [row.id, row.data]));
+  const budgetIds = [...new Set(invoiceRows.flatMap((row) => [row.data?.budgetId, row.data?.sourceBudgetId]).filter(Boolean))];
+  const budgetRows = budgetIds.length ? (await db.query("SELECT id,data FROM budgets WHERE id=ANY($1::text[])", [budgetIds])).rows : [];
+  const budgetById = new Map(budgetRows.map((row) => [row.id, row.data]));
+  const projectRows = budgetIds.length ? (await db.query("SELECT id,data FROM projects WHERE data->>'budgetId'=ANY($1::text[])", [budgetIds])).rows : [];
+  const projectByBudget = new Map(projectRows.map((row) => [row.data?.budgetId, row.id]));
+  movement.allocations = movement.allocations.map((allocation) => {
+    const invoice = invoiceById.get(allocation.invoiceId);
+    const budgetId = allocation.budgetId || invoice?.budgetId || invoice?.sourceBudgetId || "";
+    const budget = budgetById.get(budgetId);
+    const projectId = allocation.projectId || invoice?.projectId || budget?.projectId || projectByBudget.get(budgetId) || "";
+    return { ...allocation, projectId, budgetId, receiptNumber: allocation.receiptNumber || invoice?.receiptNumber || invoice?.invoiceNumber || "" };
+  });
+  const projectIds = [...new Set(movement.allocations.map((allocation) => allocation.projectId).filter(Boolean))];
+  const linkedBudgetIds = [...new Set(movement.allocations.map((allocation) => allocation.budgetId).filter(Boolean))];
+  // Un encabezado común solo es correcto si todas las partidas pertenecen al mismo destino.
+  movement.projectId = projectIds.length === 1 ? projectIds[0] : "";
+  movement.budgetId = linkedBudgetIds.length === 1 ? linkedBudgetIds[0] : "";
+  return movement;
+};
+
 const financePeriodKey = (value) => /^\d{4}-\d{2}/.test(String(value || "")) ? String(value).slice(0, 7) : "";
 const financePeriodLocks = async (db = pool) => {
   const value = (await db.query("SELECT value FROM app_settings WHERE key='finance_period_locks_v1'")).rows[0]?.value;
@@ -2244,7 +2272,8 @@ app.put("/api/finance-period-locks/:period", auth, requireRole("admin"), async (
 app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
   if ((req.body?.kind || "expense") === "expense" && !["paid", "pending"].includes(req.body?.paymentStatus)) return res.status(400).json({ error: "Indica si el gasto está pagado o pendiente de pago." });
   if ((req.body?.kind || "expense") === "expense" && req.body?.paymentStatus === "pending" && !String(req.body?.dueDate || "").slice(0, 10)) return res.status(400).json({ error: "Indica el vencimiento del gasto pendiente." });
-  let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
+  let movement = await hydrateIncomeAllocationLinks(normalizeFinancialMovement(req.body));
+  movement = await applyApprovedBudgetLink(movement);
   try { await assertFinancePeriodOpen(movement.date); } catch (error) { if (error.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message }); throw error; }
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
@@ -2311,7 +2340,8 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   }
   if (current.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo y no se edita manualmente." });
   if (current.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra y no se edita manualmente." });
-  let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
+  let movement = await hydrateIncomeAllocationLinks(normalizeFinancialMovement(req.body, current));
+  movement = await applyApprovedBudgetLink(movement);
   if (movement.kind === "expense" && !["paid", "pending"].includes(req.body?.paymentStatus ?? current.paymentStatus)) return res.status(400).json({ error: "Indica si el gasto está pagado o pendiente de pago." });
   if (movement.kind === "expense" && movement.paymentStatus === "pending" && !movement.dueDate) return res.status(400).json({ error: "Indica el vencimiento del gasto pendiente." });
   movement.id = req.params.id;

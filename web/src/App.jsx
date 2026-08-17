@@ -2097,6 +2097,11 @@ function FinanceEntryModal({
   // para que el total nunca quede desincronizado del detalle.
   const allocations = form.allocations || [];
   const hasAllocations = allocations.length > 0;
+  const invoiceAssignment = (invoice) => {
+    const budget = budgets.find((item) => item.id === invoice?.budgetId || item.id === invoice?.sourceBudgetId);
+    const projectId = invoice?.projectId || budget?.projectId || projects.find((project) => project.budgetId === (invoice?.budgetId || invoice?.sourceBudgetId))?.id || "";
+    return { projectId, budgetId: invoice?.budgetId || invoice?.sourceBudgetId || budget?.id || "" };
+  };
   const setAllocation = (index, patch) =>
     setForm((current) => ({
       ...current,
@@ -2154,12 +2159,13 @@ function FinanceEntryModal({
       let matched = 0;
       const parsed = rows.map((row) => {
         const invoice = byReceipt.get(receiptKey(row.receipt));
+        const assignment = invoiceAssignment(invoice);
         if (invoice) matched++;
         return {
           invoiceId: invoice?.id || "",
           receiptNumber: invoice?.receiptNumber || row.receipt,
-          projectId: invoice?.projectId || "",
-          budgetId: invoice?.budgetId || "",
+          projectId: assignment.projectId,
+          budgetId: assignment.budgetId,
           amount: row.gross,
           deductions: row.deductions,
         };
@@ -2689,12 +2695,13 @@ function FinanceEntryModal({
                                         const invoice = invoices.find(
                                           (item) => item.id === invoiceId,
                                         );
+                                        const assignment = invoiceAssignment(invoice);
                                         setAllocation(index, {
                                           invoiceId,
                                           receiptNumber:
                                             invoice?.receiptNumber || "",
-                                          projectId: invoice?.projectId || "",
-                                          budgetId: invoice?.budgetId || "",
+                                          projectId: assignment.projectId,
+                                          budgetId: assignment.budgetId,
                                         });
                                       }}
                                     />
@@ -2761,10 +2768,10 @@ function FinanceEntryModal({
                                   Se imputa a{" "}
                                   {projects.find(
                                     (project) =>
-                                      project.id === linked.projectId,
+                                      project.id === invoiceAssignment(linked).projectId,
                                   )?.key || "sin proyecto"}
-                                  {linked.budgetId
-                                    ? ` · ${budgets.find((budget) => budget.id === linked.budgetId)?.number || linked.budgetId}`
+                                  {invoiceAssignment(linked).budgetId
+                                    ? ` · ${budgets.find((budget) => budget.id === invoiceAssignment(linked).budgetId)?.number || invoiceAssignment(linked).budgetId}`
                                     : ""}{" "}
                                   · emitida por{" "}
                                   {currencyAmount(
@@ -3374,7 +3381,13 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   // movimiento sin reparto se comporta como una única imputación por su total, así todas las sumas
   // siguen funcionando igual que antes sin casos especiales desperdigados.
   const allocationsOf = (movement) => {
-    const list = (movement.allocations || []).filter((allocation) => Number(allocation.amountUsd) > 0);
+    const list = (movement.allocations || []).filter((allocation) => Number(allocation.amountUsd) > 0).map((allocation) => {
+      const invoice = movements.find((item) => item.id === allocation.invoiceId);
+      const budgetId = allocation.budgetId || invoice?.budgetId || invoice?.sourceBudgetId || "";
+      const budget = budgets.find((item) => item.id === budgetId);
+      const projectId = allocation.projectId || invoice?.projectId || budget?.projectId || projects.find((project) => project.budgetId === budgetId)?.id || "";
+      return { ...allocation, projectId, budgetId };
+    });
     if (!list.length) return [{ projectId: movement.projectId || "", budgetId: movement.budgetId || "", amountUsd: Number(movement.amountUsd) || 0 }];
     const allocated = list.reduce((sum, allocation) => sum + Number(allocation.amountUsd), 0);
     const rest = (Number(movement.amountUsd) || 0) - allocated;
@@ -3564,9 +3577,10 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     return { ...row, collected, outstanding };
   });
   const qualityIssue = (movement, issue) => ({ id: movement.id, issue, concept: movement.concept || "Sin concepto", kind: movement.kind, date: movement.date || "", amountUsd: Number(movement.amountUsd) || 0 });
+  const hasFinancialAssignment = (movement) => Boolean(movement.projectId || movement.budgetId || allocationsOf(movement).some((allocation) => allocation.projectId || allocation.budgetId));
   const dataQualityIssues = [
     ...expenseRows.filter((movement) => !movement.receiptNumber && !movement.hasAttachment && !movement.attachmentUrl).map((movement) => qualityIssue(movement, "Gasto sin comprobante")),
-    ...inMonth.filter((movement) => !movement.projectId && !movement.budgetId).map((movement) => qualityIssue(movement, "Sin imputación a proyecto/presupuesto")),
+    ...inMonth.filter((movement) => !hasFinancialAssignment(movement)).map((movement) => qualityIssue(movement, "Sin imputación a proyecto/presupuesto")),
     ...inMonth.filter((movement) => movement.currency !== "USD" && !(Number(movement.exchangeRate) > 0)).map((movement) => qualityIssue(movement, "Sin cotización histórica")),
     ...payableRows.filter((movement) => !movement.dueDate).map((movement) => qualityIssue(movement, "Cuenta por pagar sin vencimiento")),
   ];
