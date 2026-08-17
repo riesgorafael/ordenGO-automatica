@@ -1,6 +1,7 @@
 # ---------- Etapa 1: build del frontend ----------
 FROM node:20-alpine AS web
 WORKDIR /web
+COPY shared /shared
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm install --frozen-lockfile
 COPY web/ ./
@@ -13,6 +14,7 @@ ENV NODE_ENV=production
 COPY server/package.json server/pnpm-lock.yaml ./
 RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm install --prod --frozen-lockfile
 COPY server/ ./
+COPY shared /shared
 # el frontend compilado se sirve como estático desde /app/public
 COPY --from=web /web/dist ./public
 EXPOSE 3000

@@ -1,6 +1,7 @@
 import express from "express";
 import "express-async-errors";
 import cors from "cors";
+import compression from "compression";
 import pkg from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -9,7 +10,7 @@ import crypto from "crypto";
 import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import { registerGanttRoutes } from "./ganttRoutes.js";
-import { billableHoursValue, normalizedRateValue, wholeMoneyValue } from "./domainRules.js";
+import { billableHoursValue, expenseVatBreakdown, normalizedRateValue, orderAssignedIdsValue, orderVisibleToUserValue, targetMarginValue, wholeMoneyValue } from "./domainRules.js";
 
 const { Pool } = pkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,6 +49,7 @@ app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: https://cdn.jsdelivr.net https://tessdata.projectnaptha.com");
   next();
 });
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: "24mb" }));
 app.use((req, res, next) => {
   const requestId = String(req.headers["x-request-id"] || crypto.randomUUID());
@@ -59,7 +61,6 @@ app.use((req, res, next) => {
   next();
 });
 
-const loginAttempts = new Map();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
 const DEFAULT_BRANDING = {
@@ -103,43 +104,40 @@ async function loadBranding() {
   const row = (await pool.query("SELECT value FROM app_settings WHERE key='branding_v1'")).rows[0];
   return normalizeBranding(row?.value || {});
 }
-function loginRateLimit(req, res, next) {
+async function consumeRateLimit(key, windowMs, max) {
+  const interval = `${Math.max(1000, windowMs)} milliseconds`;
+  const { rows } = await pool.query(
+    `INSERT INTO rate_limits(key, count, window_start)
+     VALUES($1, 1, now())
+     ON CONFLICT(key) DO UPDATE SET
+       count = CASE WHEN rate_limits.window_start < now() - $2::interval THEN 1 ELSE rate_limits.count + 1 END,
+       window_start = CASE WHEN rate_limits.window_start < now() - $2::interval THEN now() ELSE rate_limits.window_start END
+     RETURNING count`,
+    [key, interval],
+  );
+  return Number(rows[0]?.count || 0) <= max;
+}
+async function loginRateLimit(req, res, next) {
   const key = `${req.ip || req.socket.remoteAddress || "unknown"}:${String(req.body?.email || "").trim().toLowerCase()}`;
-  const now = Date.now();
-  const current = loginAttempts.get(key);
-  const entry = !current || now - current.startedAt > LOGIN_WINDOW_MS ? { count: 0, startedAt: now } : current;
-  if (entry.count >= LOGIN_MAX_ATTEMPTS) return res.status(429).json({ error: "Demasiados intentos. Espera 15 minutos e inténtalo nuevamente." });
-  entry.count += 1;
-  loginAttempts.set(key, entry);
+  if (!(await consumeRateLimit(`login:${key}`, LOGIN_WINDOW_MS, LOGIN_MAX_ATTEMPTS))) return res.status(429).json({ error: "Demasiados intentos. Espera 15 minutos e inténtalo nuevamente." });
   req.loginAttemptKey = key;
   next();
 }
 setInterval(() => {
-  const cutoff = Date.now() - LOGIN_WINDOW_MS;
-  for (const [key, value] of loginAttempts) if (value.startedAt < cutoff) loginAttempts.delete(key);
+  pool.query("DELETE FROM rate_limits WHERE window_start < now() - interval '1 day'").catch(() => {});
 }, LOGIN_WINDOW_MS).unref();
 
 // Limitador genérico por usuario autenticado (además del de login): evita que una cuenta
 // comprometida o un cliente descontrolado agote la base con llamadas repetidas a endpoints caros
 // (ej. /api/bootstrap dispara ~15 consultas en paralelo) o golpee rutas de escritura en bucle.
-const apiRequestCounts = new Map();
 const API_RATE_WINDOW_MS = 60 * 1000;
 function apiRateLimit(max) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const key = `${req.user?.id || req.ip}:${req.method}:${req.baseUrl}${req.route?.path || req.path}`;
-    const now = Date.now();
-    const current = apiRequestCounts.get(key);
-    const entry = !current || now - current.startedAt > API_RATE_WINDOW_MS ? { count: 0, startedAt: now } : current;
-    if (entry.count >= max) return res.status(429).json({ error: "Demasiadas solicitudes. Esperá un momento e intentá nuevamente." });
-    entry.count += 1;
-    apiRequestCounts.set(key, entry);
+    if (!(await consumeRateLimit(`api:${key}`, API_RATE_WINDOW_MS, max))) return res.status(429).json({ error: "Demasiadas solicitudes. Esperá un momento e intentá nuevamente." });
     next();
   };
 }
-setInterval(() => {
-  const cutoff = Date.now() - API_RATE_WINDOW_MS;
-  for (const [key, value] of apiRequestCounts) if (value.startedAt < cutoff) apiRequestCounts.delete(key);
-}, API_RATE_WINDOW_MS).unref();
 
 // Nunca hardcodear una contraseña por defecto en el código fuente (los escáneres de secretos como
 // GitGuardian la detectan como una credencial expuesta, y cualquiera que lea el repo la conoce).
@@ -175,8 +173,14 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS audit_log (
       id text PRIMARY KEY, entity_type text NOT NULL, entity_id text NOT NULL,
       action text NOT NULL, user_id text, user_name text, before_data jsonb,
-      after_data jsonb, reason text, created_at timestamptz NOT NULL DEFAULT now());
+      after_data jsonb, reason text, request_id text, ip_address text,
+      created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS app_settings ( key text PRIMARY KEY, value jsonb, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS rate_limits ( key text PRIMARY KEY, count integer NOT NULL DEFAULT 0, window_start timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS file_assets (
+      id text PRIMARY KEY, entity_type text NOT NULL, entity_id text NOT NULL, field_name text NOT NULL,
+      original_name text, mime_type text NOT NULL, size_bytes integer, sha256 text, content bytea NOT NULL, created_by text,
+      created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS gantt_tasks ( id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
   `);
   await pool.query("CREATE INDEX IF NOT EXISTS gantt_tasks_project_idx ON gantt_tasks (project_id);");
@@ -187,7 +191,35 @@ async function initDb() {
   // el histórico. Las órdenes nuevas usan los valores por defecto (SLA 2 h, mínimo 2 h).
   await pool.query("DROP TABLE IF EXISTS technical_documents; DROP TABLE IF EXISTS service_contracts; DROP TABLE IF EXISTS assets;");
   await pool.query("CREATE INDEX IF NOT EXISTS stock_movements_part_date_idx ON stock_movements (part_id, created_at DESC); CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log (entity_type, entity_id, created_at DESC);");
+  await pool.query("CREATE INDEX IF NOT EXISTS file_assets_entity_idx ON file_assets(entity_type,entity_id);");
+  await pool.query("ALTER TABLE file_assets ADD COLUMN IF NOT EXISTS size_bytes integer; ALTER TABLE file_assets ADD COLUMN IF NOT EXISTS sha256 text;");
   await pool.query("CREATE INDEX IF NOT EXISTS orders_updated_idx ON orders(updated_at); CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at); CREATE INDEX IF NOT EXISTS orders_project_idx ON orders((data->>'projectId')); CREATE INDEX IF NOT EXISTS tasks_project_idx ON tasks((data->>'project')); CREATE INDEX IF NOT EXISTS budgets_project_idx ON budgets((data->>'projectId')); CREATE INDEX IF NOT EXISTS finances_project_idx ON financial_movements((data->>'projectId'));");
+  // Columnas relacionales generadas: conservan compatibilidad con JSONB, pero desde ahora la base
+  // impide que nuevas escrituras creen referencias a clientes/proyectos inexistentes. NOT VALID
+  // evita bloquear el arranque por datos históricos; la consulta de auditoría permite sanearlos y
+  // luego validar las restricciones en una ventana de mantenimiento.
+  await pool.query(`
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE material_lists ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE material_lists ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='projects_client_fk') THEN ALTER TABLE projects ADD CONSTRAINT projects_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_client_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_project_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_client_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_project_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_client_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_project_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='material_lists_client_fk') THEN ALTER TABLE material_lists ADD CONSTRAINT material_lists_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='material_lists_project_fk') THEN ALTER TABLE material_lists ADD CONSTRAINT material_lists_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
+    END $$;
+  `);
   // Migración idempotente para instalaciones existentes
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
   // Config individual por usuario (pantalla TV: nombre, modo TV, rotación) — permite N televisores, uno por cuenta Monitor Oficina.
@@ -196,6 +228,34 @@ async function initDb() {
   // "auth" lo compara contra el valor actual en la base. Incrementarlo (al cambiar la contraseña,
   // propia o por un admin) invalida de inmediato cualquier token viejo, aunque todavía no expire.
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 0;");
+  await pool.query("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS request_id text; ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip_address text;");
+
+  // Migra asignaciones históricas basadas en nombres a identificadores inmutables. Solo se
+  // resuelven nombres inequívocos; si hay dos usuarios con el mismo nombre, la orden queda sin
+  // acceso técnico hasta que un administrador la reasigne explícitamente.
+  const assignmentMigrationDone = (await pool.query("SELECT 1 FROM app_settings WHERE key='order_assignment_ids_v1'")).rowCount > 0;
+  if (!assignmentMigrationDone) {
+    const usersForMigration = (await pool.query("SELECT id,name FROM users")).rows;
+    const idsByName = new Map();
+    for (const user of usersForMigration) {
+      const key = String(user.name || "").trim().toLowerCase();
+      if (!key) continue;
+      const ids = idsByName.get(key) || []; ids.push(user.id); idsByName.set(key, ids);
+    }
+    const historicalOrders = (await pool.query("SELECT id,data FROM orders")).rows;
+    for (const row of historicalOrders) {
+      const order = { ...row.data };
+      const names = [order.tech, ...(Array.isArray(order.assignedTechs) ? order.assignedTechs : [])].map((name) => String(name || "").trim().toLowerCase()).filter(Boolean);
+      const resolved = [...new Set(names.flatMap((name) => idsByName.get(name)?.length === 1 ? idsByName.get(name) : []))];
+      if (!Array.isArray(order.assignedTechIds) || !order.assignedTechIds.length) order.assignedTechIds = resolved;
+      if (!order.techId && order.tech) {
+        const candidates = idsByName.get(String(order.tech).trim().toLowerCase()) || [];
+        if (candidates.length === 1) order.techId = candidates[0];
+      }
+      await pool.query("UPDATE orders SET data=$2, updated_at=updated_at WHERE id=$1", [row.id, order]);
+    }
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('order_assignment_ids_v1',$1) ON CONFLICT(key) DO NOTHING", [{ migratedAt: new Date().toISOString() }]);
+  }
 
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
   const adminPasswordProvided = Boolean(process.env.ADMIN_PASSWORD);
@@ -564,6 +624,13 @@ function stripMoney(o) {
   if (Array.isArray(x.materials)) x.materials = x.materials.map((m) => { const y = { ...m }; delete y.price; delete y.billable; delete y.cost; return y; });
   return x;
 }
+function clientForRole(client, role) {
+  if (["admin", "gerente"].includes(role)) return client;
+  if (isMonitor(role)) return null;
+  // El técnico necesita identificar empresa y planta, pero no la ficha administrativa completa.
+  const safeSites = Array.isArray(client?.sites) ? client.sites.map((site) => ({ id: site.id || "", code: site.code || "", name: site.name || "", address: site.address || "" })) : [];
+  return { id: client.id, code: client.code || "", name: client.name || "", site: client.site || "", sites: safeSites };
+}
 // `trustClientPrices` en false ignora por completo los importes que llegan del cliente para los
 // materiales que no están en el catálogo. Es el modo que se usa con los técnicos: no ven precios
 // (stripMoney se los quita) y no deben fijarlos, pero antes un material con un nombre que no
@@ -594,26 +661,112 @@ async function materialsFromInventory(materials, onlyMissing = false, trustClien
 // Conciliación automática de stock: antes ni consumir materiales en una orden ni recibir una OC
 // tocaban el stock del catálogo — quedaba 100% a cargo de que alguien lo actualizara a mano.
 async function adjustPartStock(partId, delta, db = pool, meta = {}) {
-  if (!partId || !delta) return;
+  const quantity = Number(delta);
+  if (!partId || !Number.isFinite(quantity) || quantity === 0) return null;
   // La suma se ejecuta dentro del UPDATE, no como read-modify-write en JavaScript. Así dos
   // recepciones/consumos simultáneos no pisan el saldo calculado por la otra operación.
   const row = (await db.query(
-    "UPDATE parts SET data=jsonb_set(data,'{stock}',to_jsonb(GREATEST(0,COALESCE((data->>'stock')::numeric,0)+$2::numeric)),true), updated_at=now() WHERE id=$1 RETURNING data",
-    [partId, delta],
+    `UPDATE parts
+       SET data=jsonb_set(data,'{stock}',to_jsonb(COALESCE((data->>'stock')::numeric,0)+$2::numeric),true), updated_at=now()
+     WHERE id=$1
+       AND ($2::numeric > 0 OR COALESCE((data->>'stock')::numeric,0)+$2::numeric >= 0)
+     RETURNING data`,
+    [partId, quantity],
   )).rows[0];
-  if (!row) return;
+  if (!row) {
+    const exists = (await db.query("SELECT data->>'stock' AS stock FROM parts WHERE id=$1", [partId])).rows[0];
+    const error = new Error(exists ? `Stock insuficiente para ${partId}. Disponible: ${Number(exists.stock) || 0}.` : `El repuesto ${partId} no existe.`);
+    error.code = exists ? "INSUFFICIENT_STOCK" : "PART_NOT_FOUND";
+    throw error;
+  }
   await db.query(
     "INSERT INTO stock_movements(id,part_id,quantity,balance,movement_type,source_type,source_id,note,user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-    [crypto.randomUUID(), partId, delta, Number(row.data.stock) || 0, meta.movementType || (delta > 0 ? "Entrada" : "Salida"), meta.sourceType || "Ajuste", meta.sourceId || "", String(meta.note || "").slice(0, 300), meta.userId || null],
+    [crypto.randomUUID(), partId, quantity, Number(row.data.stock) || 0, meta.movementType || (quantity > 0 ? "Entrada" : "Salida"), meta.sourceType || "Ajuste", meta.sourceId || "", String(meta.note || "").slice(0, 300), meta.userId || null],
   );
   return row.data;
 }
 
 async function auditChange({ entityType, entityId, action, user, beforeData = null, afterData = null, reason = "" }, db = pool) {
   await db.query(
-    "INSERT INTO audit_log(id,entity_type,entity_id,action,user_id,user_name,before_data,after_data,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-    [crypto.randomUUID(), entityType, entityId, action, user?.id || null, user?.name || "Sistema", beforeData, afterData, String(reason || "").slice(0, 500)],
+    "INSERT INTO audit_log(id,entity_type,entity_id,action,user_id,user_name,before_data,after_data,reason,request_id,ip_address) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    [crypto.randomUUID(), entityType, entityId, action, user?.id || null, user?.name || "Sistema", beforeData, afterData, String(reason || "").slice(0, 500), user?.requestId || null, user?.ip || null],
   );
+}
+const DATA_URL_PATTERN = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i;
+const ALLOWED_ASSET_MIME = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+const assetSignatureMatches = (content, mime) => {
+  if (mime === "image/jpeg") return content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff;
+  if (mime === "image/png") return content.length >= 8 && content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mime === "image/webp") return content.length >= 12 && content.subarray(0, 4).toString("ascii") === "RIFF" && content.subarray(8, 12).toString("ascii") === "WEBP";
+  if (mime === "application/pdf") return content.length >= 5 && content.subarray(0, 5).toString("ascii") === "%PDF-";
+  return false;
+};
+async function storeDataAsset(value, { entityType, entityId, fieldName, originalName = "", userId = null }, db = pool) {
+  if (typeof value !== "string" || !value.startsWith("data:")) return value;
+  const match = value.match(DATA_URL_PATTERN);
+  if (!match || !ALLOWED_ASSET_MIME.has(match[1].toLowerCase())) throw Object.assign(new Error("El archivo adjunto no tiene un formato permitido."), { code: "INVALID_ASSET" });
+  const content = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+  if (!content.length || content.length > 12 * 1024 * 1024) throw Object.assign(new Error("Cada archivo debe pesar entre 1 byte y 12 MB."), { code: "INVALID_ASSET" });
+  const mime = match[1].toLowerCase();
+  if (!assetSignatureMatches(content, mime)) throw Object.assign(new Error("El contenido del archivo no coincide con su formato declarado."), { code: "INVALID_ASSET" });
+  const id = crypto.randomUUID();
+  await db.query("INSERT INTO file_assets(id,entity_type,entity_id,field_name,original_name,mime_type,size_bytes,sha256,content,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [id, entityType, entityId, fieldName, String(originalName || "").slice(0, 180), mime, content.length, crypto.createHash("sha256").update(content).digest("hex"), content, userId]);
+  return `/api/files/${id}`;
+}
+async function externalizeOrderAssets(order, db, userId) {
+  const next = { ...order };
+  next.signatureUrl = await storeDataAsset(next.signatureUrl, { entityType: "order", entityId: next.id, fieldName: "client_signature", originalName: "firma-cliente.png", userId }, db);
+  next.technicianSignatureUrl = await storeDataAsset(next.technicianSignatureUrl, { entityType: "order", entityId: next.id, fieldName: "technician_signature", originalName: "firma-tecnico.png", userId }, db);
+  next.photos = [];
+  for (const [index, photo] of (order.photos || []).entries()) {
+    const url = await storeDataAsset(photo?.url, { entityType: "order", entityId: next.id, fieldName: `photo_${index}`, originalName: photo?.name || `evidencia-${index + 1}`, userId }, db);
+    const preview = photo?.preview?.startsWith?.("data:") ? url : (photo?.preview || url);
+    next.photos.push({ ...photo, url, preview });
+  }
+  return next;
+}
+async function externalizeFinancialAssets(movement, db, userId) {
+  const next = { ...movement, attachments: [] };
+  for (const [index, attachment] of (movement.attachments || []).entries()) {
+    const url = await storeDataAsset(attachment?.url, { entityType: "financial", entityId: movement.id, fieldName: `attachment_${index}`, originalName: attachment?.name || `comprobante-${index + 1}`, userId }, db);
+    next.attachments.push({ ...attachment, url });
+  }
+  next.attachmentUrl = next.attachments[0]?.url || "";
+  next.attachmentName = next.attachments[0]?.name || "";
+  return next;
+}
+async function migrateLegacyDataAssets() {
+  if ((await pool.query("SELECT 1 FROM app_settings WHERE key='file_assets_migration_v1'")).rowCount) return;
+  const orderRows = (await pool.query("SELECT id,data FROM orders WHERE data::text LIKE '%data:%'")).rows;
+  for (const row of orderRows) {
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      const migrated = await externalizeOrderAssets({ ...row.data, id: row.id }, db, null);
+      await db.query("UPDATE orders SET data=$2,updated_at=updated_at WHERE id=$1", [row.id, migrated]);
+      await db.query("COMMIT");
+    } catch (error) {
+      await db.query("ROLLBACK");
+      throw error;
+    } finally { db.release(); }
+  }
+  const financeRows = (await pool.query("SELECT id,data FROM financial_movements WHERE data::text LIKE '%data:%'")).rows;
+  for (const row of financeRows) {
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      const legacyAttachments = Array.isArray(row.data.attachments) && row.data.attachments.length
+        ? row.data.attachments
+        : (row.data.attachmentUrl ? [{ name: row.data.attachmentName || "comprobante", url: row.data.attachmentUrl }] : []);
+      const migrated = await externalizeFinancialAssets({ ...row.data, id: row.id, attachments: legacyAttachments }, db, null);
+      await db.query("UPDATE financial_movements SET data=$2,updated_at=updated_at WHERE id=$1", [row.id, migrated]);
+      await db.query("COMMIT");
+    } catch (error) {
+      await db.query("ROLLBACK");
+      throw error;
+    } finally { db.release(); }
+  }
+  await pool.query("INSERT INTO app_settings(key,value) VALUES('file_assets_migration_v1',$1) ON CONFLICT(key) DO NOTHING", [{ migratedAt: new Date().toISOString(), orders: orderRows.length, finances: financeRows.length }]);
 }
 // Los ítems de una OC son texto libre del proveedor (sku/descripción), sin vínculo obligatorio al
 // catálogo — se intenta emparejar por nombre igual que materialsFromInventory; lo que no matchea
@@ -669,7 +822,7 @@ async function auth(req, res, next) {
     // de contraseña propio o forzado por un admin) — se rechaza aunque todavía no haya expirado.
     if ((claims.tokenVersion || 0) !== (current.token_version || 0)) return res.status(401).json({ error: "La sesión ya no es válida. Iniciá sesión de nuevo." });
     if (current.mustchangepassword && !["/api/bootstrap", "/api/me/password"].includes(req.path)) return res.status(403).json({ error: "Debes cambiar la contraseña temporal antes de continuar" });
-    req.user = { id: current.id, name: current.name, role: current.role, mustChangePassword: current.mustchangepassword };
+    req.user = { id: current.id, name: current.name, role: current.role, mustChangePassword: current.mustchangepassword, requestId: String(req.requestId || crypto.randomUUID()).slice(0, 100), ip: String(req.ip || req.socket.remoteAddress || "").slice(0, 100) };
     next();
   } catch { res.status(401).json({ error: "Token inválido" }); }
 }
@@ -681,9 +834,43 @@ const isMonitor = (r) => r === "monitor_oficina";
 const isProjectScoped = (r) => isTec(r) || isMonitor(r);
 const requireOrdersAccess = (req, res, next) => (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? res.status(403).json({ error: "Este perfil no tiene acceso a órdenes de trabajo" }) : next();
 const requireProjectWrite = (req, res, next) => isMonitor(req.user.role) ? res.status(403).json({ error: "Monitor Oficina tiene acceso de solo visualización" }) : next();
-const normName = (name) => String(name || "").trim().toLowerCase();
-const orderAssignedNames = (order) => [order?.tech, ...(Array.isArray(order?.assignedTechs) ? order.assignedTechs : [])].map(normName).filter(Boolean);
-const orderVisibleToUser = (user, order) => user.role !== "tecnico" || orderAssignedNames(order).includes(normName(user.name));
+const orderAssignedIds = orderAssignedIdsValue;
+const orderVisibleToUser = orderVisibleToUserValue;
+async function hydrateOrderAssignments(order, db = pool) {
+  const names = [...new Set([order.tech, ...(Array.isArray(order.assignedTechs) ? order.assignedTechs : [])].map((name) => String(name || "").trim()).filter(Boolean))];
+  const requestedIds = [...new Set([order.techId, ...(Array.isArray(order.assignedTechIds) ? order.assignedTechIds : [])].filter(Boolean))];
+  const users = (await db.query("SELECT id,name,active,role FROM users WHERE active=true")).rows;
+  const allowed = new Map(users.filter((user) => user.role === "tecnico").map((user) => [user.id, user]));
+  const ids = requestedIds.filter((id) => allowed.has(id));
+  for (const name of names) {
+    const matches = users.filter((user) => user.role === "tecnico" && String(user.name).trim().toLowerCase() === name.toLowerCase());
+    if (matches.length === 1) ids.push(matches[0].id);
+  }
+  order.assignedTechIds = [...new Set(ids)].slice(0, 8);
+  if (order.techId && !allowed.has(order.techId)) order.techId = "";
+  if (!order.techId && order.tech) {
+    const match = users.filter((user) => user.role === "tecnico" && String(user.name).trim().toLowerCase() === String(order.tech).trim().toLowerCase());
+    if (match.length === 1) order.techId = match[0].id;
+  }
+  if (order.techId && !order.assignedTechIds.includes(order.techId)) order.assignedTechIds.unshift(order.techId);
+  return order;
+}
+app.get("/api/files/:id", auth, async (req, res) => {
+  const asset = (await pool.query("SELECT * FROM file_assets WHERE id=$1", [req.params.id])).rows[0];
+  if (!asset) return res.status(404).json({ error: "El archivo no existe" });
+  let allowed = ["admin", "gerente"].includes(req.user.role);
+  if (!allowed && asset.entity_type === "order" && req.user.role === "tecnico") {
+    const order = (await pool.query("SELECT data FROM orders WHERE id=$1", [asset.entity_id])).rows[0]?.data;
+    allowed = Boolean(order && orderVisibleToUser(req.user, order));
+  }
+  if (!allowed) return res.status(403).json({ error: "No autorizado para ver este archivo" });
+  const safeName = String(asset.original_name || "archivo").replace(/[^a-z0-9._-]+/gi, "-").slice(0, 120) || "archivo";
+  res.setHeader("Content-Type", asset.mime_type);
+  res.setHeader("Content-Length", asset.content.length);
+  res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.send(asset.content);
+});
 // Código corto de tipo de servicio que se incorpora al folio de la OT (ej. OT-VTU-COR-2026-014)
 // para poder identificar de un vistazo qué clase de trabajo es, sin abrir la orden.
 const SERVICE_TYPE_CODES = { "Instalación": "INS", "Automatización": "AUT", "Eléctrico": "ELE", "Mantenimiento preventivo": "PRE", "Mantenimiento correctivo": "COR", "Garantía": "GAR", "Emergencia": "EMG" };
@@ -714,10 +901,10 @@ const orderBusinessErrors = (order) => {
 };
 // Reconcilia el costo real de mano de obra + materiales de una OT aprobada con Finanzas,
 // para que "Ejecución del presupuesto" refleje costos reales sin carga manual duplicada.
-async function upsertOrderCostExpense(order) {
+async function upsertOrderCostExpense(order, db = pool) {
   const id = `EXP-ORDER-${order.id}`;
   if (!order.projectId || !["Aprobada", "Facturada"].includes(order.status)) {
-    await pool.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
+    await db.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
     return null;
   }
   const actualHours = (Number(order.laborHours) || 0) + (Math.max(0, Number(order.technical?.billableWaitMinutes) || 0) / 60);
@@ -725,11 +912,11 @@ async function upsertOrderCostExpense(order) {
   const materialsCost = (order.materials || []).reduce((sum, m) => sum + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
   const totalCost = Math.round((laborCost + materialsCost) * 100) / 100;
   if (totalCost <= 0) {
-    await pool.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
+    await db.query("DELETE FROM financial_movements WHERE id=$1 AND data->>'sourceOrderId' IS NOT NULL", [id]);
     return null;
   }
-  const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [order.projectId])).rows[0]?.data;
-  const existing = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [id])).rows[0]?.data;
+  const project = (await db.query("SELECT data FROM projects WHERE id=$1", [order.projectId])).rows[0]?.data;
+  const existing = (await db.query("SELECT data FROM financial_movements WHERE id=$1", [id])).rows[0]?.data;
   const movement = {
     ...(existing || {}), id, kind: "expense", category: "Órdenes de trabajo",
     concept: `Costo real de mano de obra y materiales · OT ${order.id}`,
@@ -744,7 +931,7 @@ async function upsertOrderCostExpense(order) {
     createdAt: existing?.createdAt || new Date().toISOString(), createdBy: existing?.createdBy || "system", createdByName: existing?.createdByName || "Sistema (OT aprobada)",
     updatedAt: new Date().toISOString(),
   };
-  await pool.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
+  await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
   return movement;
 }
 // ¿El usuario (si es técnico) tiene permiso sobre este proyecto?
@@ -788,7 +975,7 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const u = rows[0];
   if (!u || !u.active || !bcrypt.compareSync(password || "", u.password_hash))
     return res.status(401).json({ error: "Correo o contraseña inválidos" });
-  loginAttempts.delete(req.loginAttemptKey);
+  await pool.query("DELETE FROM rate_limits WHERE key=$1", [`login:${req.loginAttemptKey}`]);
   const token = jwt.sign({ id: u.id, role: u.role, name: u.name, tokenVersion: u.token_version || 0 }, JWT_SECRET, { expiresIn: "7d" });
   res.setHeader("Set-Cookie", `og_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${IS_PRODUCTION ? "; Secure" : ""}`);
   res.json({ authenticated: true, user: pubUser(u) });
@@ -856,10 +1043,21 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const canSeeProject = (p) => !scoped || (Array.isArray(p.allowedUsers) && p.allowedUsers.includes(req.user.id));
   const visibleProjects = allProjects.filter(canSeeProject);
   const allowedProjectIds = new Set(visibleProjects.map((p) => p.id));
+  const visibleOrderRows = or.rows.filter((row) => !row.data.archivedAt && orderVisibleToUser(req.user, row.data));
+  const operationalClientIds = new Set(visibleProjects.map((project) => project.clientId).filter(Boolean));
+  const operationalClientNames = new Set(visibleProjects.map((project) => String(project.client || "").trim().toLowerCase()).filter(Boolean));
+  for (const row of visibleOrderRows) {
+    if (row.data.clientId) operationalClientIds.add(row.data.clientId);
+    if (row.data.client) operationalClientNames.add(String(row.data.client).trim().toLowerCase());
+  }
+  const visibleClients = cl.rows
+    .map((row) => row.data)
+    .filter((client) => !tec || operationalClientIds.has(client.id) || operationalClientNames.has(String(client.name || "").trim().toLowerCase()))
+    .map((client) => clientForRole(client, req.user.role)).filter(Boolean);
   res.json({
     me: pubUser(me.rows[0]),
     users: u.rows.map((user) => directoryUser(user, req.user.role)),
-    clients: cl.rows.map((r) => r.data),
+    clients: visibleClients,
     projects: visibleProjects,
     budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
     finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => {
@@ -868,12 +1066,12 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
       const count = Array.isArray(attachments) ? attachments.length : (attachmentUrl ? 1 : 0);
       return { ...summary, hasAttachment: count > 0, attachmentCount: count, _updatedAt: r.updated_at };
     }),
-    orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : or.rows.filter((row) => orderVisibleToUser(req.user, row.data)).map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: notifRows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
-    purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     materialLists: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     whiteboardNotes: wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
@@ -882,6 +1080,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
 
 /* ------------------------------------------------ Configuración de marca (solo Admin) ------------------------------------------------ */
 app.put("/api/settings/branding", auth, requireRole("admin"), async (req, res) => {
+  const previousBranding = await loadBranding();
   const input = req.body || {};
   const logo = String(input.logoDataUrl || "");
   if (logo && !/^data:image\/(png|jpeg|webp);base64,/i.test(logo)) return res.status(400).json({ error: "El logo debe ser una imagen PNG, JPG o WebP" });
@@ -889,6 +1088,7 @@ app.put("/api/settings/branding", auth, requireRole("admin"), async (req, res) =
   if (!validHexColor(input.primaryColor) || !validHexColor(input.headerColor)) return res.status(400).json({ error: "Los colores deben estar en formato hexadecimal" });
   const branding = normalizeBranding(input);
   await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('branding_v1',$1,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [branding]);
+  await auditChange({ entityType: "settings", entityId: "branding_v1", action: "update", user: req.user, beforeData: { appName: previousBranding.appName, theme: previousBranding.theme, primaryColor: previousBranding.primaryColor }, afterData: { appName: branding.appName, theme: branding.theme, primaryColor: branding.primaryColor } });
   res.json(branding);
 });
 
@@ -925,7 +1125,7 @@ app.post("/api/clients", auth, requireProjectWrite, async (req, res) => {
   } else {
     c.code = await uniqueClientCode(codeFromName(c.name));
   }
-  try { await pool.query("INSERT INTO clients(id,data) VALUES($1,$2)", [c.id, c]); }
+  try { await pool.query("INSERT INTO clients(id,data) VALUES($1,$2)", [c.id, c]); await auditChange({ entityType: "client", entityId: c.id, action: "create", user: req.user, afterData: { code: c.code, name: c.name } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un cliente con ese identificador" }); throw error; }
   res.json(c);
 });
@@ -965,16 +1165,22 @@ app.patch("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req,
       [req.params.id, oldName, merged.name],
     );
   }
+  await auditChange({ entityType: "client", entityId: req.params.id, action: "update", user: req.user, beforeData: { code: rows[0].data.code, name: rows[0].data.name }, afterData: { code: merged.code, name: merged.name } });
   res.json(merged);
 });
 app.delete("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const client = (await pool.query("SELECT data FROM clients WHERE id=$1", [req.params.id])).rows[0]?.data;
+  if (!client) return res.status(404).json({ error: "No existe" });
   const links = await Promise.all([
     pool.query("SELECT count(*)::int count FROM projects WHERE data->>'clientId'=$1", [req.params.id]),
     pool.query("SELECT count(*)::int count FROM budgets WHERE data->>'clientId'=$1", [req.params.id]),
     pool.query("SELECT count(*)::int count FROM financial_movements WHERE data->>'clientId'=$1", [req.params.id]),
+    pool.query("SELECT count(*)::int count FROM orders WHERE data->>'clientId'=$1 OR data->>'client'=$2", [req.params.id, client.name || ""]),
+    pool.query("SELECT count(*)::int count FROM material_lists WHERE data->>'clientId'=$1 OR data->>'client'=$2", [req.params.id, client.name || ""]),
   ]);
   const linked = links.reduce((sum, result) => sum + Number(result.rows[0]?.count || 0), 0);
   if (linked) return res.status(409).json({ error: `No se puede eliminar: el cliente tiene ${linked} registro(s) vinculado(s). Reasigna o elimina primero esos registros.` });
+  await auditChange({ entityType: "client", entityId: req.params.id, action: "delete", user: req.user, beforeData: { code: client.code, name: client.name }, reason: String(req.body?.reason || "Eliminación solicitada desde la aplicación") });
   const deleted = await pool.query("DELETE FROM clients WHERE id=$1 RETURNING id", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
   res.status(204).end();
@@ -990,7 +1196,7 @@ app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res
     const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
     p.allowedUsers = monitors;
   }
-  try { await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [p.id, p]); }
+  try { await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [p.id, p]); await auditChange({ entityType: "project", entityId: p.id, action: "create", user: req.user, afterData: { key: p.key, name: p.name, clientId: p.clientId || "" } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un proyecto con ese identificador" }); throw error; }
   res.json(p);
 });
@@ -1016,6 +1222,7 @@ app.patch("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req
         [req.params.id, merged.color],
       );
     }
+    await auditChange({ entityType: "project", entityId: req.params.id, action: "update", user: req.user, beforeData: { name: rows[0].data.name, color: rows[0].data.color, allowedUsers: rows[0].data.allowedUsers || [] }, afterData: { name: merged.name, color: merged.color, allowedUsers: merged.allowedUsers || [] } }, db);
     await db.query("COMMIT");
   } catch (error) {
     await db.query("ROLLBACK");
@@ -1030,6 +1237,12 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
   if (!project) return res.status(404).json({ error: "No existe" });
   const financialCount = Number((await pool.query("SELECT count(*)::int AS count FROM financial_movements WHERE data->>'projectId'=$1", [req.params.id])).rows[0]?.count || 0);
   if (financialCount > 0) return res.status(409).json({ error: `No se puede eliminar: el proyecto tiene ${financialCount} movimiento(s) financiero(s) asociado(s). Elimina o reasigna primero esos registros.` });
+  const [orderLinks, materialLinks] = await Promise.all([
+    pool.query("SELECT count(*)::int count FROM orders WHERE data->>'projectId'=$1", [req.params.id]),
+    pool.query("SELECT count(*)::int count FROM material_lists WHERE data->>'projectId'=$1", [req.params.id]),
+  ]);
+  const operationalLinks = Number(orderLinks.rows[0]?.count || 0) + Number(materialLinks.rows[0]?.count || 0);
+  if (operationalLinks) return res.status(409).json({ error: `No se puede eliminar: el proyecto tiene ${operationalLinks} orden(es) o listado(s) vinculado(s). Reasigna o anula primero esos registros.` });
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
@@ -1042,6 +1255,7 @@ app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (re
       updatedBudgets.push(budget);
     }
     await db.query("DELETE FROM tasks WHERE data->>'project'=$1", [req.params.id]);
+    await auditChange({ entityType: "project", entityId: req.params.id, action: "delete", user: req.user, beforeData: { key: project.key, name: project.name }, reason: String(req.body?.reason || "Eliminación solicitada desde la aplicación") }, db);
     await db.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
     await db.query("COMMIT");
     res.json({ deletedProjectId: req.params.id, budgets: updatedBudgets });
@@ -1084,7 +1298,7 @@ const normalizeBudget = (input, previous = {}) => {
   budget.purchaseOrderNotes = String(budget.purchaseOrderNotes || "").trim().slice(0, 500);
   budget.durationDays = Math.max(0, Math.round(Number(budget.durationDays) || 0));
   budget.teamSize = Math.max(1, Math.round(Number(budget.teamSize) || 1));
-  budget.targetMargin = Math.min(100, Math.max(0, Number(budget.targetMargin) || 35));
+  budget.targetMargin = targetMarginValue(budget.targetMargin);
   budget.items = Array.isArray(budget.items) ? budget.items.map((item) => {
     const laborRole = LABOR_ROLE_COST[item.description] != null ? item.description : LABOR_DEFAULT_ROLE[item.type];
     const isLabor = Boolean(laborRole && LABOR_ROLE_COST[laborRole] != null);
@@ -1126,6 +1340,10 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   const id = existing?.id || `INV-${budget.id}`;
   // Referencia informativa en ARS al tipo de cambio mayorista A 3500 disponible al facturar.
   // No cambia la moneda de registro (USD): es solo trazabilidad para el circuito fiscal local.
+  if (!wholesaleRateCache) {
+    const persistedQuote = (await db.query("SELECT value,updated_at FROM app_settings WHERE key='wholesale_rate_last_good'")).rows[0];
+    if (persistedQuote?.value?.arsPerUsd) wholesaleRateCache = { cachedAt: new Date(persistedQuote.updated_at).getTime(), data: persistedQuote.value };
+  }
   const arsQuote = wholesaleRateCache?.data?.arsPerUsd || null;
   const arsReference = arsQuote ? { arsPerUsd: arsQuote, source: "BCRA dólar mayorista · Comunicación A 3500", quotedAt: wholesaleRateCache?.data?.updatedAt || null, netArs: Math.round(net * arsQuote * 100) / 100, vatArs: Math.round(vatAmount * arsQuote * 100) / 100, grossArs: Math.round(grossAmount * arsQuote * 100) / 100 } : (existing?.data?.arsReference || null);
   const invoice = { ...(existing?.data || {}), id, kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vatAmount, grossAmountUsd: grossAmount, arsReference, currency: "USD", exchangeRate: 1, date: invoiceDate, dueDate: budget.invoiceDueDate || "", invoiceNumber, receiptNumber: invoiceNumber, detail: budget.invoiceDetail || "", projectId: budget.projectId || "", budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || "", clientName: budget.client || "", sourceBudgetId: budget.id, paymentStatus: existing?.data?.paymentStatus || "pending", createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name, updatedAt: new Date().toISOString() };
@@ -1301,6 +1519,7 @@ app.post("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, re
   }
   try { await pool.query("INSERT INTO suppliers(id,data) VALUES($1,$2)", [s.id, s]); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un proveedor con ese identificador" }); throw error; }
+  await auditChange({ entityType: "supplier", entityId: s.id, action: "create", user: req.user, afterData: { name: s.name, code: s.code, active: s.active } });
   res.json(s);
 });
 app.patch("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -1326,19 +1545,21 @@ app.patch("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (re
   const duplicateName = (await pool.query("SELECT 1 FROM suppliers WHERE id<>$1 AND lower(trim(data->>'name'))=lower($2) LIMIT 1", [req.params.id, merged.name])).rows[0];
   if (duplicateName) return res.status(409).json({ error: "Ya existe otro proveedor con ese nombre" });
   await pool.query("UPDATE suppliers SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  await auditChange({ entityType: "supplier", entityId: req.params.id, action: "update", user: req.user, beforeData: { name: rows[0].data.name, active: rows[0].data.active }, afterData: { name: merged.name, active: merged.active } });
   res.json(merged);
 });
 app.delete("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const linked = (await pool.query("SELECT count(*)::int count FROM purchase_orders WHERE data->>'supplierId'=$1", [req.params.id])).rows[0].count;
   if (linked) return res.status(409).json({ error: `No se puede eliminar: el proveedor tiene ${linked} orden(es) de compra vinculada(s). Reasigná o eliminá primero esas órdenes.` });
-  const deleted = await pool.query("DELETE FROM suppliers WHERE id=$1 RETURNING id", [req.params.id]);
+  const deleted = await pool.query("DELETE FROM suppliers WHERE id=$1 RETURNING id,data", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  await auditChange({ entityType: "supplier", entityId: req.params.id, action: "delete", user: req.user, beforeData: { name: deleted.rows[0].data.name } });
   res.status(204).end();
 });
 
 app.get("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC");
-  res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+  res.json(rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
 app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
   const po = normalizePurchaseOrder(req.body);
@@ -1372,6 +1593,7 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateL
     }
     await db.query("INSERT INTO purchase_orders(id,data) VALUES($1,$2)", [po.id, po]);
     const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    await auditChange({ entityType: "purchase_order", entityId: po.id, action: "create", user: req.user, afterData: { stage: po.stage, supplierId: po.supplierId, grossAmountUsd: po.grossAmountUsd } }, db);
     await db.query("COMMIT");
     res.json({ ...po, _generatedMovement: generatedMovement });
   } catch (error) {
@@ -1394,6 +1616,9 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
   po.number = po.number || po.id;
   if (!po.items.length) return res.status(400).json({ error: "Agregá al menos un ítem a la orden de compra." });
   if (po.stage === "Recibida" && !po.supplierInvoiceNumber) return res.status(400).json({ error: "El número de factura del proveedor es obligatorio para marcar la orden como Recibida." });
+  if (current.stage === "Recibida" && po.stage === "Recibida" && JSON.stringify(po.items) !== JSON.stringify(current.items || [])) {
+    return res.status(409).json({ error: "Una orden ya recibida no puede modificar sus ítems: primero revertí la recepción cambiando su estado y luego editá las cantidades." });
+  }
   if (po.stage === "Recibida" && current.stage !== "Recibida") po.receivedAt = po.receivedAt || new Date().toISOString();
   const changes = [];
   if (po.stage !== current.stage) changes.push(`Estado: ${current.stage} → ${po.stage}`);
@@ -1403,6 +1628,11 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
+    const locked = (await db.query("SELECT data FROM purchase_orders WHERE id=$1 FOR UPDATE", [req.params.id])).rows[0]?.data;
+    if (!locked || JSON.stringify(locked) !== JSON.stringify(current)) {
+      await db.query("ROLLBACK");
+      return res.status(409).json({ error: "La orden de compra cambió mientras la editabas. Recargá la pantalla antes de volver a guardar." });
+    }
     // El ingreso de stock se marca con stockAppliedAt, igual que stockDeductedAt en las OT.
     // Sin ese marcador, el ciclo Recibida → Cancelada → Recibida volvía a sumar la misma entrega
     // (porque el estado anterior ya no era "Recibida"), y salir de Recibida no devolvía nada:
@@ -1417,7 +1647,7 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
       }
       po.stockAppliedAt = new Date().toISOString();
     } else if (leavingReceived && alreadyApplied) {
-      for (const item of po.items || []) {
+      for (const item of current.items || []) {
         const partId = item.partId || await matchPartIdByName(item.description, db);
         if (partId) await adjustPartStock(partId, -(Number(item.qty) || 0), db, { movementType: "Reversión", sourceType: "Orden de compra", sourceId: po.id, userId: req.user.id });
       }
@@ -1425,6 +1655,7 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
     }
     await db.query("UPDATE purchase_orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, po]);
     const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
+    await auditChange({ entityType: "purchase_order", entityId: po.id, action: "update", user: req.user, beforeData: { stage: current.stage, grossAmountUsd: current.grossAmountUsd }, afterData: { stage: po.stage, grossAmountUsd: po.grossAmountUsd } }, db);
     await db.query("COMMIT");
     res.json({ ...po, _generatedMovement: generatedMovement });
   } catch (error) {
@@ -1433,10 +1664,28 @@ app.patch("/api/purchase-orders/:id", auth, requireRole("admin", "gerente"), api
   } finally { db.release(); }
 });
 app.delete("/api/purchase-orders/:id", auth, requireRole("admin"), async (req, res) => {
-  await pool.query("DELETE FROM financial_movements WHERE data->>'sourcePurchaseOrderId'=$1", [req.params.id]);
-  const deleted = await pool.query("DELETE FROM purchase_orders WHERE id=$1 RETURNING id", [req.params.id]);
-  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
-  res.status(204).end();
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const current = (await db.query("SELECT data FROM purchase_orders WHERE id=$1 FOR UPDATE", [req.params.id])).rows[0]?.data;
+    if (!current) { await db.query("ROLLBACK"); return res.status(404).json({ error: "No existe" }); }
+    if (current.stockAppliedAt) {
+      for (const item of current.items || []) {
+        const partId = item.partId || await matchPartIdByName(item.description, db);
+        if (partId) await adjustPartStock(partId, -(Number(item.qty) || 0), db, { movementType: "Reversión", sourceType: "Orden de compra anulada", sourceId: current.id, userId: req.user.id });
+      }
+    }
+    await db.query("DELETE FROM financial_movements WHERE data->>'sourcePurchaseOrderId'=$1", [req.params.id]);
+    const archived = { ...current, stageBeforeArchive: current.stage, stage: "Cancelada", stockAppliedAt: "", archivedAt: new Date().toISOString(), archivedBy: req.user.id };
+    await db.query("UPDATE purchase_orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, archived]);
+    await auditChange({ entityType: "purchase_order", entityId: req.params.id, action: "archive", user: req.user, beforeData: { stage: current.stage, stockAppliedAt: current.stockAppliedAt || "" }, afterData: { stage: "Cancelada", archivedAt: archived.archivedAt }, reason: String(req.body?.reason || "Anulación solicitada desde la aplicación") }, db);
+    await db.query("COMMIT");
+    res.status(204).end();
+  } catch (error) {
+    await db.query("ROLLBACK");
+    if (error.code === "INSUFFICIENT_STOCK") return res.status(409).json({ error: `No se puede anular la compra porque parte del stock ya fue consumido. ${error.message}` });
+    throw error;
+  } finally { db.release(); }
 });
 
 /* ------------------------------------------------ Listado de materiales ------------------------------------------------ */
@@ -1522,6 +1771,7 @@ app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico")
   ml.createdBy = ml.createdBy || req.user.id; ml.createdByName = ml.createdByName || req.user.name;
   try { await pool.query("INSERT INTO material_lists(id,data) VALUES($1,$2)", [ml.id, ml]); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un listado con ese identificador" }); throw error; }
+  await auditChange({ entityType: "material_list", entityId: ml.id, action: "create", user: req.user, afterData: { projectId: ml.projectId, audience: ml.audience, sections: ml.sections.length } });
   res.json(ml);
 });
 app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
@@ -1543,11 +1793,13 @@ app.patch("/api/material-lists/:id", auth, requireRole("admin", "gerente", "tecn
   if (!ml.sections.length) return res.status(400).json({ error: "Agregá al menos una sección con un ítem." });
   ml.updatedBy = req.user.id; ml.updatedByName = req.user.name;
   await pool.query("UPDATE material_lists SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, ml]);
+  await auditChange({ entityType: "material_list", entityId: req.params.id, action: "update", user: req.user, beforeData: { projectId: current.projectId, audience: current.audience }, afterData: { projectId: ml.projectId, audience: ml.audience, sections: ml.sections.length } });
   res.json(ml);
 });
 app.delete("/api/material-lists/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const deleted = await pool.query("DELETE FROM material_lists WHERE id=$1 RETURNING id", [req.params.id]);
+  const deleted = await pool.query("DELETE FROM material_lists WHERE id=$1 RETURNING id,data", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  await auditChange({ entityType: "material_list", entityId: req.params.id, action: "delete", user: req.user, beforeData: { projectId: deleted.rows[0].data.projectId, audience: deleted.rows[0].data.audience } });
   res.status(204).end();
 });
 
@@ -1575,7 +1827,7 @@ app.get("/api/whiteboard-notes", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC");
   res.json(rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
-app.post("/api/whiteboard-notes", auth, async (req, res) => {
+app.post("/api/whiteboard-notes", auth, requireProjectWrite, async (req, res) => {
   const n = normalizeWhiteboardNote(req.body);
   if (n.type === "text" && !n.title && !n.content) return res.status(400).json({ error: "La nota necesita un título o contenido." });
   if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
@@ -1583,11 +1835,11 @@ app.post("/api/whiteboard-notes", auth, async (req, res) => {
   n.createdAt = new Date().toISOString();
   n.createdBy = req.user.id; n.createdByName = req.user.name;
   n.sharedWith = []; // una nota nueva siempre arranca privada; compartir es un paso aparte y explícito
-  try { await pool.query("INSERT INTO whiteboard_notes(id,data) VALUES($1,$2)", [n.id, n]); }
+  try { await pool.query("INSERT INTO whiteboard_notes(id,data) VALUES($1,$2)", [n.id, n]); await auditChange({ entityType: "whiteboard_note", entityId: n.id, action: "create", user: req.user, afterData: { type: n.type, projectId: n.projectId || "" } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe una nota con ese identificador" }); throw error; }
   res.json(n);
 });
-app.patch("/api/whiteboard-notes/:id", auth, async (req, res) => {
+app.patch("/api/whiteboard-notes/:id", auth, requireProjectWrite, async (req, res) => {
   const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const isOwner = current.createdBy === req.user.id;
@@ -1602,13 +1854,15 @@ app.patch("/api/whiteboard-notes/:id", auth, async (req, res) => {
   if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
   n.createdBy = current.createdBy; n.createdByName = current.createdByName; n.createdAt = current.createdAt;
   await pool.query("UPDATE whiteboard_notes SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, n]);
+  await auditChange({ entityType: "whiteboard_note", entityId: req.params.id, action: "update", user: req.user, beforeData: { type: current.type, projectId: current.projectId || "" }, afterData: { type: n.type, projectId: n.projectId || "" } });
   res.json(n);
 });
-app.delete("/api/whiteboard-notes/:id", auth, async (req, res) => {
+app.delete("/api/whiteboard-notes/:id", auth, requireProjectWrite, async (req, res) => {
   const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   if (current.createdBy !== req.user.id && req.user.role !== "admin") return res.status(403).json({ error: "Solo quien creó la nota (o un administrador) puede eliminarla" });
   await pool.query("DELETE FROM whiteboard_notes WHERE id=$1", [req.params.id]);
+  await auditChange({ entityType: "whiteboard_note", entityId: req.params.id, action: "delete", user: req.user, beforeData: { type: current.type, projectId: current.projectId || "" } });
   res.status(204).end();
 });
 
@@ -1642,6 +1896,7 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60)
     await db.query("BEGIN");
     await db.query("INSERT INTO budgets(id,data) VALUES($1,$2)", [budget.id, budget]);
     const generatedInvoice = await upsertBudgetInvoice(budget, req.user, db);
+    await auditChange({ entityType: "budget", entityId: budget.id, action: "create", user: req.user, afterData: { number: budget.number, stage: budget.stage, amount: budget.amount, clientId: budget.clientId || "" } }, db);
     await db.query("COMMIT");
     res.json({ ...budget, _generatedInvoice: generatedInvoice });
   } catch (error) {
@@ -1706,6 +1961,7 @@ app.patch("/api/budgets/:id", auth, requireRole("admin", "gerente"), apiRateLimi
       }
     }
     const generatedInvoice = await upsertBudgetInvoice(budget, req.user, db);
+    await auditChange({ entityType: "budget", entityId: budget.id, action: "update", user: req.user, beforeData: { stage: current.stage, amount: current.amount, number: current.number }, afterData: { stage: budget.stage, amount: budget.amount, number: budget.number }, reason: changes.join(" · ") }, db);
     await db.query("COMMIT");
     res.json({ ...budget, _generatedInvoice: generatedInvoice });
   } catch (error) {
@@ -1734,6 +1990,7 @@ app.delete("/api/budgets/:id", auth, requireRole("admin", "gerente"), async (req
       const { budgetId, linkageSource, linkedAt, ...movement } = row.data;
       await db.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...movement, formerBudgetNumber: row.data.budgetNumber || budget.number || budget.id }]);
     }
+    await auditChange({ entityType: "budget", entityId: req.params.id, action: "delete", user: req.user, beforeData: { number: budget.number, stage: budget.stage, amount: budget.amount }, reason: String(req.body?.reason || "Eliminación solicitada desde la aplicación") }, db);
     await db.query("DELETE FROM budgets WHERE id=$1", [req.params.id]);
     await db.query("COMMIT");
     res.json({ deleted: true, removedInvoices });
@@ -1784,10 +2041,18 @@ app.get("/api/exchange-rates/wholesale", auth, requireRole("admin", "gerente"), 
   // El botón de refrescar manda force=1: sin esto el pedido caía en la caché del servidor y la
   // pantalla no cambiaba nada, dando la impresión de que la cotización no se actualizaba nunca.
   const force = req.query.force === "1";
+  if (!wholesaleRateCache) {
+    const persisted = (await pool.query("SELECT value,updated_at FROM app_settings WHERE key='wholesale_rate_last_good'")).rows[0];
+    if (persisted?.value?.arsPerUsd) wholesaleRateCache = { cachedAt: new Date(persisted.updated_at).getTime(), data: persisted.value };
+  }
   if (!force && wholesaleRateCache && Date.now() - wholesaleRateCache.cachedAt < WHOLESALE_RATE_CACHE_MS)
     return res.json({ ...wholesaleRateCache.data, fetchedAt: new Date(wholesaleRateCache.cachedAt).toISOString() });
   try {
-    const response = await fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/5?limit=1", { headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let response;
+    try { response = await fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/5?limit=1", { signal: controller.signal, headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } }); }
+    finally { clearTimeout(timeout); }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     const quote = payload?.results?.[0]?.detalle?.[0];
@@ -1796,6 +2061,7 @@ app.get("/api/exchange-rates/wholesale", auth, requireRole("admin", "gerente"), 
     // updatedAt identifica el día hábil publicado; fetchedAt, cuándo se realizó la consulta.
     const data = { currency: "USD", arsPerUsd: value, buy: null, sell: value, updatedAt: `${quote.fecha}T00:00:00-03:00`, source: "Banco Central de la República Argentina", sourceLabel: "Dólar mayorista · Comunicación A 3500", sourceUrl: "https://www.bcra.gob.ar/principales-variables/", variableId: 5 };
     wholesaleRateCache = { cachedAt: Date.now(), data };
+    await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('wholesale_rate_last_good',$1,now()) ON CONFLICT(key) DO UPDATE SET value=$1,updated_at=now()", [data]);
     res.json({ ...data, fetchedAt: new Date().toISOString() });
   } catch (error) {
     if (wholesaleRateCache?.data) return res.json({ ...wholesaleRateCache.data, fetchedAt: new Date(wholesaleRateCache.cachedAt).toISOString(), stale: true });
@@ -1900,10 +2166,10 @@ const normalizeFinancialMovement = (input, previous = {}) => {
     // El importe cargado es el total pagado (IVA incluido si corresponde). Se descompone para
     // poder calcular crédito fiscal, sin alterar el monto en caja que efectivamente salió.
     movement.vatIncluded = Boolean(movement.vatIncluded);
-    movement.vatRate = movement.vatIncluded ? 21 : 0;
-    movement.grossAmountUsd = movement.amountUsd;
-    movement.netAmountUsd = movement.vatIncluded ? Math.round((movement.amountUsd / (1 + movement.vatRate / 100)) * 100) / 100 : movement.amountUsd;
-    movement.vatAmountUsd = movement.vatIncluded ? Math.round((movement.grossAmountUsd - movement.netAmountUsd) * 100) / 100 : 0;
+    const vat = expenseVatBreakdown(movement.amountUsd, movement.vatIncluded, movement.vatRate, movement.vatComputablePercent ?? 100);
+    movement.vatRate = vat.rate; movement.vatComputablePercent = vat.computablePercent;
+    movement.grossAmountUsd = vat.gross; movement.netAmountUsd = vat.net;
+    movement.vatAmountUsd = vat.vat; movement.computableVatAmountUsd = vat.computableVat;
     movement.paymentStatus = ["paid", "pending"].includes(movement.paymentStatus) ? movement.paymentStatus : "paid";
     movement.paidAt = movement.paymentStatus === "paid" ? String(movement.paidAt || movement.date || "").slice(0, 10) : "";
   }
@@ -1937,10 +2203,10 @@ const applyApprovedBudgetLink = async (movement) => {
 };
 
 app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
+  let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body));
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
-  if (movement.attachments.reduce((sum, item) => sum + item.url.length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
+  if (movement.attachments.reduce((sum, item) => sum + String(item?.url || "").length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
   if (movement.kind === "invoice" && !String(movement.invoiceNumber || movement.receiptNumber || "").trim()) return res.status(400).json({ error: "Indica el número de factura." });
   if (!req.body?.confirmDuplicate) {
     const duplicate = await findDuplicateExpense(movement);
@@ -1965,13 +2231,16 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
+    movement = await externalizeFinancialAssets(movement, db, req.user.id);
     await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2)", [movement.id, movement]);
     const updatedBudgets = movement.kind === "income" ? await syncBudgetPaymentStatuses(movementBudgetIds(movement), db, req.user) : [];
+    await auditChange({ entityType: "financial_movement", entityId: movement.id, action: "create", user: req.user, afterData: { kind: movement.kind, amountUsd: movement.amountUsd, projectId: movement.projectId || "", budgetId: movement.budgetId || "" } }, db);
     await db.query("COMMIT");
     res.json({ ...movement, _updatedBudgets: updatedBudgets });
   } catch (error) {
     await db.query("ROLLBACK");
     if (error.code === "23505") return res.status(409).json({ error: "Ya existe un movimiento con ese identificador" });
+    if (error.code === "INVALID_ASSET") return res.status(413).json({ error: error.message });
     throw error;
   } finally { db.release(); }
 });
@@ -1994,15 +2263,16 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
     const paymentStatus = req.body.paymentStatus === "pending" ? "pending" : "paid";
     const movement = { ...current, paymentStatus, paidAt: paymentStatus === "paid" ? String(req.body.paidAt || new Date().toISOString().slice(0, 10)) : "", updatedBy: req.user.id, updatedByName: req.user.name, updatedAt: new Date().toISOString() };
     await pool.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, movement]);
+    await auditChange({ entityType: "financial_movement", entityId: req.params.id, action: "payment_status", user: req.user, beforeData: { paymentStatus: current.paymentStatus, paidAt: current.paidAt || "" }, afterData: { paymentStatus, paidAt: movement.paidAt } });
     return res.json(movement);
   }
   if (current.sourceOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de trabajo y no se edita manualmente." });
   if (current.sourcePurchaseOrderId) return res.status(409).json({ error: "Este gasto se genera automáticamente desde la orden de compra y no se edita manualmente." });
-  const movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
+  let movement = await applyApprovedBudgetLink(normalizeFinancialMovement(req.body, current));
   movement.id = req.params.id;
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
   if (movement.currency !== "USD" && !movement.exchangeRate) return res.status(400).json({ error: "Indica el tipo de cambio para calcular el equivalente en USD." });
-  if (movement.attachments.reduce((sum, item) => sum + item.url.length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
+  if (movement.attachments.reduce((sum, item) => sum + String(item?.url || "").length, 0) > MAX_MOVEMENT_ATTACHMENT_CHARS) return res.status(413).json({ error: "Los documentos adjuntos superan el tamaño permitido. Quita alguno o reducí su peso." });
   if (!req.body?.confirmDuplicate) {
     const duplicate = await findDuplicateExpense(movement, req.params.id);
     if (duplicate) return res.status(409).json(duplicateExpenseResponse(duplicate));
@@ -2019,12 +2289,17 @@ app.patch("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
+    movement = await externalizeFinancialAssets(movement, db, req.user.id);
     await db.query("UPDATE financial_movements SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, movement]);
+    const retainedAssetUrls = (movement.attachments || []).map((attachment) => attachment.url).filter((value) => typeof value === "string" && value.startsWith("/api/files/"));
+    await db.query("DELETE FROM file_assets WHERE entity_type='financial' AND entity_id=$1 AND NOT (('/api/files/' || id) = ANY($2::text[]))", [movement.id, retainedAssetUrls]);
     const updatedBudgets = (current.kind === "income" || movement.kind === "income") ? await syncBudgetPaymentStatuses(affectedBudgetIds, db, req.user) : [];
+    await auditChange({ entityType: "financial_movement", entityId: movement.id, action: "update", user: req.user, beforeData: { kind: current.kind, amountUsd: current.amountUsd, paymentStatus: current.paymentStatus }, afterData: { kind: movement.kind, amountUsd: movement.amountUsd, paymentStatus: movement.paymentStatus } }, db);
     await db.query("COMMIT");
     res.json({ ...movement, _updatedBudgets: updatedBudgets });
   } catch (error) {
     await db.query("ROLLBACK");
+    if (error.code === "INVALID_ASSET") return res.status(413).json({ error: error.message });
     throw error;
   } finally { db.release(); }
 });
@@ -2038,7 +2313,9 @@ app.delete("/api/finances/:id", auth, requireRole("admin", "gerente"), async (re
   try {
     await db.query("BEGIN");
     await db.query("DELETE FROM financial_movements WHERE id=$1", [req.params.id]);
+    await db.query("DELETE FROM file_assets WHERE entity_type='financial' AND entity_id=$1", [req.params.id]);
     const updatedBudgets = movement?.kind === "income" ? await syncBudgetPaymentStatuses(movementBudgetIds(movement), db, req.user) : [];
+    await auditChange({ entityType: "financial_movement", entityId: req.params.id, action: "delete", user: req.user, beforeData: { kind: movement?.kind, amountUsd: movement?.amountUsd, projectId: movement?.projectId || "", budgetId: movement?.budgetId || "" }, reason: String(req.body?.reason || "Eliminación solicitada desde la aplicación") }, db);
     await db.query("COMMIT");
     res.json({ deleted: true, _updatedBudgets: updatedBudgets });
   } catch (error) {
@@ -2091,6 +2368,7 @@ app.post("/api/parts", auth, requireRole("admin", "gerente"), async (req, res) =
   ["stock", "minStock"].forEach((k) => { if (p[k] !== undefined) p[k] = Number(p[k]) || 0; });
   try { await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un repuesto con ese identificador" }); throw error; }
+  await auditChange({ entityType: "part", entityId: p.id, action: "create", user: req.user, afterData: { name: p.name, stock: p.stock, price: p.price, cost: p.cost } });
   res.json(p);
 });
 app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -2099,10 +2377,26 @@ app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, r
   const patch = { ...(req.body || {}) };
   if (patch.category !== undefined) patch.category = MATERIAL_LIST_DISCIPLINES.includes(patch.category) ? patch.category : "Otro";
   ["price", "cost"].forEach((k) => { if (patch[k] !== undefined) patch[k] = wholeMoneyValue(patch[k]); });
-  ["stock", "minStock"].forEach((k) => { if (patch[k] !== undefined) patch[k] = Number(patch[k]) || 0; });
-  const merged = { ...rows[0].data, ...patch, id: req.params.id };
-  await pool.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
-  res.json(merged);
+  ["stock", "minStock"].forEach((k) => { if (patch[k] !== undefined) patch[k] = Math.max(0, Number(patch[k]) || 0); });
+  const previous = rows[0].data;
+  const requestedStock = patch.stock;
+  delete patch.stock;
+  const merged = { ...previous, ...patch, id: req.params.id };
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+    let result = merged;
+    if (requestedStock !== undefined) {
+      const delta = requestedStock - (Number(previous.stock) || 0);
+      if (delta) result = await adjustPartStock(req.params.id, delta, db, { movementType: "Ajuste manual", sourceType: "Inventario", sourceId: req.params.id, note: String(req.body?.stockAdjustmentReason || "Ajuste desde ficha de inventario"), userId: req.user.id });
+      else result = { ...merged, stock: requestedStock };
+    }
+    await auditChange({ entityType: "part", entityId: req.params.id, action: "update", user: req.user, beforeData: { stock: previous.stock, price: previous.price, cost: previous.cost }, afterData: { stock: result.stock, price: result.price, cost: result.cost }, reason: String(req.body?.stockAdjustmentReason || "") }, db);
+    await db.query("COMMIT");
+    res.json(result);
+  } catch (error) { await db.query("ROLLBACK"); throw error; }
+  finally { db.release(); }
 });
 app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   // Clientes y proveedores ya se protegían contra el borrado con registros vinculados; los
@@ -2121,15 +2415,19 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
     const detail = [pendingOrders ? `${pendingOrders} orden(es) de trabajo sin completar` : "", pendingPurchases ? `${pendingPurchases} orden(es) de compra sin recibir` : ""].filter(Boolean).join(" y ");
     return res.status(409).json({ error: `No se puede eliminar: el material figura en ${detail}. Al completarlas, su stock no se movería. Quitalo de esos documentos primero.` });
   }
-  const deleted = await pool.query("DELETE FROM parts WHERE id=$1 RETURNING id", [req.params.id]);
+  const movements = Number((await pool.query("SELECT count(*)::int count FROM stock_movements WHERE part_id=$1", [req.params.id])).rows[0]?.count || 0);
+  if (movements) return res.status(409).json({ error: `No se puede eliminar: el repuesto tiene ${movements} movimiento(s) históricos. Marcá el repuesto como inactivo para conservar la trazabilidad.` });
+  const deleted = await pool.query("DELETE FROM parts WHERE id=$1 RETURNING id,data", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  await auditChange({ entityType: "part", entityId: req.params.id, action: "delete", user: req.user, beforeData: { name: deleted.rows[0].data.name, stock: deleted.rows[0].data.stock } });
   res.status(204).end();
 });
 
 /* ------------------------------------------------ Órdenes (con reglas de montos por rol) ------------------------------------------------ */
-const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "assetId", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt", "recurrenceMonths", "recurrenceSpawnedId", "urgent"];
-const MANAGEMENT_PATCH = ["assetId", "rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "assignedTechs", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt", "recurrenceMonths", "recurrenceSpawnedId", "urgent"];
+const TEC_PATCH = ["signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "photos", "assetId", "equipo", "sintoma", "solucion", "category", "technical", "status", "location", "laborHours", "technicians", "contact", "materials", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt", "recurrenceMonths", "recurrenceSpawnedId", "urgent"];
+const MANAGEMENT_PATCH = ["assetId", "rate", "laborCost", "materials", "laborBillable", "status", "signatureUrl", "signedAt", "signedBy", "noSignReason", "technicianSignatureUrl", "technicianSignedAt", "technicianSignedBy", "quoteNumber", "customerPO", "tech", "techId", "assignedTechs", "assignedTechIds", "suspendReason", "suspendedFromStatus", "suspendedAt", "resumedAt", "reopenReason", "reopenedAt", "recurrenceMonths", "recurrenceSpawnedId", "urgent"];
 const sanitizeAssignedTechs = (value) => Array.isArray(value) ? [...new Set(value.map((name) => String(name || "").trim()).filter(Boolean))].slice(0, 8) : [];
+const sanitizeAssignedTechIds = (value) => Array.isArray(value) ? [...new Set(value.map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 8) : [];
 
 app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   const since = req.query.updated_since ? new Date(String(req.query.updated_since)) : null;
@@ -2138,7 +2436,7 @@ app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
     ? await pool.query("SELECT data, updated_at FROM orders WHERE updated_at>$1 ORDER BY updated_at", [since.toISOString()])
     : await pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC");
   const tec = isTec(req.user.role);
-  res.json(rows.filter((row) => orderVisibleToUser(req.user, row.data)).map((row) => ({ ...(tec ? stripMoney(row.data) : row.data), _updatedAt: row.updated_at })));
+  res.json(rows.filter((row) => !row.data.archivedAt && orderVisibleToUser(req.user, row.data)).map((row) => ({ ...(tec ? stripMoney(row.data) : row.data), _updatedAt: row.updated_at })));
 });
 
 app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req, res) => {
@@ -2146,10 +2444,13 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
   o.status = o.status || "Borrador";
   if (o.status === "En progreso") o.status = "En proceso de ejecución";
   o.assignedTechs = sanitizeAssignedTechs(o.assignedTechs);
+  o.assignedTechIds = sanitizeAssignedTechIds(o.assignedTechIds);
   if (isTec(req.user.role)) {
     delete o.budgetId; delete o.budgetNumber; delete o.projectId; delete o.quoteNumber; delete o.customerPO;
     o.tech = req.user.name;
+    o.techId = req.user.id;
     o.assignedTechs = [...new Set([req.user.name, ...o.assignedTechs])];
+    o.assignedTechIds = [...new Set([req.user.id, ...o.assignedTechIds])];
     if (!TECH_ORDER_STATUSES.has(o.status)) o.status = "Borrador";
   }
   if (o.budgetId) {
@@ -2166,6 +2467,11 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
     o.projectId = linkedBudget.projectId || o.projectId || "";
   }
   o.currency = "USD";
+  if (!o.clientId && o.client) {
+    const matchedClient = (await pool.query("SELECT data FROM clients WHERE lower(trim(data->>'name'))=lower(trim($1)) LIMIT 1", [o.client])).rows[0]?.data;
+    if (matchedClient) o.clientId = matchedClient.id;
+  }
+  await hydrateOrderAssignments(o);
   if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
   o.rate = normalizedRateValue(o.rate);
   o.laborCost = wholeMoneyValue(o.laborCost);
@@ -2201,9 +2507,20 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
   const businessErrors = orderBusinessErrors(o);
   if (businessErrors.length) return res.status(400).json({ error: businessErrors.join(" ") });
   o.billableHours = billableHoursValue(o);
-  try { await pool.query("INSERT INTO orders(id,data) VALUES($1,$2)", [o.id, o]); }
-  catch (error) { if (error.code === "23505") return res.status(409).json({ error: "El folio generado ya existe. Intenta guardar nuevamente." }); throw error; }
-  res.json(isTec(req.user.role) ? stripMoney(o) : o);
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    o = await externalizeOrderAssets(o, db, req.user.id);
+    await db.query("INSERT INTO orders(id,data) VALUES($1,$2)", [o.id, o]);
+    await auditChange({ entityType: "order", entityId: o.id, action: "create", user: req.user, afterData: { status: o.status, client: o.client, projectId: o.projectId || "", assignedTechIds: o.assignedTechIds || [] } }, db);
+    await db.query("COMMIT");
+    res.json(isTec(req.user.role) ? stripMoney(o) : o);
+  } catch (error) {
+    await db.query("ROLLBACK");
+    if (error.code === "23505") return res.status(409).json({ error: "El folio generado ya existe. Intenta guardar nuevamente." });
+    if (error.code === "INVALID_ASSET") return res.status(413).json({ error: error.message });
+    throw error;
+  } finally { db.release(); }
 });
 
 app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async (req, res) => {
@@ -2212,10 +2529,10 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
   if (!orderVisibleToUser(req.user, rows[0].data)) return res.status(403).json({ error: "Esta orden está asignada a otro técnico" });
   let patch = req.body || {};
   if ("assignedTechs" in patch) patch.assignedTechs = sanitizeAssignedTechs(patch.assignedTechs);
+  if ("assignedTechIds" in patch) patch.assignedTechIds = sanitizeAssignedTechIds(patch.assignedTechIds);
   if (isTec(req.user.role)) {
     const clean = {}; for (const k of TEC_PATCH) if (k in patch) clean[k] = patch[k];
     if (clean.status && !TECH_ORDER_STATUSES.has(clean.status)) delete clean.status;
-    if (clean.assignedTechs) clean.assignedTechs = [...new Set([req.user.name, ...clean.assignedTechs])];
     patch = clean;
   } else if (req.user.role === "gerente") {
     const clean = {}; for (const k of MANAGEMENT_PATCH) if (k in patch) clean[k] = patch[k];
@@ -2239,7 +2556,15 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
   if ("laborCost" in patch) patch.laborCost = wholeMoneyValue(patch.laborCost);
   if (Array.isArray(patch.materials)) patch.materials = isTec(req.user.role) ? await materialsFromInventory(patch.materials, false, false) : patch.materials.map((material) => ({ ...material, price: wholeMoneyValue(material.price), cost: wholeMoneyValue(material.cost) }));
   const prev = rows[0].data;
-  const merged = { ...prev, ...patch };
+  if (prev.stockDeductedAt && Array.isArray(patch.materials) && JSON.stringify(patch.materials) !== JSON.stringify(prev.materials || [])) {
+    return res.status(409).json({ error: "Los materiales de una orden con stock ya aplicado no pueden cambiarse. Anulá la orden para revertir el movimiento y generá una nueva corrección trazable." });
+  }
+  let merged = { ...prev, ...patch };
+  await hydrateOrderAssignments(merged);
+  if (merged.client && (!merged.clientId || merged.client !== prev.client)) {
+    const matchedClient = (await pool.query("SELECT data FROM clients WHERE lower(trim(data->>'name'))=lower(trim($1)) LIMIT 1", [merged.client])).rows[0]?.data;
+    merged.clientId = matchedClient?.id || "";
+  }
   if (merged.status === "En progreso") merged.status = "En proceso de ejecución";
   merged.currency = "USD";
   merged.technicians = Math.max(1, Math.round(Number(merged.technicians) || 1));
@@ -2258,21 +2583,33 @@ app.patch("/api/orders/:id", auth, requireOrdersAccess, apiRateLimit(60), async 
   } else if (req.user.role === "admin" && Object.keys(patch).length) {
     merged.activity = [...(prev.activity || []), { type: "edit", text: "Actualizó los datos de la orden", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   }
-  // Al completar la orden por primera vez, descuenta del catálogo los materiales facturables
-  // vinculados a un repuesto (partId). Guardado con stockDeductedAt para no descontar de nuevo si
-  // la orden se reabre y se vuelve a completar — evita descuentos duplicados, a costa de no
-  // reflejar correcciones de materiales posteriores a la primera finalización.
-  if (merged.status === "Completada" && prev.status !== "Completada" && !prev.stockDeductedAt) {
-    try {
+  // Orden, consumos, ledger, costo financiero y auditoría se confirman como una sola unidad.
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const locked = (await db.query("SELECT data FROM orders WHERE id=$1 FOR UPDATE", [req.params.id])).rows[0]?.data;
+    if (!locked) { await db.query("ROLLBACK"); return res.status(404).json({ error: "La orden ya no existe" }); }
+    if (JSON.stringify(locked) !== JSON.stringify(prev)) { await db.query("ROLLBACK"); return res.status(409).json({ error: "La orden fue modificada por otro usuario. Recarga antes de guardar." }); }
+    merged = await externalizeOrderAssets(merged, db, req.user.id);
+    if (merged.status === "Completada" && prev.status !== "Completada" && !prev.stockDeductedAt) {
       for (const material of merged.materials || []) {
-        if (material.billable && material.partId) await adjustPartStock(material.partId, -(Number(material.qty) || 0), pool, { movementType: "Consumo", sourceType: "Orden de trabajo", sourceId: merged.id, userId: req.user.id });
+        if (material.billable && material.partId) await adjustPartStock(material.partId, -(Number(material.qty) || 0), db, { movementType: "Consumo", sourceType: "Orden de trabajo", sourceId: merged.id, userId: req.user.id });
       }
       merged.stockDeductedAt = new Date().toISOString();
-    } catch (error) { console.error("No se pudo descontar el stock de la OT:", error); }
-  }
-  await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
-  if (merged.projectId || prev.projectId) { try { await upsertOrderCostExpense(merged); } catch (error) { console.error("No se pudo reconciliar el costo de la OT en Finanzas:", error); } }
-  res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
+    }
+    await db.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+    const retainedAssetUrls = [merged.signatureUrl, merged.technicianSignatureUrl, ...(merged.photos || []).flatMap((photo) => [photo.url, photo.preview])].filter((value) => typeof value === "string" && value.startsWith("/api/files/"));
+    await db.query("DELETE FROM file_assets WHERE entity_type='order' AND entity_id=$1 AND NOT (('/api/files/' || id) = ANY($2::text[]))", [merged.id, retainedAssetUrls]);
+    if (merged.projectId || prev.projectId) await upsertOrderCostExpense(merged, db);
+    await auditChange({ entityType: "order", entityId: merged.id, action: "update", user: req.user, beforeData: { status: prev.status, projectId: prev.projectId || "" }, afterData: { status: merged.status, projectId: merged.projectId || "", stockDeductedAt: merged.stockDeductedAt || "" }, reason: patch.reopenReason || patch.suspendReason || patch.technical?.timelineAdjustmentReason || "" }, db);
+    await db.query("COMMIT");
+    res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
+  } catch (error) {
+    await db.query("ROLLBACK");
+    if (["INSUFFICIENT_STOCK", "PART_NOT_FOUND"].includes(error.code)) return res.status(409).json({ error: error.message });
+    if (error.code === "INVALID_ASSET") return res.status(413).json({ error: error.message });
+    throw error;
+  } finally { db.release(); }
 });
 
 app.post("/api/orders/:id/comment", auth, requireOrdersAccess, async (req, res) => {
@@ -2283,12 +2620,27 @@ app.post("/api/orders/:id/comment", auth, requireOrdersAccess, async (req, res) 
   if (!text) return res.status(400).json({ error: "Comentario vacío" });
   const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  await auditChange({ entityType: "order", entityId: req.params.id, action: "comment", user: req.user, afterData: { commentAt: merged.activity.at(-1)?.at || "" } });
   res.json(isTec(req.user.role) ? stripMoney(merged) : merged);
 });
 
 app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  await pool.query("DELETE FROM orders WHERE id=$1", [req.params.id]);
-  res.status(204).end();
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const current = (await db.query("SELECT data FROM orders WHERE id=$1 FOR UPDATE", [req.params.id])).rows[0]?.data;
+    if (!current) { await db.query("ROLLBACK"); return res.status(404).json({ error: "No existe" }); }
+    if (current.stockDeductedAt) {
+      for (const material of current.materials || []) if (material.billable && material.partId) await adjustPartStock(material.partId, Number(material.qty) || 0, db, { movementType: "Reversión", sourceType: "Orden de trabajo anulada", sourceId: current.id, userId: req.user.id });
+    }
+    await db.query("DELETE FROM financial_movements WHERE data->>'sourceOrderId'=$1", [current.id]);
+    const archived = { ...current, statusBeforeArchive: current.status, status: "Anulada", archivedAt: new Date().toISOString(), archivedBy: req.user.id };
+    await db.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [current.id, archived]);
+    await auditChange({ entityType: "order", entityId: current.id, action: "archive", user: req.user, beforeData: { status: current.status, stockDeductedAt: current.stockDeductedAt || "" }, afterData: { status: "Anulada", archivedAt: archived.archivedAt }, reason: String(req.body?.reason || "Anulación solicitada desde la aplicación") }, db);
+    await db.query("COMMIT");
+    res.status(204).end();
+  } catch (error) { await db.query("ROLLBACK"); throw error; }
+  finally { db.release(); }
 });
 
 /* ------------------------------------------------ Tareas ------------------------------------------------ */
@@ -2329,6 +2681,7 @@ app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
     t.id = `${key}-${Math.max(0, ...ids) + 1}`;
   }
   await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [t.id, t]);
+  await auditChange({ entityType: "task", entityId: t.id, action: "create", user: req.user, afterData: { project: t.project, status: t.status, assignee: t.assignee } });
   if (t.assignee) await ensureProjectAccess(t.assignee, t.project);
   // Notifica al responsable si es una asignación nueva (a otra persona)
   if (t.assignee && t.assignee !== req.user.id && (!existing || existing.assignee !== t.assignee)) {
@@ -2352,6 +2705,7 @@ app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
   if (patch.status && patch.status !== prev.status)
     merged.activity = [...(prev.activity || []), { type: "status", text: `Estado: ${patch.status}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  await auditChange({ entityType: "task", entityId: req.params.id, action: "update", user: req.user, beforeData: { project: prev.project, status: prev.status, assignee: prev.assignee }, afterData: { project: merged.project, status: merged.status, assignee: merged.assignee } });
   if (patch.assignee !== undefined) await ensureProjectAccess(patch.assignee, merged.project);
   if (patch.assignee && patch.assignee !== prev.assignee && patch.assignee !== req.user.id) {
     await notify(patch.assignee, `Te asignaron la tarea ${merged.id}: ${merged.title}`, "task:" + merged.id);
@@ -2367,12 +2721,16 @@ app.post("/api/tasks/:id/comment", auth, requireProjectWrite, async (req, res) =
   if (!text) return res.status(400).json({ error: "Comentario vacío" });
   const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  await auditChange({ entityType: "task", entityId: req.params.id, action: "comment", user: req.user, afterData: { commentLength: text.length } });
   // avisa al responsable si comenta otra persona
   if (merged.assignee && merged.assignee !== req.user.id) await notify(merged.assignee, `Nuevo comentario en ${merged.id}`, "task:" + merged.id);
   res.json(merged);
 });
 app.delete("/api/tasks/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  await pool.query("DELETE FROM tasks WHERE id=$1", [req.params.id]); res.status(204).end();
+  const deleted = await pool.query("DELETE FROM tasks WHERE id=$1 RETURNING data", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  await auditChange({ entityType: "task", entityId: req.params.id, action: "delete", user: req.user, beforeData: { project: deleted.rows[0].data.project, status: deleted.rows[0].data.status, assignee: deleted.rows[0].data.assignee } });
+  res.status(204).end();
 });
 
 /* ------------------------------------------------ Usuarios (solo Admin) ------------------------------------------------ */
@@ -2398,6 +2756,7 @@ app.post("/api/users", auth, requireRole("admin"), async (req, res) => {
     }
   }
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [id]);
+  await auditChange({ entityType: "user", entityId: id, action: "create", user: req.user, afterData: { name: cleanName, email: cleanEmail, role: role || "tecnico", active: true } });
   res.json(pubUser(rows[0]));
 });
 app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
@@ -2438,6 +2797,7 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
     }
   }
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.params.id]);
+  await auditChange({ entityType: "user", entityId: req.params.id, action: "update", user: req.user, beforeData: { role: target.role, active: target.active }, afterData: { role: rows[0].role, active: rows[0].active }, reason: password ? "Incluye restablecimiento de contraseña" : "" });
   res.json(pubUser(rows[0]));
 });
 app.delete("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
@@ -2452,9 +2812,17 @@ app.delete("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   try {
     await db.query("BEGIN");
     await db.query("UPDATE tasks SET data=(data-'assignee') || jsonb_build_object('formerAssigneeName',$2::text), updated_at=now() WHERE data->>'assignee'=$1", [req.params.id, target.name]);
+    const assignedOrders = (await db.query("SELECT id,data FROM orders WHERE data->>'techId'=$1 OR data->'assignedTechIds' ? $1", [req.params.id])).rows;
+    for (const row of assignedOrders) {
+      const assignedTechIds = (row.data.assignedTechIds || []).filter((id) => id !== req.params.id);
+      const order = { ...row.data, assignedTechIds, formerAssignedTechnician: target.name };
+      if (order.techId === req.params.id) order.techId = "";
+      await db.query("UPDATE orders SET data=$2, updated_at=now() WHERE id=$1", [row.id, order]);
+    }
     const projects = (await db.query("SELECT id,data FROM projects WHERE data->'allowedUsers' ? $1", [req.params.id])).rows;
     for (const row of projects) await db.query("UPDATE projects SET data=$2, updated_at=now() WHERE id=$1", [row.id, { ...row.data, allowedUsers: (row.data.allowedUsers || []).filter((id) => id !== req.params.id) }]);
     await db.query("DELETE FROM notifications WHERE user_id=$1", [req.params.id]);
+    await auditChange({ entityType: "user", entityId: req.params.id, action: "delete", user: req.user, beforeData: { name: target.name, role: target.role, active: target.active }, reason: String(req.body?.reason || "Eliminación solicitada desde la aplicación") }, db);
     await db.query("DELETE FROM users WHERE id=$1", [req.params.id]);
     await db.query("COMMIT");
     res.status(204).end();
@@ -2475,7 +2843,13 @@ app.use((error, req, res, _next) => {
 
 /* ------------------------------------------------ Frontend estático (SPA) ------------------------------------------------ */
 const dist = path.join(__dirname, "public");
-app.use(express.static(dist));
+app.use(express.static(dist, {
+  etag: true,
+  setHeaders(res, filePath) {
+    if (/[/\\]assets[/\\].*-[A-Za-z0-9_-]{8,}\./.test(filePath)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    else if (/\.(?:html|webmanifest)$/i.test(filePath)) res.setHeader("Cache-Control", "no-cache");
+  },
+}));
 app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
 
 /* ---------------------------------- Resumen diario de pendientes ----------------------------------
@@ -2562,5 +2936,6 @@ function scheduleDailyDigest() {
 /* ------------------------------------------------ Arranque ------------------------------------------------ */
 const PORT = process.env.PORT || 3000;
 initDb()
+  .then(() => migrateLegacyDataAssets())
   .then(() => app.listen(PORT, () => { console.log(`OrdenGO API + web escuchando en :${PORT}`); scheduleDailyDigest(); }))
   .catch((e) => { console.error("Error iniciando la base de datos:", e); process.exit(1); });

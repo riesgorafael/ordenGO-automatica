@@ -6,6 +6,9 @@
   "display": "standalone",
   "background_color": "#f1f5f9",
   "theme_color": "#2E2E2D",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
   "lang": "es",
   "categories": ["business", "productivity"]
 }

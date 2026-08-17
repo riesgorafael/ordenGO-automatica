@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OrdenGO">
+  <rect width="512" height="512" rx="96" fill="#2E2E2D"/>
+  <g fill="#F18700">
+    <rect x="88" y="92" width="76" height="76" rx="10"/><rect x="176" y="92" width="76" height="76" rx="10"/>
+    <rect x="88" y="180" width="76" height="76" rx="10"/><rect x="176" y="180" width="76" height="76" rx="10"/>
+  </g>
+  <path d="M304 143h112M304 216h112M96 330h320M96 394h244" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round"/>
+</svg>

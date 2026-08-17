@@ -10,7 +10,7 @@ import { Gantt, ViewMode } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
 import { Upload, Download, Loader2, AlertTriangle, Plus, Trash2, X, CheckSquare } from "lucide-react";
 import { api } from "./api";
-import { exportGanttToPdf } from "./ganttPdf";
+const exportGanttToPdf = (...args) => import("./ganttPdf").then((module) => module.exportGanttToPdf(...args));
 
 const DEPENDENCY_TYPES = [
   ["FS", "Fin → Inicio (la predecesora termina antes de que esta empiece)"],

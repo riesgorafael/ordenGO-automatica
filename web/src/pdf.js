@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo.js";
+import { billableHoursValue } from "../../shared/domainRules.js";
 
 // Ancho del logo en el PDF (mm)
 const LOGO_W = 42;
@@ -17,19 +18,21 @@ const formatStamp = (value) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 };
-// OJO: esta función replica billableLaborHours de App.jsx. Están duplicadas a propósito para que
-// pdf.js no dependa del bundle de la app, pero cualquier cambio en la regla de facturación tiene
-// que hacerse en las DOS o el PDF le factura al cliente un importe distinto del que se ve en
-// pantalla. El mínimo sale del contrato del cliente (minimumBillableHours) cuando la orden lo trae.
-const billedHours = (o) => {
-  if (o.billableHours !== undefined && o.billableHours !== null && o.billableHours !== "") return Math.max(0, Number(o.billableHours) || 0);
-  const effective = Math.max(0, Number(o.laborHours) || 0), waiting = Math.max(0, Number(o.technical?.billableWaitMinutes) || 0) / 60;
-  const arrival = o.technical?.arrivalAt ? new Date(o.technical.arrivalAt).getTime() : NaN;
-  const end = o.technical?.completedAt ? new Date(o.technical.completedAt).getTime() : Date.now();
-  const onSite = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
-  const minimum = Number(o.minimumBillableHours) > 0 ? Number(o.minimumBillableHours) : 2;
-  return onSite > 0 && onSite < 3600000 ? minimum : Math.round((effective + waiting) * 100) / 100;
+const assetAsDataUrl = async (value) => {
+  if (!value || value === "signed" || String(value).startsWith("data:")) return value;
+  if (!String(value).startsWith("/api/files/")) return value;
+  const response = await fetch(value, { credentials: "include" });
+  if (!response.ok) throw new Error("No se pudo descargar una evidencia para el reporte.");
+  const blob = await response.blob();
+  return await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
 };
+const orderWithEmbeddedAssets = async (order) => ({
+  ...order,
+  signatureUrl: await assetAsDataUrl(order.signatureUrl),
+  technicianSignatureUrl: await assetAsDataUrl(order.technicianSignatureUrl),
+  photos: await Promise.all((order.photos || []).map(async (photo) => ({ ...photo, url: await assetAsDataUrl(photo.url), preview: await assetAsDataUrl(photo.preview) }))),
+});
+const billedHours = billableHoursValue;
 function totals(o) {
   const hours = billedHours(o);
   const labor = o.laborBillable ? hours * (Number(o.technicians) || 1) * (Number(o.rate) || 0) : 0;
@@ -383,9 +386,9 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
   return doc;
 }
 
-export function clientOrderReportPDF(order, project = null) { buildOrderReceiptPDF(order, "client", project).save(`${order.id}_cliente.pdf`); }
-export function valuedClientReportPDF(order, project = null) { buildOrderReceiptPDF(order, "valued", project).save(`${order.id}_cliente_valorizado.pdf`); }
-export function internalOrderReportPDF(order, project = null) { buildOrderReceiptPDF(order, "internal", project).save(`${order.id}_interno.pdf`); }
+export async function clientOrderReportPDF(order, project = null) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "client", project).save(`${order.id}_cliente.pdf`); }
+export async function valuedClientReportPDF(order, project = null) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "valued", project).save(`${order.id}_cliente_valorizado.pdf`); }
+export async function internalOrderReportPDF(order, project = null) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "internal", project).save(`${order.id}_interno.pdf`); }
 
 export function monthlyReportPDF(month, monthLabel, rows, sum) {
   const doc = new jsPDF("p", "mm", "a4");

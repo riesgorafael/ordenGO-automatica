@@ -9,9 +9,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ["react", "react-dom"],
           charts: ["recharts"],
-          pdf: ["jspdf"],
         },
       },
     },

@@ -102,6 +102,28 @@ export function registerGanttRoutes(app, pool, { auth, requireRole, tecCanProjec
     const allowed = ["start", "end", "percentComplete", "name", "milestone", "isSummary", "parentId", "predecessors", "durationDays", "linkedTaskId"];
     const merged = { ...current.data };
     for (const key of allowed) if (key in patch) merged[key] = patch[key];
+    if (!merged.start || !merged.end || new Date(merged.end) < new Date(merged.start)) return res.status(400).json({ error: "La fecha de fin no puede ser anterior a la de inicio" });
+    if (merged.parentId) {
+      const parent = (await pool.query("SELECT 1 FROM gantt_tasks WHERE id=$1 AND project_id=$2", [merged.parentId, current.project_id])).rows[0];
+      if (!parent) return res.status(400).json({ error: "La tarea padre no existe en este proyecto" });
+    }
+    merged.predecessors = Array.isArray(merged.predecessors) ? merged.predecessors.filter((dependency) => dependency?.taskId).map((dependency) => ({ taskId: String(dependency.taskId), type: ["FS", "SS", "FF", "SF"].includes(dependency.type) ? dependency.type : "FS", lagDays: Number(dependency.lagDays) || 0 })) : [];
+    if (merged.predecessors.some((dependency) => dependency.taskId === req.params.id)) return res.status(400).json({ error: "Una tarea no puede depender de sí misma" });
+    for (const dependency of merged.predecessors) {
+      const exists = (await pool.query("SELECT 1 FROM gantt_tasks WHERE id=$1 AND project_id=$2", [dependency.taskId, current.project_id])).rows[0];
+      if (!exists) return res.status(400).json({ error: `La tarea predecesora ${dependency.taskId} no existe en este proyecto` });
+    }
+    const projectTasks = (await pool.query("SELECT id,data FROM gantt_tasks WHERE project_id=$1", [current.project_id])).rows.map((row) => [row.id, row.id === req.params.id ? merged : row.data]);
+    const graph = new Map(projectTasks.map(([id, data]) => [id, [data.parentId, ...(Array.isArray(data.predecessors) ? data.predecessors.map((dependency) => dependency.taskId) : [])].filter(Boolean)]));
+    const visiting = new Set(); const visited = new Set();
+    const hasCycle = (id) => {
+      if (visiting.has(id)) return true;
+      if (visited.has(id)) return false;
+      visiting.add(id);
+      for (const dependencyId of graph.get(id) || []) if (graph.has(dependencyId) && hasCycle(dependencyId)) return true;
+      visiting.delete(id); visited.add(id); return false;
+    };
+    if ([...graph.keys()].some((id) => hasCycle(id))) return res.status(409).json({ error: "La relación genera un ciclo entre tareas. Revisa padre y predecesoras." });
     if (patch.start || patch.end) merged.durationDays = Math.max(1, Math.round((new Date(merged.end) - new Date(merged.start)) / 86400000) + 1);
     await pool.query("UPDATE gantt_tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
     res.json(merged);

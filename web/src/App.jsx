@@ -13,11 +13,22 @@ import {
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
-import { budgetReportPDF, clientOrderReportPDF, dashboardReportPDF, financeReportPDF, internalOrderReportPDF, materialListReportPDF, monthlyReportPDF, projectStatusReportPDF, purchaseOrderReportPDF, valuedClientReportPDF } from "./pdf";
+const pdfModule = () => import("./pdf");
+const budgetReportPDF = (...args) => pdfModule().then((module) => module.budgetReportPDF(...args));
+const clientOrderReportPDF = (...args) => pdfModule().then((module) => module.clientOrderReportPDF(...args));
+const dashboardReportPDF = (...args) => pdfModule().then((module) => module.dashboardReportPDF(...args));
+const financeReportPDF = (...args) => pdfModule().then((module) => module.financeReportPDF(...args));
+const internalOrderReportPDF = (...args) => pdfModule().then((module) => module.internalOrderReportPDF(...args));
+const materialListReportPDF = (...args) => pdfModule().then((module) => module.materialListReportPDF(...args));
+const monthlyReportPDF = (...args) => pdfModule().then((module) => module.monthlyReportPDF(...args));
+const projectStatusReportPDF = (...args) => pdfModule().then((module) => module.projectStatusReportPDF(...args));
+const purchaseOrderReportPDF = (...args) => pdfModule().then((module) => module.purchaseOrderReportPDF(...args));
+const valuedClientReportPDF = (...args) => pdfModule().then((module) => module.valuedClientReportPDF(...args));
 import { parseReceiptImage } from "./receiptOcr";
 import { warpPerspective, autoDetectCorners } from "./imagePerspective";
 import GanttChart from "./GanttChart";
-import { clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, updateQueuedOrder } from "./offline";
+import { billableHoursValue } from "../../shared/domainRules.js";
+import { clearOfflineUserData, clearOrderDraft, flushOfflineQueue, loadOrderDraft, offlineQueueSize, queueOfflineOperation, rememberSyncedOrderId, resolveSyncedOrderId, saveOrderDraft, setOfflineUser, updateQueuedOrder } from "./offline";
 
 /* ===================================== CONFIG ===================================== */
 const CUR = "USD ";
@@ -436,16 +447,7 @@ const timelineErrors = (technical, now = Date.now()) => {
 // Mínimo facturable de una visita corta. Sale del contrato del cliente cuando la orden tiene uno
 // (el servidor le copia minimumBillableHours); 2 h para las que no. Se cambia SOLO el valor del
 // mínimo, no cuándo se aplica: la regla sigue siendo "visita de menos de 1 hora", como estaba.
-const minimumBillableHours = (order) => (Number(order?.minimumBillableHours) > 0 ? Number(order.minimumBillableHours) : 2);
-const billableLaborHours = (order, now = Date.now()) => {
-  if (order?.billableHours !== undefined && order?.billableHours !== null && order?.billableHours !== "") return Math.max(0, Number(order.billableHours) || 0);
-  const effective = Math.max(0, Number(order?.laborHours) || 0);
-  const waiting = Math.max(0, Number(order?.technical?.billableWaitMinutes) || 0) / 60;
-  const arrival = order?.technical?.arrivalAt ? new Date(order.technical.arrivalAt).getTime() : NaN;
-  const end = order?.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : now;
-  const onSiteMs = Number.isFinite(arrival) && Number.isFinite(end) ? Math.max(0, end - arrival) : 0;
-  return onSiteMs > 0 && onSiteMs < 3600000 ? minimumBillableHours(order) : round2(effective + waiting);
-};
+const billableLaborHours = billableHoursValue;
 const compactDuration = (milliseconds) => {
   const minutes = Math.max(0, Math.round((Number(milliseconds) || 0) / 60000));
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
@@ -722,6 +724,7 @@ export default function App() {
 
   const boot = async () => {
     const d = await api.bootstrap();
+    setOfflineUser(d.me.id); setOfflineCount(offlineQueueSize());
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING);
     orderSyncCursor.current = (d.orders || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
     taskSyncCursor.current = (d.tasks || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current);
@@ -750,15 +753,6 @@ export default function App() {
     const safeModule = allowed.includes(module) ? module : (me.role === "monitor_oficina" ? "projects" : "inicio");
     try { localStorage.setItem(`ordengo_navigation_${me.id}`, JSON.stringify({ module: safeModule, orderTab: oTab, projectTab: pTab })); } catch {}
   }, [me, module, oTab, pTab]);
-
-  useEffect(() => {
-    // Las pantallas TV (Monitor Oficina) quedan encendidas indefinidamente; re-consultan su propia
-    // configuración (nombre, modo TV, rotación) periódicamente para reflejar cambios hechos por un admin
-    // sin necesidad de recargar la página manualmente en el televisor.
-    if (!me || me.role !== "monitor_oficina" || !online) return;
-    const interval = window.setInterval(() => { boot().catch(() => {}); }, 60000);
-    return () => window.clearInterval(interval);
-  }, [me?.id, me?.role, online]);
 
   useEffect(() => {
     if (!me || !online || module !== "orders") return;
@@ -861,7 +855,7 @@ export default function App() {
     return () => { cancelled = true; document.removeEventListener("visibilitychange", onVisibility); wakeLock?.release().catch(() => {}); };
   }, [me?.role, tvSettings.tvModeEnabled]);
 
-  const logout = () => { api.logout().catch(() => {}); setToken(null); setMe(null); setModule("orders"); setOView("list"); };
+  const logout = () => { if (me?.id) clearOfflineUserData(me.id); api.logout().catch(() => {}); setToken(null); setMe(null); setOfflineCount(0); setModule("orders"); setOView("list"); };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
   if (booting) return <div className="grid min-h-screen place-items-center bg-ink-900 text-slate-300"><div className="motion-page flex flex-col items-center gap-3" role="status" aria-label="Cargando OrdenGO"><div className="skeleton h-9 w-36 rounded-lg" /><Loader2 className="h-5 w-5 animate-spin" /></div></div>;
@@ -879,7 +873,8 @@ export default function App() {
   const onSaveOrder = async (o, { stayOpen = false } = {}) => {
     if (!online) {
       const localId = `PEND-${Date.now().toString(36).slice(-5).toUpperCase()}`;
-      queueOfflineOperation("order:create", { ...o, _localId: localId });
+      try { queueOfflineOperation("order:create", { ...o, _localId: localId }); }
+      catch (error) { err(error); return false; }
       const local = { ...o, id: localId, _offline: true };
       setOrders((p) => [local, ...p]); setOfflineCount(offlineQueueSize()); if (!stayOpen) setOView("list"); toast("Orden guardada en el teléfono. Se enviará al recuperar conexión.", "success"); return local;
     }
@@ -894,9 +889,9 @@ export default function App() {
     if (id.startsWith("PEND-")) {
       const syncedId = online ? resolveSyncedOrderId(id) : "";
       if (syncedId) return updateOrder(syncedId, patch);
-      updateQueuedOrder(id, patch); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return updated;
+      try { updateQueuedOrder(id, patch); } catch (error) { err(error); return false; } const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio actualizado en la orden pendiente", "success"); return updated;
     }
-    if (!online) { queueOfflineOperation("order:update", { id, patch }); setOfflineCount(offlineQueueSize()); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio guardado para sincronizar", "success"); return updated; }
+    if (!online) { try { queueOfflineOperation("order:update", { id, patch }); } catch (error) { err(error); return false; } setOfflineCount(offlineQueueSize()); const updated = { id, ...patch, _offline: true }; setOrders((p) => p.map((o) => (o.id === id ? { ...o, ...updated } : o))); toast("Cambio guardado para sincronizar", "success"); return updated; }
     try {
       const u = await api.updateOrder(id, patch);
       setOrders((p) => p.map((o) => (o.id === id ? u : o)));
@@ -917,7 +912,7 @@ export default function App() {
       return u;
     } catch (e) { err(e); return false; }
   };
-  const deleteOrder = (id) => setConfirmDialog({ title: `Eliminar ${id}`, message: "La orden y su historial se eliminarán de forma permanente.", confirmLabel: "Eliminar orden", danger: true, action: async () => { try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } } });
+  const deleteOrder = (id) => setConfirmDialog({ title: `Anular ${id}`, message: "La orden quedará anulada y archivada. Se revertirán de forma transaccional el stock aplicado y el movimiento financiero generado, conservando su trazabilidad para auditoría.", confirmLabel: "Anular orden", danger: true, action: async () => { try { await api.deleteOrder(id); setOrders((p) => p.filter((o) => o.id !== id)); setODetail(null); } catch (e) { err(e); } } });
   const exportCSV = (rows, name) => {
     const head = ["Folio", "Fecha", "Cliente", "Sitio", "Tipo", "Estado", "Horas efectivas", "Horas facturables", "Técnicos", "Horas-técnico facturables", "Mano de obra (USD)", "Materiales (USD)", "Total (USD)"];
     const lines = rows.map((o) => { const t = orderTotals(o); const technicianHours = t.billedHours * (Number(o.technicians) || 1); return [o.id, o.date, o.client, o.site, o.service, o.status, o.laborHours, t.billedHours, o.technicians || 1, technicianHours, t.labor.toFixed(2), t.mats.toFixed(2), t.total.toFixed(2)].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(CSV_SEP); });
@@ -927,7 +922,7 @@ export default function App() {
   /* Proyectos */
   const onSaveTask = async (t) => {
     const exists = tasks.some((task) => task.id === t.id);
-    if (!online) { queueOfflineOperation(exists ? "task:update" : "task:save", exists ? { id: t.id, patch: t } : t); setOfflineCount(offlineQueueSize()); setTasks((p) => (exists ? p.map((x) => x.id === t.id ? { ...x, ...t, _offline: true } : x) : [{ ...t, _offline: true }, ...p])); setEditing(undefined); toast("Tarea guardada para sincronizar", "success"); return; }
+    if (!online) { try { queueOfflineOperation(exists ? "task:update" : "task:save", exists ? { id: t.id, patch: t } : t); } catch (error) { err(error); return; } setOfflineCount(offlineQueueSize()); setTasks((p) => (exists ? p.map((x) => x.id === t.id ? { ...x, ...t, _offline: true } : x) : [{ ...t, _offline: true }, ...p])); setEditing(undefined); toast("Tarea guardada para sincronizar", "success"); return; }
     try {
       const s = exists ? await api.updateTask(t.id, t) : await api.saveTask(t);
       setTasks((p) => (p.some((x) => x.id === s.id) ? p.map((x) => (x.id === s.id ? s : x)) : [s, ...p]));
@@ -971,7 +966,7 @@ export default function App() {
   };
   const setTaskStatus = async (id, status) => {
     const t = tasks.find((x) => x.id === id); if (!t || t.status === status) return;
-    if (!online) { queueOfflineOperation("task:update", { id, patch: { status } }); setOfflineCount(offlineQueueSize()); setTasks((p) => p.map((x) => x.id === id ? { ...x, status, _offline: true } : x)); return; }
+    if (!online) { try { queueOfflineOperation("task:update", { id, patch: { status } }); } catch (error) { err(error); return; } setOfflineCount(offlineQueueSize()); setTasks((p) => p.map((x) => x.id === id ? { ...x, status, _offline: true } : x)); return; }
     try { const u = await api.updateTask(id, { status }); setTasks((p) => p.map((x) => (x.id === id ? u : x))); } catch (e) { err(e); }
   };
   const moveTask = (id, dir) => {
@@ -1821,27 +1816,116 @@ function InvoiceDocsDialog({ invoice, onClose, onSave }) {
   </div>;
 }
 
-function FinanceEntryModal({ movement, duplicating = false, initialKind = "expense", projects, budgets, clients, invoices = [], branding, onClose, onSave }) {
+function FinanceEntryModal({
+  movement,
+  duplicating = false,
+  initialKind = "expense",
+  projects,
+  budgets,
+  clients,
+  invoices = [],
+  branding,
+  onClose,
+  onSave,
+}) {
   useDialogOpenClass(onClose);
-  const [form, setForm] = useState(() => { const base = { kind: initialKind, concept: "", amount: "", currency: "USD", exchangeRate: 1, date: todayStr(), category: EXPENSE_CATEGORIES[0], paymentMethod: PAYMENT_METHODS[0], projectId: "", budgetId: "", clientId: "", supplier: "", receiptNumber: "", detail: "", attachments: [], vatIncluded: false, deductions: "", paymentStatus: "paid", paidAt: todayStr(), ...(movement || {}) }; return { ...base, attachments: attachmentsOf(base) }; });
+  const [form, setForm] = useState(() => {
+    const base = {
+      kind: initialKind,
+      concept: "",
+      amount: "",
+      currency: "USD",
+      exchangeRate: 1,
+      date: todayStr(),
+      category: EXPENSE_CATEGORIES[0],
+      paymentMethod: PAYMENT_METHODS[0],
+      projectId: "",
+      budgetId: "",
+      clientId: "",
+      supplier: "",
+      receiptNumber: "",
+      detail: "",
+      attachments: [],
+      vatIncluded: false,
+      vatRate: 21,
+      vatComputablePercent: 100,
+      deductions: "",
+      paymentStatus: "paid",
+      paidAt: todayStr(),
+      ...(movement || {}),
+    };
+    return { ...base, attachments: attachmentsOf(base) };
+  });
   // Varios documentos por movimiento: la factura, el cupón de la tarjeta, el remito. Los registros
   // viejos traen un adjunto suelto y attachmentsOf los normaliza al abrir.
   const formAttachments = form.attachments || [];
-  const addAttachment = (url, name) => setForm((current) => ({ ...current, attachments: [...(current.attachments || []), { url, name: name || `Documento ${(current.attachments || []).length + 1}` }].slice(0, MAX_MOVEMENT_DOCS) }));
-  const removeAttachment = (index) => setForm((current) => ({ ...current, attachments: (current.attachments || []).filter((_, position) => position !== index) }));
-  const [pickMode, setPickMode] = useState(!movement); const [saving, setSaving] = useState(false); const [processing, setProcessing] = useState(false);
+  const addAttachment = (url, name) =>
+    setForm((current) => ({
+      ...current,
+      attachments: [
+        ...(current.attachments || []),
+        {
+          url,
+          name: name || `Documento ${(current.attachments || []).length + 1}`,
+        },
+      ].slice(0, MAX_MOVEMENT_DOCS),
+    }));
+  const removeAttachment = (index) =>
+    setForm((current) => ({
+      ...current,
+      attachments: (current.attachments || []).filter(
+        (_, position) => position !== index,
+      ),
+    }));
+  const [pickMode, setPickMode] = useState(!movement);
+  const [saving, setSaving] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [aiNotice, setAiNotice] = useState(null); // {ok, confidence} | null
   const [companyMismatch, setCompanyMismatch] = useState(null); // {receptorCuit, receptorName} | null
   const [mismatchConfirmed, setMismatchConfirmed] = useState(false);
-  const [rateInfo, setRateInfo] = useState(null); const [rateLoading, setRateLoading] = useState(false); const [rateError, setRateError] = useState("");
-  const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const [rateInfo, setRateInfo] = useState(null);
+  const [rateLoading, setRateLoading] = useState(false);
+  const [rateError, setRateError] = useState("");
+  const set = (field, value) =>
+    setForm((current) => ({ ...current, [field]: value }));
   const projectLink = (projectId) => {
     const project = projects.find((item) => item.id === projectId);
-    const budget = budgets.find((item) => ["Aprobado", "Facturado", "Pagado"].includes(item.stage) && (item.id === project?.budgetId || item.projectId === projectId));
-    return { project, budget, clientId: project?.clientId || budget?.clientId || "", clientName: project?.client || budget?.client || "" };
+    const budget = budgets.find(
+      (item) =>
+        ["Aprobado", "Facturado", "Pagado"].includes(item.stage) &&
+        (item.id === project?.budgetId || item.projectId === projectId),
+    );
+    return {
+      project,
+      budget,
+      clientId: project?.clientId || budget?.clientId || "",
+      clientName: project?.client || budget?.client || "",
+    };
   };
-  const selectProject = (projectId) => setForm((current) => { const linked = projectLink(projectId); return { ...current, projectId, clientId: linked.clientId, clientName: linked.clientName, budgetId: linked.budget?.id || "" }; });
-  const selectKind = (kind) => setForm((current) => { const linked = projectLink(current.projectId); return { ...current, kind, category: kind === "expense" ? current.category || EXPENSE_CATEGORIES[0] : "", clientId: linked.clientId || current.clientId, clientName: linked.clientName || current.clientName, budgetId: linked.budget?.id || current.budgetId }; });
+  const selectProject = (projectId) =>
+    setForm((current) => {
+      const linked = projectLink(projectId);
+      return {
+        ...current,
+        projectId,
+        clientId: linked.clientId,
+        clientName: linked.clientName,
+        budgetId: linked.budget?.id || "",
+      };
+    });
+  const selectKind = (kind) =>
+    setForm((current) => {
+      const linked = projectLink(current.projectId);
+      return {
+        ...current,
+        kind,
+        category:
+          kind === "expense" ? current.category || EXPENSE_CATEGORIES[0] : "",
+        clientId: linked.clientId || current.clientId,
+        clientName: linked.clientName || current.clientName,
+        budgetId: linked.budget?.id || current.budgetId,
+      };
+    });
   const selectedLink = projectLink(form.projectId);
   const [cropPending, setCropPending] = useState(null); // { dataUrl, fileName } | null — foto recién elegida, esperando recorte
   // Corre el OCR sobre la imagen ya recortada (o la original, si el usuario eligió no recortar) y
@@ -1851,44 +1935,83 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
   // evidencia es el PDF original (para poder abrirlo/descargarlo después tal cual), pero el OCR
   // necesita una imagen — así que corre sobre una imagen renderizada de la primera página, no
   // sobre el PDF en sí.
-  const processReceiptImage = async (dataUrl, fileName, ocrSourceUrl = dataUrl) => {
-    setProcessing(true); setAiNotice(null); setCompanyMismatch(null); setMismatchConfirmed(false);
+  const processReceiptImage = async (
+    dataUrl,
+    fileName,
+    ocrSourceUrl = dataUrl,
+  ) => {
+    setProcessing(true);
+    setAiNotice(null);
+    setCompanyMismatch(null);
+    setMismatchConfirmed(false);
     addAttachment(dataUrl, fileName);
     try {
       const extracted = await parseReceiptImage(ocrSourceUrl);
       setForm((current) => ({
         ...current,
         concept: extracted.concept || current.concept,
-        amount: Number(extracted.amount) > 0 ? Number(extracted.amount) : current.amount,
+        amount:
+          Number(extracted.amount) > 0
+            ? Number(extracted.amount)
+            : current.amount,
         currency: extracted.currency || current.currency,
         date: extracted.date || current.date,
         supplier: extracted.supplier || current.supplier,
         receiptNumber: extracted.receiptNumber || current.receiptNumber,
         vatIncluded: extracted.vatIncluded || current.vatIncluded,
       }));
-      const foundSomething = extracted.amount || extracted.date || extracted.supplier || extracted.receiptNumber || extracted.concept;
+      const foundSomething =
+        extracted.amount ||
+        extracted.date ||
+        extracted.supplier ||
+        extracted.receiptNumber ||
+        extracted.concept;
       // Diagnóstico de calidad de la foto (oscura / quemada de luz / borrosa), medido sobre la
       // imagen real recién capturada — así el aviso apunta a la causa concreta en vez de un
       // genérico "revisá los datos", que es justo lo que se pidió: verificar iluminación y nitidez.
       const qualityHints = [];
-      if (extracted.quality?.dark) qualityHints.push("la foto se ve oscura — probá con más luz directa sobre el papel");
-      if (extracted.quality?.bright) qualityHints.push("la foto se ve sobreexpuesta/quemada de luz — evitá el flash de frente o el sol directo");
-      if (extracted.quality?.blurry) qualityHints.push("la foto parece borrosa — apoyá el celular firme y esperá a que enfoque antes de sacarla");
-      setAiNotice({ ok: !!foundSomething, rawText: extracted.rawText || "", qualityHints });
+      if (extracted.quality?.dark)
+        qualityHints.push(
+          "la foto se ve oscura — probá con más luz directa sobre el papel",
+        );
+      if (extracted.quality?.bright)
+        qualityHints.push(
+          "la foto se ve sobreexpuesta/quemada de luz — evitá el flash de frente o el sol directo",
+        );
+      if (extracted.quality?.blurry)
+        qualityHints.push(
+          "la foto parece borrosa — apoyá el celular firme y esperá a que enfoque antes de sacarla",
+        );
+      setAiNotice({
+        ok: !!foundSomething,
+        rawText: extracted.rawText || "",
+        qualityHints,
+      });
       // Un "gasto" debería estar facturado A la empresa configurada; si el CUIT del receptor que
       // detectó el OCR no coincide, probablemente es un comprobante de otra persona/empresa
       // (mezclado por error entre varios recibos, o de un gasto personal). No se bloquea el campo
       // de forma silenciosa: se avisa y se exige una confirmación explícita antes de poder guardar,
       // porque el OCR puede leer mal un dígito del CUIT y no queremos trabar un gasto legítimo.
-      if (form.kind === "expense" && branding?.companyCuit && extracted.receptorCuit && extracted.receptorCuit !== branding.companyCuit) {
-        setCompanyMismatch({ receptorCuit: extracted.receptorCuit, receptorName: extracted.receptorName });
+      if (
+        form.kind === "expense" &&
+        branding?.companyCuit &&
+        extracted.receptorCuit &&
+        extracted.receptorCuit !== branding.companyCuit
+      ) {
+        setCompanyMismatch({
+          receptorCuit: extracted.receptorCuit,
+          receptorName: extracted.receptorName,
+        });
       }
     } catch (error) {
       // Se guarda el motivo real (en vez de un mensaje genérico) para poder diagnosticar sin
       // acceso a los logs del servidor: fallo al descargar el modelo de idioma, imagen inválida, etc.
       console.error("No se pudo leer el comprobante:", error);
       setAiNotice({ ok: false, error: error?.message || "" });
-    } finally { setProcessing(false); setPickMode(false); }
+    } finally {
+      setProcessing(false);
+      setPickMode(false);
+    }
   };
   // Antes de correr el OCR sobre una foto, se deja recortar (como CamScanner) para descartar todo
   // lo que no sea la factura — mesa, mano, otros papeles. Un PDF no necesita ese recorte manual
@@ -1900,13 +2023,22 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
     const isImage = file.type.startsWith("image/");
     // El límite de 5 MB aplica solo a los PDF: las fotos se reescalan a 1600 px antes de guardarse,
     // así que una foto de celular de 12 MB termina pesando unos cientos de KB.
-    if (!isImage && file.size > MAX_DOCUMENT_BYTES) { setAiNotice({ ok: false, error: "El archivo supera los 5 MB permitidos." }); return; }
+    if (!isImage && file.size > MAX_DOCUMENT_BYTES) {
+      setAiNotice({
+        ok: false,
+        error: "El archivo supera los 5 MB permitidos.",
+      });
+      return;
+    }
     // El OCR solo corre con el PRIMER documento. En los siguientes se adjunta el archivo y nada
     // más: volver a leerlos pisaba el concepto, el importe y el proveedor ya cargados a mano, y
     // había que retipearlos. Los documentos extra son respaldo (cupón, remito), no la fuente de
     // los datos del movimiento. Tampoco se ofrece recortar: el recorte existe para mejorar el OCR.
     if (formAttachments.length > 0) {
-      addAttachment(isImage ? (await fileToImages(file)).report : await fileToDataUrl(file), file.name);
+      addAttachment(
+        isImage ? (await fileToImages(file)).report : await fileToDataUrl(file),
+        file.name,
+      );
       setAiNotice(null);
       setPickMode(false);
       return;
@@ -1923,7 +2055,11 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
         // automática, no la carga del comprobante.
         console.error("No se pudo renderizar el PDF para OCR:", error);
         addAttachment(pdfDataUrl, file.name);
-        setAiNotice({ ok: false, error: `No se pudo leer el PDF automáticamente (solo se analiza la primera página). ${error?.message || ""}`.trim() });
+        setAiNotice({
+          ok: false,
+          error:
+            `No se pudo leer el PDF automáticamente (solo se analiza la primera página). ${error?.message || ""}`.trim(),
+        });
         setPickMode(false);
       }
       return;
@@ -1931,141 +2067,1229 @@ function FinanceEntryModal({ movement, duplicating = false, initialKind = "expen
     const image = await fileToImages(file);
     setCropPending({ dataUrl: image.report, fileName: file.name });
   };
-  const loadWholesaleRate = async () => { setRateLoading(true); setRateError(""); try { const quote = await api.wholesaleExchangeRate(); setRateInfo(quote); setForm((current) => ({ ...current, exchangeRate: quote.arsPerUsd, exchangeRateSource: "BCRA dólar mayorista · Comunicación A 3500", exchangeRateUpdatedAt: quote.updatedAt })); } catch (error) { setRateError(error.message || "No se pudo consultar el dólar mayorista"); } finally { setRateLoading(false); } };
-  useEffect(() => { if (form.currency === "ARS" && (!movement || !form.exchangeRate)) loadWholesaleRate(); }, [form.currency]);
+  const loadWholesaleRate = async () => {
+    setRateLoading(true);
+    setRateError("");
+    try {
+      const quote = await api.wholesaleExchangeRate();
+      setRateInfo(quote);
+      setForm((current) => ({
+        ...current,
+        exchangeRate: quote.arsPerUsd,
+        exchangeRateSource: "BCRA dólar mayorista · Comunicación A 3500",
+        exchangeRateUpdatedAt: quote.updatedAt,
+      }));
+    } catch (error) {
+      setRateError(error.message || "No se pudo consultar el dólar mayorista");
+    } finally {
+      setRateLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (form.currency === "ARS" && (!movement || !form.exchangeRate))
+      loadWholesaleRate();
+  }, [form.currency]);
   // Partidas del aviso de pago: cada línea es una factura cancelada, con su bruto y su retención.
   // Con partidas cargadas el importe del encabezado pasa a ser la suma y deja de editarse a mano,
   // para que el total nunca quede desincronizado del detalle.
   const allocations = form.allocations || [];
   const hasAllocations = allocations.length > 0;
-  const setAllocation = (index, patch) => setForm((current) => ({ ...current, allocations: (current.allocations || []).map((row, i) => (i === index ? { ...row, ...patch } : row)) }));
-  const addAllocation = () => setForm((current) => ({ ...current, allocations: [...(current.allocations || []), { invoiceId: "", receiptNumber: "", projectId: "", budgetId: "", amount: "", deductions: "" }] }));
-  const removeAllocation = (index) => setForm((current) => ({ ...current, allocations: (current.allocations || []).filter((_, i) => i !== index) }));
-  const allocTotals = allocations.reduce((acc, row) => ({ gross: acc.gross + (Number(row.amount) || 0), deductions: acc.deductions + (Number(row.deductions) || 0) }), { gross: 0, deductions: 0 });
+  const setAllocation = (index, patch) =>
+    setForm((current) => ({
+      ...current,
+      allocations: (current.allocations || []).map((row, i) =>
+        i === index ? { ...row, ...patch } : row,
+      ),
+    }));
+  const addAllocation = () =>
+    setForm((current) => ({
+      ...current,
+      allocations: [
+        ...(current.allocations || []),
+        {
+          invoiceId: "",
+          receiptNumber: "",
+          projectId: "",
+          budgetId: "",
+          amount: "",
+          deductions: "",
+        },
+      ],
+    }));
+  const removeAllocation = (index) =>
+    setForm((current) => ({
+      ...current,
+      allocations: (current.allocations || []).filter((_, i) => i !== index),
+    }));
+  const allocTotals = allocations.reduce(
+    (acc, row) => ({
+      gross: acc.gross + (Number(row.amount) || 0),
+      deductions: acc.deductions + (Number(row.deductions) || 0),
+    }),
+    { gross: 0, deductions: 0 },
+  );
   // Importación del aviso de pago: evita recargar a mano fila por fila lo que el PDF ya trae exacto.
   const [adviceBusy, setAdviceBusy] = useState(false);
   const [adviceNotice, setAdviceNotice] = useState(null);
   const importPaymentAdvice = async (file) => {
     if (!file) return;
-    setAdviceBusy(true); setAdviceNotice(null);
+    setAdviceBusy(true);
+    setAdviceNotice(null);
     try {
       const { pdfExtractText } = await import("./pdfToImage");
       const { rows, total } = parsePaymentAdvice(await pdfExtractText(file));
-      if (!rows.length) { setAdviceNotice({ ok: false, text: "No se reconoció ninguna fila con el formato Documento · Su documento · Fecha · Deducciones · Importe bruto. Si el PDF es un escaneo sin texto, cargá las partidas a mano." }); return; }
-      const byReceipt = new Map(invoices.map((invoice) => [receiptKey(invoice.receiptNumber), invoice]));
+      if (!rows.length) {
+        setAdviceNotice({
+          ok: false,
+          text: "No se reconoció ninguna fila con el formato Documento · Su documento · Fecha · Deducciones · Importe bruto. Si el PDF es un escaneo sin texto, cargá las partidas a mano.",
+        });
+        return;
+      }
+      const byReceipt = new Map(
+        invoices.map((invoice) => [receiptKey(invoice.receiptNumber), invoice]),
+      );
       let matched = 0;
       const parsed = rows.map((row) => {
         const invoice = byReceipt.get(receiptKey(row.receipt));
         if (invoice) matched++;
-        return { invoiceId: invoice?.id || "", receiptNumber: invoice?.receiptNumber || row.receipt, projectId: invoice?.projectId || "", budgetId: invoice?.budgetId || "", amount: row.gross, deductions: row.deductions };
+        return {
+          invoiceId: invoice?.id || "",
+          receiptNumber: invoice?.receiptNumber || row.receipt,
+          projectId: invoice?.projectId || "",
+          budgetId: invoice?.budgetId || "",
+          amount: row.gross,
+          deductions: row.deductions,
+        };
       });
       const sumGross = parsed.reduce((sum, row) => sum + row.amount, 0);
       // Si el PDF trae "Total general", se contrasta contra la suma de las filas leídas: si no
       // coinciden, alguna fila no se reconoció y hay que avisarlo antes de guardar.
       const mismatch = total && Math.abs(total.gross - sumGross) > 0.01;
-      setForm((current) => ({ ...current, allocations: parsed, supplier: current.supplier || rows[0]?.document || "" }));
+      setForm((current) => ({
+        ...current,
+        allocations: parsed,
+        supplier: current.supplier || rows[0]?.document || "",
+      }));
       setAdviceNotice({
         ok: !mismatch && matched === rows.length,
         text: `Se leyeron ${rows.length} partida(s) por ${currencyAmount(sumGross, form.currency)}. ${matched === rows.length ? "Todas quedaron vinculadas a su factura." : `${matched} vinculadas automáticamente; ${rows.length - matched} no encontraron factura y hay que elegirla a mano.`}${mismatch ? ` Atención: el PDF declara un total de ${currencyAmount(total.gross, form.currency)} y las filas leídas suman ${currencyAmount(sumGross, form.currency)} — falta alguna fila.` : ""}`,
       });
-    } catch (error) { setAdviceNotice({ ok: false, text: `No se pudo leer el PDF: ${error?.message || "formato no reconocido"}.` }); }
-    finally { setAdviceBusy(false); }
+    } catch (error) {
+      setAdviceNotice({
+        ok: false,
+        text: `No se pudo leer el PDF: ${error?.message || "formato no reconocido"}.`,
+      });
+    } finally {
+      setAdviceBusy(false);
+    }
   };
   // Resumen de a qué proyectos/presupuestos se reparte, para no tener que leer fila por fila.
-  const allocationSummary = [...new Set(allocations.map((row) => {
-    const project = projects.find((item) => item.id === row.projectId);
-    const budget = budgets.find((item) => item.id === row.budgetId);
-    return project?.key || budget?.number || budget?.id || "";
-  }).filter(Boolean))].join(" · ");
+  const allocationSummary = [
+    ...new Set(
+      allocations
+        .map((row) => {
+          const project = projects.find((item) => item.id === row.projectId);
+          const budget = budgets.find((item) => item.id === row.budgetId);
+          return project?.key || budget?.number || budget?.id || "";
+        })
+        .filter(Boolean),
+    ),
+  ].join(" · ");
   // El encabezado no puede conservar un proyecto/presupuesto/comprobante sueltos cuando el detalle
   // manda: quedarían contradiciendo a las partidas y ensuciando los filtros por proyecto.
   useEffect(() => {
     if (!hasAllocations) return;
-    setForm((current) => (current.projectId || current.budgetId || current.receiptNumber) ? { ...current, projectId: "", budgetId: "", receiptNumber: "" } : current);
+    setForm((current) =>
+      current.projectId || current.budgetId || current.receiptNumber
+        ? { ...current, projectId: "", budgetId: "", receiptNumber: "" }
+        : current,
+    );
   }, [hasAllocations]);
 
   // Deducciones de la orden de pago (retenciones). El importe cargado es el bruto; lo acreditado
   // en la cuenta es el neto. Se muestra el cálculo para poder cotejarlo contra el papel del cliente.
-  const grossAmount = hasAllocations ? allocTotals.gross : Number(form.amount) || 0;
-  const deductionsAmount = hasAllocations ? allocTotals.deductions : Math.max(0, Number(form.deductions) || 0);
+  const grossAmount = hasAllocations
+    ? allocTotals.gross
+    : Number(form.amount) || 0;
+  const deductionsAmount = hasAllocations
+    ? allocTotals.deductions
+    : Math.max(0, Number(form.deductions) || 0);
   const netAmount = Math.max(0, grossAmount - deductionsAmount);
   const deductionsExceed = deductionsAmount > grossAmount;
   // Cada partida tiene que apuntar a una factura y traer un importe: si no, el cobro no cancela
   // deuda de nadie y "Por cobrar" queda inflado para siempre.
-  const invalidAllocations = allocations.filter((row) => !row.invoiceId || !(Number(row.amount) > 0)).length;
-  const usd = form.currency === "USD" ? grossAmount : Number(form.exchangeRate) > 0 ? grossAmount / Number(form.exchangeRate) : 0;
-  const usdLabel = usd > 0 && usd < 0.01 ? `USD ${usd.toLocaleString("es-AR", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}` : money(usd);
+  const invalidAllocations = allocations.filter(
+    (row) => !row.invoiceId || !(Number(row.amount) > 0),
+  ).length;
+  const usd =
+    form.currency === "USD"
+      ? grossAmount
+      : Number(form.exchangeRate) > 0
+        ? grossAmount / Number(form.exchangeRate)
+        : 0;
+  const usdLabel =
+    usd > 0 && usd < 0.01
+      ? `USD ${usd.toLocaleString("es-AR", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`
+      : money(usd);
   // Un importe carga con la moneda equivocada (ej. un monto en pesos seleccionado como "USD" sin
   // convertir) pasa desapercibido en el momento, pero después domina todos los gráficos de
   // Finanzas (un solo movimiento de USD 1,5M puede ser el 100% de "Exposición por moneda"). No se
   // bloquea, porque compras grandes reales existen, pero se exige confirmación explícita.
   const [unusualConfirmed, setUnusualConfirmed] = useState(false);
   const unusualAmount = usd > 100000;
-  useEffect(() => { setUnusualConfirmed(false); }, [form.amount, form.currency, form.exchangeRate]);
+  useEffect(() => {
+    setUnusualConfirmed(false);
+  }, [form.amount, form.currency, form.exchangeRate]);
   // Con partidas, el importe y las deducciones del encabezado son la suma del detalle.
   const [duplicateOf, setDuplicateOf] = useState(null);
   const [duplicateConfirmed, setDuplicateConfirmed] = useState(false);
   // Si se cambia el proveedor o el comprobante, el aviso previo ya no aplica: se descarta para no
   // arrastrar una confirmación dada sobre otros datos.
-  useEffect(() => { setDuplicateOf(null); setDuplicateConfirmed(false); }, [form.supplier, form.receiptNumber]);
+  useEffect(() => {
+    setDuplicateOf(null);
+    setDuplicateConfirmed(false);
+  }, [form.supplier, form.receiptNumber]);
   const submit = async () => {
     setSaving(true);
-    const payload = hasAllocations ? { ...form, amount: grossAmount, deductions: deductionsAmount } : form;
-    const saved = await onSave(duplicateConfirmed ? { ...payload, confirmDuplicate: true } : payload);
+    const payload = hasAllocations
+      ? { ...form, amount: grossAmount, deductions: deductionsAmount }
+      : form;
+    const saved = await onSave(
+      duplicateConfirmed ? { ...payload, confirmDuplicate: true } : payload,
+    );
     setSaving(false);
-    if (saved?.__duplicateOf) { setDuplicateOf(saved.__duplicateOf); return; }
+    if (saved?.__duplicateOf) {
+      setDuplicateOf(saved.__duplicateOf);
+      return;
+    }
     if (saved) onClose();
   };
   const mouseDownOnBackdrop = useRef(false);
-  return <div className="motion-backdrop fixed inset-0 z-[70] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div role="dialog" aria-modal="true" aria-labelledby="finance-dialog-title" className="modal-frame mobile-dialog mobile-sheet-content flex h-[100dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
-    <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4"><div><h2 id="finance-dialog-title" className="text-lg font-semibold text-slate-900">{duplicating ? `Duplicar ${form.kind === "expense" ? "gasto" : "ingreso"}` : movement ? "Editar movimiento" : `Registrar ${form.kind === "expense" ? "gasto" : "ingreso"}`}</h2><p className="text-xs text-slate-500">{duplicating ? "Se guardará como un movimiento nuevo" : "Ingresos, gastos y comprobantes de la operación"}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-    <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button onClick={() => selectKind("expense")} className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "expense" ? "bg-white text-brand-600 shadow-sm" : "text-slate-500"}`}>Gasto</button><button onClick={() => selectKind("income")} className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "income" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}>Ingreso</button></div>
-      {pickMode ? <div className="mt-4"><h3 className="text-sm font-semibold text-slate-800">{formAttachments.length ? "Agregar otro documento" : "¿Cómo querés cargar el comprobante?"}</h3>{formAttachments.length > 0 && <p className="mt-1 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-relaxed text-slate-600">Este documento se adjunta como respaldo y <b>no se le pasa el lector automático</b>: los datos que ya cargaste quedan como están.</p>}<div className="mt-3 space-y-2"><button onClick={() => setPickMode(false)} className="flex min-h-16 w-full items-center gap-3 rounded-xl border border-slate-200 px-3 text-left hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><ClipboardList className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Carga manual</b><span className="text-xs text-slate-500">Completá los datos del movimiento.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /></button><label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Camera className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Tomar una foto</b><span className="text-xs text-slate-500">Usala como evidencia durante la carga.</span></span><ChevronRight className="h-4 w-4 text-slate-400" /><input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label><label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300"><span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Upload className="h-5 w-5" /></span><span className="flex-1"><b className="block text-sm">Elegir imagen o PDF</b><span className="text-xs text-slate-500">Seleccioná una imagen o un PDF ya existente (máx. 5 MB).</span></span><ChevronRight className="h-4 w-4 text-slate-400" /><input type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label></div>{processing && <div className="mt-3 flex items-center gap-2 rounded-lg bg-brand-50 p-3 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Leyendo el comprobante…</div>}{formAttachments.length === 0 && <div className="mt-3 rounded-xl bg-gradient-to-r from-brand-50 to-violet-50 p-3 text-xs text-brand-700"><b className="block">Lectura automática (OCR local)</b>Al elegir una foto, se intenta completar concepto, importe, moneda, fecha, proveedor y N.º de comprobante. Ningún OCR es 100% exacto: siempre revisá los datos antes de guardar, y si falta algo podés verlo en el texto reconocido. Los PDF también se leen automáticamente (solo la primera página).</div>}</div> : <div className="mt-4 space-y-3">{duplicating && <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-700"><b className="block">Copia de un movimiento existente</b>Se copiaron el concepto, el importe y las vinculaciones. Quedaron en blanco el número de comprobante y el adjunto, y la fecha se puso en hoy. Revisá los datos antes de guardar.</div>}{aiNotice && (aiNotice.ok ? <div className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700"><b className="block">Datos completados por OCR</b>Revisá los campos, sobre todo el importe y la fecha, antes de guardar. Si falta algún dato, buscalo en el texto reconocido de abajo.</div> : <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600"><b className="block">No se pudo completar los campos automáticamente</b>La imagen quedó guardada como evidencia; completá los datos manualmente.{aiNotice.error && <span className="mt-1 block text-slate-400">Motivo: {aiNotice.error}</span>}</div>)}{aiNotice?.qualityHints?.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><b className="block">La foto puede estar afectando la lectura</b><ul className="mt-1 list-disc space-y-0.5 pl-4">{aiNotice.qualityHints.map((hint) => <li key={hint}>{hint}</li>)}</ul><p className="mt-1.5">Si tenés la factura en PDF, subila directo en vez de sacarle una foto — se lee mejor y más rápido.</p></div>}{aiNotice?.rawText && <details className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs"><summary className="cursor-pointer font-medium text-slate-600">Ver texto reconocido por OCR (para copiar lo que falte)</summary><pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 font-mono text-[10px] leading-relaxed text-slate-600">{aiNotice.rawText}</pre></details>}{form.kind === "expense" && companyMismatch && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><b className="block">Este comprobante no parece corresponder a {branding?.companyLegalName || branding?.companyName || "tu empresa"}</b>El CUIT detectado en el receptor es {formatCuit(companyMismatch.receptorCuit)}{companyMismatch.receptorName ? ` (${companyMismatch.receptorName})` : ""}, distinto al configurado ({formatCuit(branding?.companyCuit)}). Puede ser un comprobante de otra persona/empresa, o un error de lectura del OCR.<label className="mt-2 flex items-center gap-2 font-medium"><input type="checkbox" checked={mismatchConfirmed} onChange={(event) => setMismatchConfirmed(event.target.checked)} /> Confirmo que este gasto corresponde igual a mi empresa</label></div>}<L label="Concepto *"><input autoFocus value={form.concept} onChange={(event) => set("concept", event.target.value)} placeholder={form.kind === "expense" ? "Ej. Compra de sensor inductivo" : "Ej. Cobro de factura"} className="u-input" /></L><div className="grid grid-cols-2 gap-2"><L label="Importe *" help={hasAllocations ? "Con partidas cargadas, el importe es la suma de los brutos y no se edita a mano." : ""}><input type="number" min="0" step="0.01" readOnly={hasAllocations} value={hasAllocations ? grossAmount : form.amount} onChange={(event) => set("amount", event.target.value)} placeholder="0,00" className={`u-input ${hasAllocations ? "bg-slate-100 text-slate-500" : ""}`} /></L><L label="Moneda"><select value={form.currency} onChange={(event) => { const currency = event.target.value; setForm((current) => ({ ...current, currency, exchangeRate: currency === "USD" ? 1 : "", exchangeRateSource: "", exchangeRateUpdatedAt: "" })); }} className="u-input"><option value="ARS">ARS · Peso argentino</option><option value="USD">USD · Dólar estadounidense</option><option value="EUR">EUR · Euro</option></select></L></div>{form.kind === "income" && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-  <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 sm:grid-cols-[minmax(0,1fr)_12rem]"><div><b className="block text-xs text-emerald-800">Aplicación del ingreso</b><span className="text-[11px] leading-relaxed text-emerald-700">La cancelación total salda la factura aunque existan retenciones. El pago parcial conserva el saldo pendiente.</span></div><select value={form.paymentStatus || "paid"} onChange={(event) => set("paymentStatus", event.target.value)} className="u-input bg-white"><option value="paid">Cancelación total</option><option value="partial">Pago parcial / anticipo</option></select></div>
-  <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-xs text-slate-700">Partidas del aviso de pago</b><div className="flex flex-wrap items-center gap-1.5"><label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600 ${adviceBusy ? "pointer-events-none opacity-50" : ""}`}>{adviceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Importar aviso (PDF)<input type="file" accept="application/pdf,.pdf" className="hidden" onChange={(event) => { importPaymentAdvice(event.target.files?.[0]); event.target.value = ""; }} /></label><button type="button" onClick={addAllocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600"><Plus className="h-3.5 w-3.5" /> Agregar factura</button></div></div>
-  {adviceNotice && <div className={`mt-2 rounded-lg border p-2.5 text-[11px] leading-relaxed ${adviceNotice.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{adviceNotice.text}</div>}
-  {!hasAllocations
-    ? <><div className="mt-2 grid grid-cols-2 gap-2"><L label="Deducciones" help="Retenciones aplicadas por el cliente (Ganancias, IVA, IIBB, SUSS). En la misma moneda que el importe."><input type="number" min="0" step="0.01" value={form.deductions ?? ""} onChange={(event) => set("deductions", event.target.value)} placeholder="0,00" className="u-input" /></L><div className="rounded-lg bg-white px-3 py-2"><span className="block text-[11px] text-slate-400">Neto acreditado</span><b className={deductionsExceed ? "text-rose-600" : "text-emerald-600"}>{currencyAmount(netAmount, form.currency)}</b></div></div><p className="mt-2 text-[11px] text-slate-500">Pago de una sola factura: cargá el <b>importe bruto</b> arriba y la retención acá. Si el aviso cancela varias facturas, usá <b>Agregar factura</b>.</p></>
-    : <><div className="mt-2 space-y-2">
-        {allocations.map((row, index) => {
-          const linked = invoices.find((invoice) => invoice.id === row.invoiceId);
-          return <div key={index} className="rounded-lg border border-slate-200 bg-white p-2.5">
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <L label={`Factura ${index + 1}`} required>
-                  {/* Al elegir la factura se heredan proyecto, presupuesto y número: son datos que
+  return (
+    <div
+      className="motion-backdrop fixed inset-0 z-[70] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        mouseDownOnBackdrop.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (mouseDownOnBackdrop.current && event.target === event.currentTarget)
+          onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="finance-dialog-title"
+        className="modal-frame mobile-dialog mobile-sheet-content flex h-[100dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4">
+          <div>
+            <h2
+              id="finance-dialog-title"
+              className="text-lg font-semibold text-slate-900"
+            >
+              {duplicating
+                ? `Duplicar ${form.kind === "expense" ? "gasto" : "ingreso"}`
+                : movement
+                  ? "Editar movimiento"
+                  : `Registrar ${form.kind === "expense" ? "gasto" : "ingreso"}`}
+            </h2>
+            <p className="text-xs text-slate-500">
+              {duplicating
+                ? "Se guardará como un movimiento nuevo"
+                : "Ingresos, gastos y comprobantes de la operación"}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+            <button
+              onClick={() => selectKind("expense")}
+              className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "expense" ? "bg-white text-brand-600 shadow-sm" : "text-slate-500"}`}
+            >
+              Gasto
+            </button>
+            <button
+              onClick={() => selectKind("income")}
+              className={`rounded-lg py-2.5 text-sm font-medium ${form.kind === "income" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}
+            >
+              Ingreso
+            </button>
+          </div>
+          {pickMode ? (
+            <div className="mt-4">
+              <h3 className="text-sm font-semibold text-slate-800">
+                {formAttachments.length
+                  ? "Agregar otro documento"
+                  : "¿Cómo querés cargar el comprobante?"}
+              </h3>
+              {formAttachments.length > 0 && (
+                <p className="mt-1 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-relaxed text-slate-600">
+                  Este documento se adjunta como respaldo y{" "}
+                  <b>no se le pasa el lector automático</b>: los datos que ya
+                  cargaste quedan como están.
+                </p>
+              )}
+              <div className="mt-3 space-y-2">
+                <button
+                  onClick={() => setPickMode(false)}
+                  className="flex min-h-16 w-full items-center gap-3 rounded-xl border border-slate-200 px-3 text-left hover:border-brand-300"
+                >
+                  <span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600">
+                    <ClipboardList className="h-5 w-5" />
+                  </span>
+                  <span className="flex-1">
+                    <b className="block text-sm">Carga manual</b>
+                    <span className="text-xs text-slate-500">
+                      Completá los datos del movimiento.
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                </button>
+                <label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300">
+                  <span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600">
+                    <Camera className="h-5 w-5" />
+                  </span>
+                  <span className="flex-1">
+                    <b className="block text-sm">Tomar una foto</b>
+                    <span className="text-xs text-slate-500">
+                      Usala como evidencia durante la carga.
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(event) => selectFile(event.target.files?.[0])}
+                  />
+                </label>
+                <label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 hover:border-brand-300">
+                  <span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600">
+                    <Upload className="h-5 w-5" />
+                  </span>
+                  <span className="flex-1">
+                    <b className="block text-sm">Elegir imagen o PDF</b>
+                    <span className="text-xs text-slate-500">
+                      Seleccioná una imagen o un PDF ya existente (máx. 5 MB).
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                  <input
+                    type="file"
+                    accept="image/*,.pdf,application/pdf"
+                    className="hidden"
+                    onChange={(event) => selectFile(event.target.files?.[0])}
+                  />
+                </label>
+              </div>
+              {processing && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-brand-50 p-3 text-xs text-brand-700">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Leyendo el
+                  comprobante…
+                </div>
+              )}
+              {formAttachments.length === 0 && (
+                <div className="mt-3 rounded-xl bg-gradient-to-r from-brand-50 to-violet-50 p-3 text-xs text-brand-700">
+                  <b className="block">Lectura automática (OCR local)</b>Al
+                  elegir una foto, se intenta completar concepto, importe,
+                  moneda, fecha, proveedor y N.º de comprobante. Ningún OCR es
+                  100% exacto: siempre revisá los datos antes de guardar, y si
+                  falta algo podés verlo en el texto reconocido. Los PDF también
+                  se leen automáticamente (solo la primera página).
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {duplicating && (
+                <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-700">
+                  <b className="block">Copia de un movimiento existente</b>Se
+                  copiaron el concepto, el importe y las vinculaciones. Quedaron
+                  en blanco el número de comprobante y el adjunto, y la fecha se
+                  puso en hoy. Revisá los datos antes de guardar.
+                </div>
+              )}
+              {aiNotice &&
+                (aiNotice.ok ? (
+                  <div className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">
+                    <b className="block">Datos completados por OCR</b>Revisá los
+                    campos, sobre todo el importe y la fecha, antes de guardar.
+                    Si falta algún dato, buscalo en el texto reconocido de
+                    abajo.
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                    <b className="block">
+                      No se pudo completar los campos automáticamente
+                    </b>
+                    La imagen quedó guardada como evidencia; completá los datos
+                    manualmente.
+                    {aiNotice.error && (
+                      <span className="mt-1 block text-slate-400">
+                        Motivo: {aiNotice.error}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              {aiNotice?.qualityHints?.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <b className="block">
+                    La foto puede estar afectando la lectura
+                  </b>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {aiNotice.qualityHints.map((hint) => (
+                      <li key={hint}>{hint}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-1.5">
+                    Si tenés la factura en PDF, subila directo en vez de sacarle
+                    una foto — se lee mejor y más rápido.
+                  </p>
+                </div>
+              )}
+              {aiNotice?.rawText && (
+                <details className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs">
+                  <summary className="cursor-pointer font-medium text-slate-600">
+                    Ver texto reconocido por OCR (para copiar lo que falte)
+                  </summary>
+                  <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 font-mono text-[10px] leading-relaxed text-slate-600">
+                    {aiNotice.rawText}
+                  </pre>
+                </details>
+              )}
+              {form.kind === "expense" && companyMismatch && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                  <b className="block">
+                    Este comprobante no parece corresponder a{" "}
+                    {branding?.companyLegalName ||
+                      branding?.companyName ||
+                      "tu empresa"}
+                  </b>
+                  El CUIT detectado en el receptor es{" "}
+                  {formatCuit(companyMismatch.receptorCuit)}
+                  {companyMismatch.receptorName
+                    ? ` (${companyMismatch.receptorName})`
+                    : ""}
+                  , distinto al configurado ({formatCuit(branding?.companyCuit)}
+                  ). Puede ser un comprobante de otra persona/empresa, o un
+                  error de lectura del OCR.
+                  <label className="mt-2 flex items-center gap-2 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={mismatchConfirmed}
+                      onChange={(event) =>
+                        setMismatchConfirmed(event.target.checked)
+                      }
+                    />{" "}
+                    Confirmo que este gasto corresponde igual a mi empresa
+                  </label>
+                </div>
+              )}
+              <L label="Concepto *">
+                <input
+                  autoFocus
+                  value={form.concept}
+                  onChange={(event) => set("concept", event.target.value)}
+                  placeholder={
+                    form.kind === "expense"
+                      ? "Ej. Compra de sensor inductivo"
+                      : "Ej. Cobro de factura"
+                  }
+                  className="u-input"
+                />
+              </L>
+              <div className="grid grid-cols-2 gap-2">
+                <L
+                  label="Importe *"
+                  help={
+                    hasAllocations
+                      ? "Con partidas cargadas, el importe es la suma de los brutos y no se edita a mano."
+                      : ""
+                  }
+                >
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    readOnly={hasAllocations}
+                    value={hasAllocations ? grossAmount : form.amount}
+                    onChange={(event) => set("amount", event.target.value)}
+                    placeholder="0,00"
+                    className={`u-input ${hasAllocations ? "bg-slate-100 text-slate-500" : ""}`}
+                  />
+                </L>
+                <L label="Moneda">
+                  <select
+                    value={form.currency}
+                    onChange={(event) => {
+                      const currency = event.target.value;
+                      setForm((current) => ({
+                        ...current,
+                        currency,
+                        exchangeRate: currency === "USD" ? 1 : "",
+                        exchangeRateSource: "",
+                        exchangeRateUpdatedAt: "",
+                      }));
+                    }}
+                    className="u-input"
+                  >
+                    <option value="ARS">ARS · Peso argentino</option>
+                    <option value="USD">USD · Dólar estadounidense</option>
+                    <option value="EUR">EUR · Euro</option>
+                  </select>
+                </L>
+              </div>
+              {form.kind === "income" && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                    <div>
+                      <b className="block text-xs text-emerald-800">
+                        Aplicación del ingreso
+                      </b>
+                      <span className="text-[11px] leading-relaxed text-emerald-700">
+                        La cancelación total salda la factura aunque existan
+                        retenciones. El pago parcial conserva el saldo
+                        pendiente.
+                      </span>
+                    </div>
+                    <select
+                      value={form.paymentStatus || "paid"}
+                      onChange={(event) =>
+                        set("paymentStatus", event.target.value)
+                      }
+                      className="u-input bg-white"
+                    >
+                      <option value="paid">Cancelación total</option>
+                      <option value="partial">Pago parcial / anticipo</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <b className="text-xs text-slate-700">
+                      Partidas del aviso de pago
+                    </b>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <label
+                        className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600 ${adviceBusy ? "pointer-events-none opacity-50" : ""}`}
+                      >
+                        {adviceBusy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}{" "}
+                        Importar aviso (PDF)
+                        <input
+                          type="file"
+                          accept="application/pdf,.pdf"
+                          className="hidden"
+                          onChange={(event) => {
+                            importPaymentAdvice(event.target.files?.[0]);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={addAllocation}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Agregar factura
+                      </button>
+                    </div>
+                  </div>
+                  {adviceNotice && (
+                    <div
+                      className={`mt-2 rounded-lg border p-2.5 text-[11px] leading-relaxed ${adviceNotice.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}
+                    >
+                      {adviceNotice.text}
+                    </div>
+                  )}
+                  {!hasAllocations ? (
+                    <>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <L
+                          label="Deducciones"
+                          help="Retenciones aplicadas por el cliente (Ganancias, IVA, IIBB, SUSS). En la misma moneda que el importe."
+                        >
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.deductions ?? ""}
+                            onChange={(event) =>
+                              set("deductions", event.target.value)
+                            }
+                            placeholder="0,00"
+                            className="u-input"
+                          />
+                        </L>
+                        <div className="rounded-lg bg-white px-3 py-2">
+                          <span className="block text-[11px] text-slate-400">
+                            Neto acreditado
+                          </span>
+                          <b
+                            className={
+                              deductionsExceed
+                                ? "text-rose-600"
+                                : "text-emerald-600"
+                            }
+                          >
+                            {currencyAmount(netAmount, form.currency)}
+                          </b>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        Pago de una sola factura: cargá el <b>importe bruto</b>{" "}
+                        arriba y la retención acá. Si el aviso cancela varias
+                        facturas, usá <b>Agregar factura</b>.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 space-y-2">
+                        {allocations.map((row, index) => {
+                          const linked = invoices.find(
+                            (invoice) => invoice.id === row.invoiceId,
+                          );
+                          return (
+                            <div
+                              key={index}
+                              className="rounded-lg border border-slate-200 bg-white p-2.5"
+                            >
+                              <div className="flex items-start gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <L label={`Factura ${index + 1}`} required>
+                                    {/* Al elegir la factura se heredan proyecto, presupuesto y número: son datos que
                       ya están en el comprobante, no tiene sentido volver a elegirlos a mano.
                       Es obligatoria: un cobro sin factura no se puede imputar ni descontar de
                       "Por cobrar", queda flotando sin cancelar deuda de nadie. */}
-                  <SearchSelect value={row.invoiceId || ""} allowEmpty={false} invalid={!row.invoiceId} placeholder="Buscar por número o concepto…" emptyLabel="Elegí la factura que cancela"
-                    options={invoices.map((invoice) => ({ value: invoice.id, label: `${invoice.receiptNumber || invoice.id} · ${invoice.concept}` }))}
-                    onChange={(invoiceId) => { const invoice = invoices.find((item) => item.id === invoiceId); setAllocation(index, { invoiceId, receiptNumber: invoice?.receiptNumber || "", projectId: invoice?.projectId || "", budgetId: invoice?.budgetId || "" }); }} />
+                                    <SearchSelect
+                                      value={row.invoiceId || ""}
+                                      allowEmpty={false}
+                                      invalid={!row.invoiceId}
+                                      placeholder="Buscar por número o concepto…"
+                                      emptyLabel="Elegí la factura que cancela"
+                                      options={invoices.map((invoice) => ({
+                                        value: invoice.id,
+                                        label: `${invoice.receiptNumber || invoice.id} · ${invoice.concept}`,
+                                      }))}
+                                      onChange={(invoiceId) => {
+                                        const invoice = invoices.find(
+                                          (item) => item.id === invoiceId,
+                                        );
+                                        setAllocation(index, {
+                                          invoiceId,
+                                          receiptNumber:
+                                            invoice?.receiptNumber || "",
+                                          projectId: invoice?.projectId || "",
+                                          budgetId: invoice?.budgetId || "",
+                                        });
+                                      }}
+                                    />
+                                  </L>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removeAllocation(index)}
+                                  aria-label={`Quitar partida ${index + 1}`}
+                                  className="mt-5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                              <div className="mt-2 grid grid-cols-3 gap-2">
+                                <L label="Bruto">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={row.amount}
+                                    onChange={(event) =>
+                                      setAllocation(index, {
+                                        amount: event.target.value,
+                                      })
+                                    }
+                                    placeholder="0,00"
+                                    className="u-input"
+                                  />
+                                </L>
+                                <L label="Retenciones">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={row.deductions}
+                                    onChange={(event) =>
+                                      setAllocation(index, {
+                                        deductions: event.target.value,
+                                      })
+                                    }
+                                    placeholder="0,00"
+                                    className="u-input"
+                                  />
+                                </L>
+                                <div className="rounded-lg bg-slate-50 px-2.5 py-2">
+                                  <span className="block text-[11px] text-slate-400">
+                                    Neto
+                                  </span>
+                                  <b className="text-xs text-emerald-600">
+                                    {currencyAmount(
+                                      Math.max(
+                                        0,
+                                        (Number(row.amount) || 0) -
+                                          (Number(row.deductions) || 0),
+                                      ),
+                                      form.currency,
+                                    )}
+                                  </b>
+                                </div>
+                              </div>
+                              {linked && (
+                                <p className="mt-1.5 text-[11px] text-slate-500">
+                                  Se imputa a{" "}
+                                  {projects.find(
+                                    (project) =>
+                                      project.id === linked.projectId,
+                                  )?.key || "sin proyecto"}
+                                  {linked.budgetId
+                                    ? ` · ${budgets.find((budget) => budget.id === linked.budgetId)?.number || linked.budgetId}`
+                                    : ""}{" "}
+                                  · emitida por{" "}
+                                  {currencyAmount(
+                                    linked.amount,
+                                    linked.currency,
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-2 grid grid-cols-3 gap-2 rounded-lg bg-white px-2.5 py-2 text-xs">
+                        <span className="text-slate-400">
+                          Bruto
+                          <b className="mt-0.5 block text-sm text-slate-800">
+                            {currencyAmount(grossAmount, form.currency)}
+                          </b>
+                        </span>
+                        <span className="text-slate-400">
+                          Retenciones
+                          <b className="mt-0.5 block text-sm text-amber-600">
+                            {currencyAmount(deductionsAmount, form.currency)}
+                          </b>
+                        </span>
+                        <span className="text-slate-400">
+                          Importe de pago
+                          <b
+                            className={`mt-0.5 block text-sm ${deductionsExceed ? "text-rose-600" : "text-emerald-600"}`}
+                          >
+                            {currencyAmount(netAmount, form.currency)}
+                          </b>
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        El importe del encabezado se calcula sumando las
+                        partidas. Verificá que <b>Importe de pago</b> coincida
+                        con el total acreditado del aviso.
+                      </p>
+                      {invalidAllocations > 0 && (
+                        <p className="mt-1 text-[11px] font-medium text-rose-600">
+                          {invalidAllocations === 1
+                            ? "Hay una partida sin factura vinculada o sin importe."
+                            : `Hay ${invalidAllocations} partidas sin factura vinculada o sin importe.`}{" "}
+                          Cada pago tiene que estar asociado a una factura para
+                          poder imputarlo.
+                        </p>
+                      )}
+                    </>
+                  )}
+                  {deductionsExceed && (
+                    <p className="mt-1 text-[11px] font-medium text-rose-600">
+                      Las retenciones superan el importe bruto. Verificá los
+                      valores.
+                    </p>
+                  )}
+                </div>
+              )}
+              {duplicateOf && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                  <b className="block">
+                    Ya existe un gasto con este comprobante
+                  </b>
+                  {duplicateOf.id} · {budgetDate(duplicateOf.date)} ·{" "}
+                  {duplicateOf.supplier || "sin proveedor"} ·{" "}
+                  {currencyAmount(duplicateOf.amount, duplicateOf.currency)}
+                  {duplicateOf.concept ? ` · ${duplicateOf.concept}` : ""}.
+                  <span className="mt-1 block">
+                    Cargarlo de nuevo duplicaría el egreso en el resultado, en
+                    el flujo de caja y en el crédito fiscal.
+                  </span>
+                  <label className="mt-2 flex items-center gap-2 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={duplicateConfirmed}
+                      onChange={(event) =>
+                        setDuplicateConfirmed(event.target.checked)
+                      }
+                    />{" "}
+                    Confirmo que es un gasto distinto y quiero cargarlo igual
+                  </label>
+                </div>
+              )}
+              {unusualAmount && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <b className="block">
+                    Importe inusualmente alto: {money(usd)}
+                  </b>
+                  Es fácil equivocarse de moneda (ej. cargar pesos como si
+                  fueran dólares) — un error así distorsiona todos los gráficos
+                  de Finanzas. Verificá el importe y la moneda antes de
+                  continuar.
+                  <label className="mt-2 flex items-center gap-2 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={unusualConfirmed}
+                      onChange={(event) =>
+                        setUnusualConfirmed(event.target.checked)
+                      }
+                    />{" "}
+                    Confirmo que el importe y la moneda son correctos
+                  </label>
+                </div>
+              )}
+              {form.currency !== "USD" && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <L
+                      label={
+                        form.currency === "ARS"
+                          ? "Dólar mayorista BCRA (ARS/USD)"
+                          : `Cambio (${form.currency} por USD)`
+                      }
+                    >
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        readOnly={form.currency === "ARS" && !rateError}
+                        value={form.exchangeRate || ""}
+                        onChange={(event) =>
+                          set("exchangeRate", event.target.value)
+                        }
+                        placeholder={
+                          rateLoading
+                            ? "Consultando BCRA…"
+                            : form.currency === "ARS"
+                              ? "Dólar mayorista"
+                              : "Ej. 0,92"
+                        }
+                        className={`u-input ${form.currency === "ARS" && !rateError ? "bg-slate-50" : ""}`}
+                      />
+                    </L>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <span className="block text-[11px] text-slate-400">
+                        Equivalente
+                      </span>
+                      <b>{usdLabel}</b>
+                    </div>
+                  </div>
+                  {form.currency === "ARS" && (
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span
+                        className={
+                          rateError ? "text-rose-600" : "text-slate-500"
+                        }
+                      >
+                        {rateError
+                          ? `${rateError} Puedes ingresar la cotización manualmente.`
+                          : form.exchangeRate
+                            ? `BCRA mayorista A 3500 · ${rateInfo?.updatedAt || form.exchangeRateUpdatedAt ? new Date(rateInfo?.updatedAt || form.exchangeRateUpdatedAt).toLocaleString("es-AR") : "cotización registrada"}`
+                            : "Consultando cotización…"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={loadWholesaleRate}
+                        disabled={rateLoading}
+                        className="font-medium text-brand-600"
+                      >
+                        {rateLoading ? "Actualizando…" : "Actualizar"}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <L label="Fecha *">
+                  <input
+                    type="date"
+                    value={form.date}
+                    onChange={(event) => set("date", event.target.value)}
+                    className="u-input"
+                  />
                 </L>
+                {form.kind === "expense" ? (
+                  <L label="Categoría">
+                    <select
+                      value={form.category}
+                      onChange={(event) => set("category", event.target.value)}
+                      className="u-input"
+                    >
+                      {EXPENSE_CATEGORIES.map((category) => (
+                        <option key={category}>{category}</option>
+                      ))}
+                    </select>
+                  </L>
+                ) : (
+                  <L label="Cliente">
+                    <SearchSelect
+                      value={form.clientId || ""}
+                      onChange={(clientId) => set("clientId", clientId)}
+                      emptyLabel="Sin asociar"
+                      placeholder="Buscar cliente…"
+                      options={clients.map((client) => ({
+                        value: client.id,
+                        label: client.name,
+                      }))}
+                    />
+                  </L>
+                )}
               </div>
-              <button type="button" onClick={() => removeAllocation(index)} aria-label={`Quitar partida ${index + 1}`} className="mt-5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+              {hasAllocations ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="block text-[11px] font-medium text-slate-500">
+                    Imputación
+                  </span>
+                  <span className="mt-0.5 block text-xs text-slate-600">
+                    La define el detalle de partidas: cada factura aporta su
+                    proyecto y su presupuesto.{" "}
+                    {allocationSummary ||
+                      "Vinculá las facturas para definir la imputación."}
+                  </span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <L label="Proyecto">
+                    <SearchSelect
+                      value={form.projectId || ""}
+                      onChange={selectProject}
+                      emptyLabel="General / sin proyecto"
+                      placeholder="Buscar por clave o nombre…"
+                      options={projects.map((project) => ({
+                        value: project.id,
+                        label: `${project.key} · ${project.name}`,
+                      }))}
+                    />
+                  </L>
+                  <L label="Presupuesto">
+                    {form.kind === "expense" ? (
+                      <div
+                        className={`min-h-10 rounded-lg border px-3 py-2 text-xs ${selectedLink.budget ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}
+                      >
+                        {selectedLink.budget ? (
+                          <>
+                            <b className="block">
+                              {selectedLink.budget.number ||
+                                selectedLink.budget.id}{" "}
+                              · {selectedLink.budget.title}
+                            </b>
+                            <span>Vinculado automáticamente</span>
+                          </>
+                        ) : form.projectId ? (
+                          "El proyecto no tiene un presupuesto aprobado."
+                        ) : (
+                          "Se vinculará al seleccionar un proyecto."
+                        )}
+                      </div>
+                    ) : (
+                      <SearchSelect
+                        value={form.budgetId || ""}
+                        onChange={(budgetId) => set("budgetId", budgetId)}
+                        emptyLabel="Sin asociar"
+                        placeholder="Buscar por número o título…"
+                        options={budgets.map((budget) => ({
+                          value: budget.id,
+                          label: `${budget.number || budget.id} · ${budget.title}`,
+                        }))}
+                      />
+                    )}
+                  </L>
+                </div>
+              )}
+              {form.kind === "expense" && form.projectId && (
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
+                  <Link2 className="h-4 w-4 shrink-0 text-brand-600" />
+                  <div>
+                    <b className="block text-slate-700">
+                      Trazabilidad del gasto
+                    </b>
+                    <span className="text-slate-500">
+                      {selectedLink.clientName || "Cliente sin identificar"}
+                      {selectedLink.budget
+                        ? ` · ${selectedLink.budget.number || selectedLink.budget.id}`
+                        : " · pendiente de presupuesto aprobado"}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <L
+                  label={
+                    form.kind === "expense"
+                      ? "Proveedor"
+                      : "Pagador / referencia"
+                  }
+                  help={
+                    hasAllocations
+                      ? "N.º del aviso de pago del cliente. El comprobante de cada factura va en su partida."
+                      : ""
+                  }
+                >
+                  <input
+                    value={form.supplier || ""}
+                    onChange={(event) => set("supplier", event.target.value)}
+                    className="u-input"
+                  />
+                </L>
+                {!hasAllocations && (
+                  <L label="Factura / comprobante">
+                    <input
+                      value={form.receiptNumber || ""}
+                      onChange={(event) =>
+                        set("receiptNumber", event.target.value)
+                      }
+                      className="u-input"
+                    />
+                  </L>
+                )}
+              </div>
+              <L label="Medio de pago">
+                <select
+                  value={form.paymentMethod || ""}
+                  onChange={(event) => set("paymentMethod", event.target.value)}
+                  className="u-input"
+                >
+                  {PAYMENT_METHODS.map((method) => (
+                    <option key={method}>{method}</option>
+                  ))}
+                </select>
+              </L>
+              {form.kind === "expense" && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={!!form.vatIncluded}
+                      onChange={(event) =>
+                        set("vatIncluded", event.target.checked)
+                      }
+                    />{" "}
+                    El importe incluye IVA
+                  </label>
+                  {form.vatIncluded && (
+                    <>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <L label="Alícuota de IVA">
+                          <select value={Number(form.vatRate) || 21} onChange={(event) => set("vatRate", Number(event.target.value))} className="u-input">
+                            {[10.5, 21, 27].map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+                          </select>
+                        </L>
+                        <L label="Crédito computable">
+                          <select value={Number(form.vatComputablePercent) ?? 100} onChange={(event) => set("vatComputablePercent", Number(event.target.value))} className="u-input">
+                            {[0, 50, 100].map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+                          </select>
+                        </L>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Neto estimado: {money(usd / (1 + (Number(form.vatRate) || 21) / 100))} · IVA: {money(usd - usd / (1 + (Number(form.vatRate) || 21) / 100))} · Crédito computable: {money((usd - usd / (1 + (Number(form.vatRate) || 21) / 100)) * (Number(form.vatComputablePercent) || 0) / 100)}
+                      </p>
+                    </>
+                  )}
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <L label="Estado de pago">
+                      <select
+                        value={form.paymentStatus || "paid"}
+                        onChange={(event) => {
+                          const paymentStatus = event.target.value;
+                          setForm((current) => ({
+                            ...current,
+                            paymentStatus,
+                            paidAt:
+                              paymentStatus === "paid"
+                                ? current.paidAt || current.date
+                                : "",
+                          }));
+                        }}
+                        className="u-input"
+                      >
+                        <option value="paid">Pagado</option>
+                        <option value="pending">Pendiente de pago</option>
+                      </select>
+                    </L>
+                    {form.paymentStatus !== "pending" && (
+                      <L label="Fecha de pago">
+                        <input
+                          type="date"
+                          value={form.paidAt || form.date}
+                          onChange={(event) =>
+                            set("paidAt", event.target.value)
+                          }
+                          className="u-input"
+                        />
+                      </L>
+                    )}
+                  </div>
+                  {form.paymentStatus === "pending" && (
+                    <p className="mt-2 text-[11px] text-amber-600">
+                      Este gasto quedará como cuenta por pagar hasta que
+                      actualices su estado.
+                    </p>
+                  )}
+                </div>
+              )}
+              <L label="Detalle">
+                <textarea
+                  value={form.detail || ""}
+                  onChange={(event) => set("detail", event.target.value)}
+                  rows={3}
+                  className="u-input resize-none"
+                />
+              </L>
+              {formAttachments.length > 0 && (
+                <div className="space-y-2">
+                  {formAttachments.map((file, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center gap-3 rounded-xl border border-slate-200 p-2"
+                    >
+                      {file.url.startsWith("data:image") ? (
+                        <img
+                          src={file.url}
+                          alt={file.name}
+                          className="h-16 w-16 rounded-lg object-cover"
+                        />
+                      ) : (
+                        <span className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
+                          <FileText className="h-6 w-6" />
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <b className="block truncate text-xs">
+                          {file.name || `Documento ${index + 1}`}
+                        </b>
+                        <span className="text-[11px] text-emerald-600">
+                          {file.url.startsWith("data:image")
+                            ? "Imagen vinculada"
+                            : "PDF vinculado"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadDataUrl(
+                            receiptFileName(
+                              form.id || "comprobante",
+                              file,
+                              index,
+                              formAttachments.length,
+                            ),
+                            file.url,
+                          )
+                        }
+                        title="Descargar documento"
+                        aria-label="Descargar documento"
+                        className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(index)}
+                        aria-label="Quitar documento"
+                        className="grid h-9 w-9 place-items-center rounded-lg text-rose-500 hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {formAttachments.length < MAX_MOVEMENT_DOCS ? (
+                <button
+                  onClick={() => setPickMode(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium"
+                >
+                  <Camera className="h-4 w-4" />{" "}
+                  {formAttachments.length
+                    ? "Agregar otro documento"
+                    : "Adjuntar comprobante"}
+                </button>
+              ) : (
+                <p className="text-[11px] text-slate-400">
+                  Máximo {MAX_MOVEMENT_DOCS} documentos por movimiento.
+                </p>
+              )}
             </div>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              <L label="Bruto"><input type="number" min="0" step="0.01" value={row.amount} onChange={(event) => setAllocation(index, { amount: event.target.value })} placeholder="0,00" className="u-input" /></L>
-              <L label="Retenciones"><input type="number" min="0" step="0.01" value={row.deductions} onChange={(event) => setAllocation(index, { deductions: event.target.value })} placeholder="0,00" className="u-input" /></L>
-              <div className="rounded-lg bg-slate-50 px-2.5 py-2"><span className="block text-[11px] text-slate-400">Neto</span><b className="text-xs text-emerald-600">{currencyAmount(Math.max(0, (Number(row.amount) || 0) - (Number(row.deductions) || 0)), form.currency)}</b></div>
-            </div>
-            {linked && <p className="mt-1.5 text-[11px] text-slate-500">Se imputa a {projects.find((project) => project.id === linked.projectId)?.key || "sin proyecto"}{linked.budgetId ? ` · ${budgets.find((budget) => budget.id === linked.budgetId)?.number || linked.budgetId}` : ""} · emitida por {currencyAmount(linked.amount, linked.currency)}</p>}
-          </div>;
-        })}
+          )}
+        </div>
+        {!pickMode && (
+          <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium"
+            >
+              Cancelar
+            </button>
+            <button
+              disabled={
+                saving ||
+                !form.concept.trim() ||
+                !(grossAmount > 0) ||
+                deductionsExceed ||
+                invalidAllocations > 0 ||
+                (duplicateOf && !duplicateConfirmed) ||
+                !form.date ||
+                (form.currency !== "USD" && !(Number(form.exchangeRate) > 0)) ||
+                (form.kind === "expense" &&
+                  companyMismatch &&
+                  !mismatchConfirmed) ||
+                (unusualAmount && !unusualConfirmed)
+              }
+              onClick={submit}
+              className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${form.kind === "expense" ? "bg-brand-500" : "bg-emerald-600"}`}
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar{" "}
+              {form.kind === "expense" ? "gasto" : "ingreso"}
+            </button>
+          </div>
+        )}
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-2 rounded-lg bg-white px-2.5 py-2 text-xs">
-        <span className="text-slate-400">Bruto<b className="mt-0.5 block text-sm text-slate-800">{currencyAmount(grossAmount, form.currency)}</b></span>
-        <span className="text-slate-400">Retenciones<b className="mt-0.5 block text-sm text-amber-600">{currencyAmount(deductionsAmount, form.currency)}</b></span>
-        <span className="text-slate-400">Importe de pago<b className={`mt-0.5 block text-sm ${deductionsExceed ? "text-rose-600" : "text-emerald-600"}`}>{currencyAmount(netAmount, form.currency)}</b></span>
-      </div>
-      <p className="mt-2 text-[11px] text-slate-500">El importe del encabezado se calcula sumando las partidas. Verificá que <b>Importe de pago</b> coincida con el total acreditado del aviso.</p>
-      {invalidAllocations > 0 && <p className="mt-1 text-[11px] font-medium text-rose-600">{invalidAllocations === 1 ? "Hay una partida sin factura vinculada o sin importe." : `Hay ${invalidAllocations} partidas sin factura vinculada o sin importe.`} Cada pago tiene que estar asociado a una factura para poder imputarlo.</p>}</>}
-  {deductionsExceed && <p className="mt-1 text-[11px] font-medium text-rose-600">Las retenciones superan el importe bruto. Verificá los valores.</p>}
-</div>}{duplicateOf && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><b className="block">Ya existe un gasto con este comprobante</b>{duplicateOf.id} · {budgetDate(duplicateOf.date)} · {duplicateOf.supplier || "sin proveedor"} · {currencyAmount(duplicateOf.amount, duplicateOf.currency)}{duplicateOf.concept ? ` · ${duplicateOf.concept}` : ""}.<span className="mt-1 block">Cargarlo de nuevo duplicaría el egreso en el resultado, en el flujo de caja y en el crédito fiscal.</span><label className="mt-2 flex items-center gap-2 font-medium"><input type="checkbox" checked={duplicateConfirmed} onChange={(event) => setDuplicateConfirmed(event.target.checked)} /> Confirmo que es un gasto distinto y quiero cargarlo igual</label></div>}{unusualAmount && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><b className="block">Importe inusualmente alto: {money(usd)}</b>Es fácil equivocarse de moneda (ej. cargar pesos como si fueran dólares) — un error así distorsiona todos los gráficos de Finanzas. Verificá el importe y la moneda antes de continuar.<label className="mt-2 flex items-center gap-2 font-medium"><input type="checkbox" checked={unusualConfirmed} onChange={(event) => setUnusualConfirmed(event.target.checked)} /> Confirmo que el importe y la moneda son correctos</label></div>}{form.currency !== "USD" && <><div className="grid grid-cols-2 gap-2"><L label={form.currency === "ARS" ? "Dólar mayorista BCRA (ARS/USD)" : `Cambio (${form.currency} por USD)`}><input type="number" min="0" step="0.0001" readOnly={form.currency === "ARS" && !rateError} value={form.exchangeRate || ""} onChange={(event) => set("exchangeRate", event.target.value)} placeholder={rateLoading ? "Consultando BCRA…" : form.currency === "ARS" ? "Dólar mayorista" : "Ej. 0,92"} className={`u-input ${form.currency === "ARS" && !rateError ? "bg-slate-50" : ""}`} /></L><div className="rounded-lg bg-slate-50 px-3 py-2"><span className="block text-[11px] text-slate-400">Equivalente</span><b>{usdLabel}</b></div></div>{form.currency === "ARS" && <div className="flex items-center justify-between gap-2 text-[11px]"><span className={rateError ? "text-rose-600" : "text-slate-500"}>{rateError ? `${rateError} Puedes ingresar la cotización manualmente.` : (form.exchangeRate ? `BCRA mayorista A 3500 · ${rateInfo?.updatedAt || form.exchangeRateUpdatedAt ? new Date(rateInfo?.updatedAt || form.exchangeRateUpdatedAt).toLocaleString("es-AR") : "cotización registrada"}` : "Consultando cotización…")}</span><button type="button" onClick={loadWholesaleRate} disabled={rateLoading} className="font-medium text-brand-600">{rateLoading ? "Actualizando…" : "Actualizar"}</button></div>}</>}<div className="grid grid-cols-2 gap-2"><L label="Fecha *"><input type="date" value={form.date} onChange={(event) => set("date", event.target.value)} className="u-input" /></L>{form.kind === "expense" ? <L label="Categoría"><select value={form.category} onChange={(event) => set("category", event.target.value)} className="u-input">{EXPENSE_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></L> : <L label="Cliente"><SearchSelect value={form.clientId || ""} onChange={(clientId) => set("clientId", clientId)} emptyLabel="Sin asociar" placeholder="Buscar cliente…" options={clients.map((client) => ({ value: client.id, label: client.name }))} /></L>}</div>{hasAllocations ? <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"><span className="block text-[11px] font-medium text-slate-500">Imputación</span><span className="mt-0.5 block text-xs text-slate-600">La define el detalle de partidas: cada factura aporta su proyecto y su presupuesto. {allocationSummary || "Vinculá las facturas para definir la imputación."}</span></div> : <div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Proyecto"><SearchSelect value={form.projectId || ""} onChange={selectProject} emptyLabel="General / sin proyecto" placeholder="Buscar por clave o nombre…" options={projects.map((project) => ({ value: project.id, label: `${project.key} · ${project.name}` }))} /></L><L label="Presupuesto">{form.kind === "expense" ? <div className={`min-h-10 rounded-lg border px-3 py-2 text-xs ${selectedLink.budget ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{selectedLink.budget ? <><b className="block">{selectedLink.budget.number || selectedLink.budget.id} · {selectedLink.budget.title}</b><span>Vinculado automáticamente</span></> : form.projectId ? "El proyecto no tiene un presupuesto aprobado." : "Se vinculará al seleccionar un proyecto."}</div> : <SearchSelect value={form.budgetId || ""} onChange={(budgetId) => set("budgetId", budgetId)} emptyLabel="Sin asociar" placeholder="Buscar por número o título…" options={budgets.map((budget) => ({ value: budget.id, label: `${budget.number || budget.id} · ${budget.title}` }))} />}</L></div>}{form.kind === "expense" && form.projectId && <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"><Link2 className="h-4 w-4 shrink-0 text-brand-600" /><div><b className="block text-slate-700">Trazabilidad del gasto</b><span className="text-slate-500">{selectedLink.clientName || "Cliente sin identificar"}{selectedLink.budget ? ` · ${selectedLink.budget.number || selectedLink.budget.id}` : " · pendiente de presupuesto aprobado"}</span></div></div>}<div className="grid grid-cols-2 gap-2"><L label={form.kind === "expense" ? "Proveedor" : "Pagador / referencia"} help={hasAllocations ? "N.º del aviso de pago del cliente. El comprobante de cada factura va en su partida." : ""}><input value={form.supplier || ""} onChange={(event) => set("supplier", event.target.value)} className="u-input" /></L>{!hasAllocations && <L label="Factura / comprobante"><input value={form.receiptNumber || ""} onChange={(event) => set("receiptNumber", event.target.value)} className="u-input" /></L>}</div><L label="Medio de pago"><select value={form.paymentMethod || ""} onChange={(event) => set("paymentMethod", event.target.value)} className="u-input">{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></L>{form.kind === "expense" && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!form.vatIncluded} onChange={(event) => set("vatIncluded", event.target.checked)} /> El importe incluye IVA (21%)</label>{form.vatIncluded && <p className="mt-1 text-[11px] text-slate-500">Neto estimado: {money(usd / 1.21)} · Crédito fiscal: {money(usd - usd / 1.21)}</p>}<div className="mt-3 grid grid-cols-2 gap-2"><L label="Estado de pago"><select value={form.paymentStatus || "paid"} onChange={(event) => { const paymentStatus = event.target.value; setForm((current) => ({ ...current, paymentStatus, paidAt: paymentStatus === "paid" ? (current.paidAt || current.date) : "" })); }} className="u-input"><option value="paid">Pagado</option><option value="pending">Pendiente de pago</option></select></L>{form.paymentStatus !== "pending" && <L label="Fecha de pago"><input type="date" value={form.paidAt || form.date} onChange={(event) => set("paidAt", event.target.value)} className="u-input" /></L>}</div>{form.paymentStatus === "pending" && <p className="mt-2 text-[11px] text-amber-600">Este gasto quedará como cuenta por pagar hasta que actualices su estado.</p>}</div>}<L label="Detalle"><textarea value={form.detail || ""} onChange={(event) => set("detail", event.target.value)} rows={3} className="u-input resize-none" /></L>{formAttachments.length > 0 && <div className="space-y-2">{formAttachments.map((file, index) => <div key={index} className="flex items-center gap-3 rounded-xl border border-slate-200 p-2">{file.url.startsWith("data:image") ? <img src={file.url} alt={file.name} className="h-16 w-16 rounded-lg object-cover" /> : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500"><FileText className="h-6 w-6" /></span>}<div className="min-w-0 flex-1"><b className="block truncate text-xs">{file.name || `Documento ${index + 1}`}</b><span className="text-[11px] text-emerald-600">{file.url.startsWith("data:image") ? "Imagen vinculada" : "PDF vinculado"}</span></div><button type="button" onClick={() => downloadDataUrl(receiptFileName(form.id || "comprobante", file, index, formAttachments.length), file.url)} title="Descargar documento" aria-label="Descargar documento" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><Download className="h-4 w-4" /></button><button type="button" onClick={() => removeAttachment(index)} aria-label="Quitar documento" className="grid h-9 w-9 place-items-center rounded-lg text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button></div>)}</div>}{formAttachments.length < MAX_MOVEMENT_DOCS ? <button onClick={() => setPickMode(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium"><Camera className="h-4 w-4" /> {formAttachments.length ? "Agregar otro documento" : "Adjuntar comprobante"}</button> : <p className="text-[11px] text-slate-400">Máximo {MAX_MOVEMENT_DOCS} documentos por movimiento.</p>}</div>}
-    </div>{!pickMode && <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium">Cancelar</button><button disabled={saving || !form.concept.trim() || !(grossAmount > 0) || deductionsExceed || invalidAllocations > 0 || (duplicateOf && !duplicateConfirmed) || !form.date || (form.currency !== "USD" && !(Number(form.exchangeRate) > 0)) || (form.kind === "expense" && companyMismatch && !mismatchConfirmed) || (unusualAmount && !unusualConfirmed)} onClick={submit} className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${form.kind === "expense" ? "bg-brand-500" : "bg-emerald-600"}`}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar {form.kind === "expense" ? "gasto" : "ingreso"}</button></div>}
-  </div>
-  {cropPending && <ImageCropModal imageUrl={cropPending.dataUrl} onDiscard={() => setCropPending(null)} onSkipCrop={() => { const { dataUrl, fileName } = cropPending; setCropPending(null); processReceiptImage(dataUrl, fileName); }} onConfirm={(cropped) => { const { fileName } = cropPending; setCropPending(null); processReceiptImage(cropped, fileName); }} />}
-  </div>;
+      {cropPending && (
+        <ImageCropModal
+          imageUrl={cropPending.dataUrl}
+          onDiscard={() => setCropPending(null)}
+          onSkipCrop={() => {
+            const { dataUrl, fileName } = cropPending;
+            setCropPending(null);
+            processReceiptImage(dataUrl, fileName);
+          }}
+          onConfirm={(cropped) => {
+            const { fileName } = cropPending;
+            setCropPending(null);
+            processReceiptImage(cropped, fileName);
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
 function FinanceModule({ movements, projects, budgets, clients, branding, me, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
@@ -2935,115 +4159,918 @@ function ExecutionChoiceModal({ budget, project, recommendProject, onClose, onOr
   </div>;
 }
 
-function PurchaseOrderEditor({ po, suppliers, projects, parts = [], onClose, onSave, onErr }) {
+function PurchaseOrderEditor({
+  po,
+  suppliers,
+  projects,
+  parts = [],
+  onClose,
+  onSave,
+  onErr,
+}) {
   useDialogOpenClass(onClose);
-  const [form, setForm] = useState(() => ({ supplierId: "", projectId: "", stage: "Borrador", dueDate: "", supplierQuoteNumber: "", supplierInvoiceNumber: "", notes: "", ...(po || {}), items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map((item) => ({ ...item })) }));
+  const [form, setForm] = useState(() => ({
+    supplierId: "",
+    projectId: "",
+    stage: "Borrador",
+    dueDate: "",
+    supplierQuoteNumber: "",
+    supplierInvoiceNumber: "",
+    notes: "",
+    ...(po || {}),
+    items: (po?.items?.length ? po.items : [emptyPurchaseOrderItem()]).map(
+      (item) => ({ ...item }),
+    ),
+  }));
   const [saving, setSaving] = useState(false);
   const [rateLoading, setRateLoading] = useState(false);
-  const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
-  const setItem = (index, patch) => setForm((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) }));
+  const set = (field, value) =>
+    setForm((current) => ({ ...current, [field]: value }));
+  const setItem = (index, patch) =>
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    }));
   const addItem = () => set("items", [...form.items, emptyPurchaseOrderItem()]);
-  const removeItem = (index) => set("items", form.items.filter((_, itemIndex) => itemIndex !== index));
-  const totals = form.items.reduce((sum, item) => { const math = poItemMath(item); return { net: sum.net + math.netAmountUsd, vat: sum.vat + math.vatAmountUsd, gross: sum.gross + math.grossAmountUsd }; }, { net: 0, vat: 0, gross: 0 });
-  const validItems = form.items.filter((item) => item.description.trim() && Number(item.qty) > 0 && Number(item.unitPrice) > 0);
-  const missingRate = form.items.some((item) => item.currency !== "USD" && !(Number(item.exchangeRate) > 0));
+  const removeItem = (index) =>
+    set(
+      "items",
+      form.items.filter((_, itemIndex) => itemIndex !== index),
+    );
+  const totals = form.items.reduce(
+    (sum, item) => {
+      const math = poItemMath(item);
+      return {
+        net: sum.net + math.netAmountUsd,
+        vat: sum.vat + math.vatAmountUsd,
+        gross: sum.gross + math.grossAmountUsd,
+      };
+    },
+    { net: 0, vat: 0, gross: 0 },
+  );
+  const validItems = form.items.filter(
+    (item) =>
+      item.description.trim() &&
+      Number(item.qty) > 0 &&
+      Number(item.unitPrice) > 0,
+  );
+  const missingRate = form.items.some(
+    (item) => item.currency !== "USD" && !(Number(item.exchangeRate) > 0),
+  );
   const applyWholesaleRate = async (index) => {
     setRateLoading(true);
-    try { const quote = await api.wholesaleExchangeRate(); setItem(index, { exchangeRate: quote.arsPerUsd }); }
-    catch (e) { onErr?.(e); }
-    finally { setRateLoading(false); }
+    try {
+      const quote = await api.wholesaleExchangeRate();
+      setItem(index, { exchangeRate: quote.arsPerUsd });
+    } catch (e) {
+      onErr?.(e);
+    } finally {
+      setRateLoading(false);
+    }
   };
-  const submit = async () => { setSaving(true); try { const saved = await onSave({ ...form, items: validItems }); if (saved) onClose(); } finally { setSaving(false); } };
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const saved = await onSave({ ...form, items: validItems });
+      if (saved) onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
   const mouseDownOnBackdrop = useRef(false);
-  return <div className="motion-backdrop fixed inset-0 z-[60] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
-    <div role="dialog" aria-modal="true" aria-labelledby="po-dialog-title" className="modal-frame mobile-dialog mobile-sheet-content flex h-[100dvh] w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
-      <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5"><div><h2 id="po-dialog-title" className="text-lg font-semibold text-slate-900">{po?.id ? `Editar ${po.number || po.id}` : "Nueva orden de compra"}</h2><p className="text-xs text-slate-500">Compra a proveedor con moneda e IVA por ítem</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
-        {suppliers.length === 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Todavía no hay proveedores cargados. Creá uno en la pestaña “Proveedores” antes de emitir la orden.</div>}
-        <Section title="Proveedor y seguimiento"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="N.º de orden"><input value={form.number || ""} onChange={(event) => set("number", event.target.value)} placeholder="Automático al guardar" className="u-input" /></L><L label="Proveedor *"><select value={form.supplierId} onChange={(event) => set("supplierId", event.target.value)} className="u-input"><option value="">Seleccionar proveedor</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></L><L label="Proyecto"><select value={form.projectId || ""} onChange={(event) => set("projectId", event.target.value)} className="u-input"><option value="">General / sin proyecto</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L><L label="Estado"><select value={form.stage} onChange={(event) => set("stage", event.target.value)} className="u-input">{PO_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></L><L label="Fecha de entrega estimada"><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} className="u-input" /></L><L label="N.º de presupuesto del proveedor" help="El número de presupuesto/cotización que el proveedor te compartió al solicitarle los materiales o servicios."><input value={form.supplierQuoteNumber || ""} onChange={(event) => set("supplierQuoteNumber", event.target.value)} placeholder="Ej. 100600040730" className="u-input" /></L><div className="sm:col-span-2"><L label={form.stage === "Recibida" ? "N.º de factura del proveedor *" : "N.º de factura del proveedor"} help="Se completa cuando el proveedor envía la factura correspondiente a esta orden."><input value={form.supplierInvoiceNumber || ""} onChange={(event) => set("supplierInvoiceNumber", event.target.value)} placeholder="Ej. 0001-00001234" className={`u-input ${form.stage === "Recibida" && !form.supplierInvoiceNumber?.trim() ? "border-amber-400 bg-amber-50" : ""}`} /></L></div></div><L label="Notas"><textarea rows={2} value={form.notes || ""} onChange={(event) => set("notes", event.target.value)} placeholder="Condiciones de entrega, referencia interna, etc." className="u-input resize-none" /></L></Section>
+  return (
+    <div
+      className="motion-backdrop fixed inset-0 z-[60] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        mouseDownOnBackdrop.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (mouseDownOnBackdrop.current && event.target === event.currentTarget)
+          onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="po-dialog-title"
+        className="modal-frame mobile-dialog mobile-sheet-content flex h-[100dvh] w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+          <div>
+            <h2
+              id="po-dialog-title"
+              className="text-lg font-semibold text-slate-900"
+            >
+              {po?.id
+                ? `Editar ${po.number || po.id}`
+                : "Nueva orden de compra"}
+            </h2>
+            <p className="text-xs text-slate-500">
+              Compra a proveedor con moneda e IVA por ítem
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+          {suppliers.length === 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+              Todavía no hay proveedores cargados. Creá uno en la pestaña
+              “Proveedores” antes de emitir la orden.
+            </div>
+          )}
+          <Section title="Proveedor y seguimiento">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <L label="N.º de orden">
+                <input
+                  value={form.number || ""}
+                  onChange={(event) => set("number", event.target.value)}
+                  placeholder="Automático al guardar"
+                  className="u-input"
+                />
+              </L>
+              <L label="Proveedor *">
+                <select
+                  value={form.supplierId}
+                  onChange={(event) => set("supplierId", event.target.value)}
+                  className="u-input"
+                >
+                  <option value="">Seleccionar proveedor</option>
+                  {suppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </option>
+                  ))}
+                </select>
+              </L>
+              <L label="Proyecto">
+                <select
+                  value={form.projectId || ""}
+                  onChange={(event) => set("projectId", event.target.value)}
+                  className="u-input"
+                >
+                  <option value="">General / sin proyecto</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.key} · {project.name}
+                    </option>
+                  ))}
+                </select>
+              </L>
+              <L label="Estado">
+                <select
+                  value={form.stage}
+                  onChange={(event) => set("stage", event.target.value)}
+                  className="u-input"
+                >
+                  {PO_STAGES.map((stage) => (
+                    <option key={stage}>{stage}</option>
+                  ))}
+                </select>
+              </L>
+              <L label="Fecha de entrega estimada">
+                <input
+                  type="date"
+                  value={form.dueDate || ""}
+                  onChange={(event) => set("dueDate", event.target.value)}
+                  className="u-input"
+                />
+              </L>
+              <L
+                label="N.º de presupuesto del proveedor"
+                help="El número de presupuesto/cotización que el proveedor te compartió al solicitarle los materiales o servicios."
+              >
+                <input
+                  value={form.supplierQuoteNumber || ""}
+                  onChange={(event) =>
+                    set("supplierQuoteNumber", event.target.value)
+                  }
+                  placeholder="Ej. 100600040730"
+                  className="u-input"
+                />
+              </L>
+              <div className="sm:col-span-2">
+                <L
+                  label={
+                    form.stage === "Recibida"
+                      ? "N.º de factura del proveedor *"
+                      : "N.º de factura del proveedor"
+                  }
+                  help="Se completa cuando el proveedor envía la factura correspondiente a esta orden."
+                >
+                  <input
+                    value={form.supplierInvoiceNumber || ""}
+                    onChange={(event) =>
+                      set("supplierInvoiceNumber", event.target.value)
+                    }
+                    placeholder="Ej. 0001-00001234"
+                    className={`u-input ${form.stage === "Recibida" && !form.supplierInvoiceNumber?.trim() ? "border-amber-400 bg-amber-50" : ""}`}
+                  />
+                </L>
+              </div>
+            </div>
+            <L label="Notas">
+              <textarea
+                rows={2}
+                value={form.notes || ""}
+                onChange={(event) => set("notes", event.target.value)}
+                placeholder="Condiciones de entrega, referencia interna, etc."
+                className="u-input resize-none"
+              />
+            </L>
+          </Section>
 
-        <Section title="Ítems">
-          <datalist id="po-parts">{parts.map((part) => <option key={part.id} value={part.name} />)}</datalist>
-          <div className="space-y-3">{form.items.map((item, index) => { const math = poItemMath(item); return <div key={index} className="rounded-lg border border-slate-200 p-2.5">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
-              <input value={item.sku || ""} onChange={(event) => setItem(index, { sku: event.target.value })} placeholder="Código" aria-label="Código" className="u-input font-mono" />
-              <input list="po-parts" value={item.description} onChange={(event) => { const value = event.target.value; const part = parts.find((candidate) => candidate.name === value); setItem(index, part ? { description: value, partId: part.id, unit: part.unit || item.unit } : { description: value, partId: null }); }} placeholder="Descripción del producto o servicio (autocompleta si está en Inventario)" aria-label="Descripción" className="u-input" />
+          <Section title="Ítems">
+            <datalist id="po-parts">
+              {parts.map((part) => (
+                <option key={part.id} value={part.name} />
+              ))}
+            </datalist>
+            <div className="space-y-3">
+              {form.items.map((item, index) => {
+                const math = poItemMath(item);
+                return (
+                  <div
+                    key={index}
+                    className="rounded-lg border border-slate-200 p-2.5"
+                  >
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
+                      <input
+                        value={item.sku || ""}
+                        onChange={(event) =>
+                          setItem(index, { sku: event.target.value })
+                        }
+                        placeholder="Código"
+                        aria-label="Código"
+                        className="u-input font-mono"
+                      />
+                      <input
+                        list="po-parts"
+                        value={item.description}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          const part = parts.find(
+                            (candidate) => candidate.name === value,
+                          );
+                          setItem(
+                            index,
+                            part
+                              ? {
+                                  description: value,
+                                  partId: part.id,
+                                  unit: part.unit || item.unit,
+                                }
+                              : { description: value, partId: null },
+                          );
+                        }}
+                        placeholder="Descripción del producto o servicio (autocompleta si está en Inventario)"
+                        aria-label="Descripción"
+                        className="u-input"
+                      />
+                    </div>
+                    {item.partId && (
+                      <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+                        <CheckCircle2 className="h-3 w-3" /> Vinculado al
+                        inventario: al recibir la orden, sumará stock a este
+                        repuesto.
+                      </p>
+                    )}
+                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-[5rem_5rem_6.5rem_6rem_5.5rem_auto]">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={item.qty}
+                        onChange={(event) =>
+                          setItem(index, {
+                            qty:
+                              event.target.value === ""
+                                ? ""
+                                : Math.max(
+                                    0,
+                                    Math.round(Number(event.target.value)),
+                                  ),
+                          })
+                        }
+                        placeholder="Cant."
+                        aria-label="Cantidad"
+                        className="u-input"
+                      />
+                      <select
+                        value={
+                          UNIT_OPTIONS.includes(item.unit) ? item.unit : "u"
+                        }
+                        onChange={(event) =>
+                          setItem(index, { unit: event.target.value })
+                        }
+                        aria-label="Unidad"
+                        className="u-input"
+                      >
+                        {UNIT_OPTIONS.map((unit) => (
+                          <option key={unit} value={unit}>
+                            {unit}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={item.unitPrice}
+                        onChange={(event) =>
+                          setItem(index, { unitPrice: event.target.value })
+                        }
+                        placeholder="Precio unit."
+                        aria-label="Precio unitario"
+                        className="u-input"
+                      />
+                      <select
+                        value={item.currency}
+                        onChange={(event) => {
+                          const currency = event.target.value;
+                          setItem(index, {
+                            currency,
+                            exchangeRate:
+                              currency === "USD"
+                                ? 1
+                                : item.exchangeRate === 1
+                                  ? ""
+                                  : item.exchangeRate,
+                          });
+                        }}
+                        aria-label="Moneda"
+                        className="u-input"
+                      >
+                        {PO_CURRENCIES.map((currency) => (
+                          <option key={currency}>{currency}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={item.vatRate}
+                        onChange={(event) =>
+                          setItem(index, {
+                            vatRate: Number(event.target.value),
+                          })
+                        }
+                        aria-label="Alícuota de IVA"
+                        className="u-input"
+                      >
+                        {PO_VAT_RATES.map((rate) => (
+                          <option key={rate} value={rate}>
+                            {rate}%
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => removeItem(index)}
+                        aria-label="Quitar ítem"
+                        className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 sm:justify-self-end"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                    {item.currency !== "USD" && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="w-40">
+                          <L label={`Tipo de cambio (${item.currency}/USD)`}>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              value={item.exchangeRate || ""}
+                              onChange={(event) =>
+                                setItem(index, {
+                                  exchangeRate: event.target.value,
+                                })
+                              }
+                              placeholder="Ej. 1050"
+                              className="u-input"
+                            />
+                          </L>
+                        </div>
+                        {item.currency === "ARS" && (
+                          <button
+                            type="button"
+                            disabled={rateLoading}
+                            onClick={() => applyWholesaleRate(index)}
+                            className="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-[11px] font-medium text-sky-700 disabled:opacity-50"
+                          >
+                            {rateLoading
+                              ? "Consultando…"
+                              : "Usar dólar mayorista"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-[11px] text-slate-500">
+                      <span>
+                        Neto: <b>{money(math.netAmountUsd)}</b>
+                      </span>
+                      <span>
+                        IVA: <b>{money(math.vatAmountUsd)}</b>
+                      </span>
+                      <span>
+                        Total: <b>{money(math.grossAmountUsd)}</b>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            {item.partId && <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Vinculado al inventario: al recibir la orden, sumará stock a este repuesto.</p>}
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-[5rem_5rem_6.5rem_6rem_5.5rem_auto]">
-              <input type="number" min="0" step="1" value={item.qty} onChange={(event) => setItem(index, { qty: event.target.value === "" ? "" : Math.max(0, Math.round(Number(event.target.value))) })} placeholder="Cant." aria-label="Cantidad" className="u-input" />
-              <select value={UNIT_OPTIONS.includes(item.unit) ? item.unit : "u"} onChange={(event) => setItem(index, { unit: event.target.value })} aria-label="Unidad" className="u-input">{UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select>
-              <input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: event.target.value })} placeholder="Precio unit." aria-label="Precio unitario" className="u-input" />
-              <select value={item.currency} onChange={(event) => { const currency = event.target.value; setItem(index, { currency, exchangeRate: currency === "USD" ? 1 : (item.exchangeRate === 1 ? "" : item.exchangeRate) }); }} aria-label="Moneda" className="u-input">{PO_CURRENCIES.map((currency) => <option key={currency}>{currency}</option>)}</select>
-              <select value={item.vatRate} onChange={(event) => setItem(index, { vatRate: Number(event.target.value) })} aria-label="Alícuota de IVA" className="u-input">{PO_VAT_RATES.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select>
-              <button onClick={() => removeItem(index)} aria-label="Quitar ítem" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 sm:justify-self-end"><Trash2 className="h-4 w-4" /></button>
+            <button
+              onClick={addItem}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"
+            >
+              <Plus className="h-4 w-4" /> Agregar ítem
+            </button>
+            <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-3">
+              <div>
+                <span className="block text-[10px] uppercase text-slate-400">
+                  Neto (USD)
+                </span>
+                <b>{money(totals.net)}</b>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase text-slate-400">
+                  IVA (USD)
+                </span>
+                <b>{money(totals.vat)}</b>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase text-slate-400">
+                  Total (USD)
+                </span>
+                <b className="text-brand-700">{money(totals.gross)}</b>
+              </div>
             </div>
-            {item.currency !== "USD" && <div className="mt-2 flex flex-wrap items-center gap-2"><div className="w-40"><L label={`Tipo de cambio (${item.currency}/USD)`}><input type="number" min="0" step="0.0001" value={item.exchangeRate || ""} onChange={(event) => setItem(index, { exchangeRate: event.target.value })} placeholder="Ej. 1050" className="u-input" /></L></div>{item.currency === "ARS" && <button type="button" disabled={rateLoading} onClick={() => applyWholesaleRate(index)} className="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-[11px] font-medium text-sky-700 disabled:opacity-50">{rateLoading ? "Consultando…" : "Usar dólar mayorista"}</button>}</div>}
-            <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-[11px] text-slate-500"><span>Neto: <b>{money(math.netAmountUsd)}</b></span><span>IVA: <b>{money(math.vatAmountUsd)}</b></span><span>Total: <b>{money(math.grossAmountUsd)}</b></span></div>
-          </div>; })}</div>
-          <button onClick={addItem} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600"><Plus className="h-4 w-4" /> Agregar ítem</button>
-          <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-3"><div><span className="block text-[10px] uppercase text-slate-400">Neto (USD)</span><b>{money(totals.net)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">IVA (USD)</span><b>{money(totals.vat)}</b></div><div><span className="block text-[10px] uppercase text-slate-400">Total (USD)</span><b className="text-brand-700">{money(totals.gross)}</b></div></div>
-          {form.stage === "Recibida" && !form.supplierInvoiceNumber?.trim() && <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b className="block">Falta el N.º de factura del proveedor</b><span>No se puede guardar como Recibida sin ese dato. Completalo arriba, en “Proveedor y seguimiento”, para generar la cuenta por pagar en Finanzas.</span></div></div>}
-          {form.stage === "Recibida" && form.supplierInvoiceNumber?.trim() && <p className="mt-2 text-[11px] text-slate-500">Al guardar como <b>Recibida</b>, esta orden generará automáticamente una cuenta por pagar en Finanzas por el total con IVA.</p>}
-        </Section>
+            {form.stage === "Recibida" &&
+              !form.supplierInvoiceNumber?.trim() && (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <b className="block">
+                      Falta el N.º de factura del proveedor
+                    </b>
+                    <span>
+                      No se puede guardar como Recibida sin ese dato. Completalo
+                      arriba, en “Proveedor y seguimiento”, para generar la
+                      cuenta por pagar en Finanzas.
+                    </span>
+                  </div>
+                </div>
+              )}
+            {form.stage === "Recibida" &&
+              form.supplierInvoiceNumber?.trim() && (
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Al guardar como <b>Recibida</b>, esta orden generará
+                  automáticamente una cuenta por pagar en Finanzas por el total
+                  con IVA.
+                </p>
+              )}
+          </Section>
+        </div>
+        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600"
+          >
+            Cancelar
+          </button>
+          <button
+            disabled={
+              saving ||
+              !form.supplierId ||
+              validItems.length === 0 ||
+              missingRate ||
+              (form.stage === "Recibida" && !form.supplierInvoiceNumber?.trim())
+            }
+            onClick={submit}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar
+            orden de compra
+          </button>
+        </div>
       </div>
-      <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || !form.supplierId || validItems.length === 0 || missingRate || (form.stage === "Recibida" && !form.supplierInvoiceNumber?.trim())} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar orden de compra</button></div>
     </div>
-  </div>;
+  );
 }
 
-function PurchaseOrdersModule({ purchaseOrders, suppliers, projects, finances, parts = [], me, createSignal, onConsumeCreate, onSave, onDelete, onDuplicate, onMarkPaid, onAddSupplier, onPatchSupplier, onRemoveSupplier, onErr }) {
+function PurchaseOrdersModule({
+  purchaseOrders,
+  suppliers,
+  projects,
+  finances,
+  parts = [],
+  me,
+  createSignal,
+  onConsumeCreate,
+  onSave,
+  onDelete,
+  onDuplicate,
+  onMarkPaid,
+  onAddSupplier,
+  onPatchSupplier,
+  onRemoveSupplier,
+  onErr,
+}) {
   const [poTab, setPoTab] = useState("orders");
   const [editingPo, setEditingPo] = useState(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState("Todos");
-  useEffect(() => { if (createSignal > 0) { setEditingPo(null); setPoTab("orders"); setEditorOpen(true); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
-  const wrap = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { onErr(e); } };
-  const pending = purchaseOrders.filter((po) => !["Recibida", "Cancelada"].includes(po.stage));
-  const pendingTotal = pending.reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
-  const receivedTotal = purchaseOrders.filter((po) => po.stage === "Recibida").reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
-  const payableCount = finances.filter((f) => f.sourcePurchaseOrderId && f.paymentStatus === "pending").length;
+  useEffect(() => {
+    if (createSignal > 0) {
+      setEditingPo(null);
+      setPoTab("orders");
+      setEditorOpen(true);
+      onConsumeCreate();
+    }
+  }, [createSignal, onConsumeCreate]);
+  const wrap =
+    (fn) =>
+    async (...a) => {
+      try {
+        return await fn(...a);
+      } catch (e) {
+        onErr(e);
+      }
+    };
+  const pending = purchaseOrders.filter(
+    (po) => !["Recibida", "Cancelada"].includes(po.stage),
+  );
+  const pendingTotal = pending.reduce(
+    (sum, po) => sum + (Number(po.grossAmountUsd) || 0),
+    0,
+  );
+  const receivedTotal = purchaseOrders
+    .filter((po) => po.stage === "Recibida")
+    .reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
+  const payableCount = finances.filter(
+    (f) => f.sourcePurchaseOrderId && f.paymentStatus === "pending",
+  ).length;
   // "Sin pagar" no depende de haber llegado a Recibida (recién ahí se genera la cuenta por pagar
   // formal en Finanzas): cualquier OC activa que todavía no tenga el pago confirmado cuenta como
   // pendiente, para poder anticiparse desde que se confirma la compra, no solo al recibirla.
-  const unpaidPOs = purchaseOrders.filter((po) => { if (po.stage === "Cancelada") return false; const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); return !payable || payable.paymentStatus === "pending"; });
-  const unpaidTotal = unpaidPOs.reduce((sum, po) => sum + (Number(po.grossAmountUsd) || 0), 0);
+  const unpaidPOs = purchaseOrders.filter((po) => {
+    if (po.stage === "Cancelada") return false;
+    const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id);
+    return !payable || payable.paymentStatus === "pending";
+  });
+  const unpaidTotal = unpaidPOs.reduce(
+    (sum, po) => sum + (Number(po.grossAmountUsd) || 0),
+    0,
+  );
   const overdueDeliveries = purchaseOrders.filter(isDeliveryOverdue);
-  const visible = purchaseOrders.filter((po) => { const stageMatches = stage === "Todos" || po.stage === stage; return stageMatches && (!query || `${po.number || po.id} ${po.supplierName} ${po.supplierInvoiceNumber || ""}`.toLowerCase().includes(query.toLowerCase())); });
-  return <div className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-semibold text-slate-900">Órdenes de compra</h2><p className="text-xs text-slate-500">Compras a proveedores y su impacto en cuentas por pagar</p></div>
-      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 text-xs font-medium">
-        <button onClick={() => setPoTab("orders")} className={`rounded-md px-3 py-1.5 ${poTab === "orders" ? "bg-brand-500 text-white" : "text-slate-600"}`}>Órdenes</button>
-        <button onClick={() => setPoTab("suppliers")} className={`rounded-md px-3 py-1.5 ${poTab === "suppliers" ? "bg-brand-500 text-white" : "text-slate-600"}`}>Proveedores</button>
-      </div>
-    </div>
-    {poTab === "suppliers" ? <Suppliers suppliers={suppliers} purchaseOrders={purchaseOrders} onAdd={onAddSupplier} onPatch={onPatchSupplier} onRemove={onRemoveSupplier} onErr={onErr} /> : <>
-      {overdueDeliveries.length > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><Clock className="mt-0.5 h-4 w-4 shrink-0" />{overdueDeliveries.length} orden(es) de compra con fecha de entrega vencida: {overdueDeliveries.slice(0, 4).map((po) => po.number || po.id).join(", ")}{overdueDeliveries.length > 4 ? "…" : ""}.</div>
-      )}
-      {unpaidPOs.length > 0 && (
-        <div className="flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
-          <span className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{unpaidPOs.length} orden(es) de compra sin pagar · {money(unpaidTotal)}</span>
-          <button onClick={() => { setStage("Todos"); setQuery(""); }} className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white">Ver pendientes de pago</button>
+  const visible = purchaseOrders.filter((po) => {
+    const stageMatches = stage === "Todos" || po.stage === stage;
+    return (
+      stageMatches &&
+      (!query ||
+        `${po.number || po.id} ${po.supplierName} ${po.supplierInvoiceNumber || ""}`
+          .toLowerCase()
+          .includes(query.toLowerCase()))
+    );
+  });
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Órdenes de compra
+          </h2>
+          <p className="text-xs text-slate-500">
+            Compras a proveedores y su impacto en cuentas por pagar
+          </p>
         </div>
+        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 text-xs font-medium">
+          <button
+            onClick={() => setPoTab("orders")}
+            className={`rounded-md px-3 py-1.5 ${poTab === "orders" ? "bg-brand-500 text-white" : "text-slate-600"}`}
+          >
+            Órdenes
+          </button>
+          <button
+            onClick={() => setPoTab("suppliers")}
+            className={`rounded-md px-3 py-1.5 ${poTab === "suppliers" ? "bg-brand-500 text-white" : "text-slate-600"}`}
+          >
+            Proveedores
+          </button>
+        </div>
+      </div>
+      {poTab === "suppliers" ? (
+        <Suppliers
+          suppliers={suppliers}
+          purchaseOrders={purchaseOrders}
+          onAdd={onAddSupplier}
+          onPatch={onPatchSupplier}
+          onRemove={onRemoveSupplier}
+          onErr={onErr}
+        />
+      ) : (
+        <>
+          {overdueDeliveries.length > 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0" />
+              {overdueDeliveries.length} orden(es) de compra con fecha de
+              entrega vencida:{" "}
+              {overdueDeliveries
+                .slice(0, 4)
+                .map((po) => po.number || po.id)
+                .join(", ")}
+              {overdueDeliveries.length > 4 ? "…" : ""}.
+            </div>
+          )}
+          {unpaidPOs.length > 0 && (
+            <div className="flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+              <span className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {unpaidPOs.length} orden(es) de compra sin pagar ·{" "}
+                {money(unpaidTotal)}
+              </span>
+              <button
+                onClick={() => {
+                  setStage("Todos");
+                  setQuery("");
+                }}
+                className="shrink-0 rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium hover:bg-white"
+              >
+                Ver pendientes de pago
+              </button>
+            </div>
+          )}
+          <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Metric
+              label="Pendiente de recibir"
+              value={money(pendingTotal)}
+              icon={Truck}
+              tint="text-brand-600"
+              description="Suma del total con IVA de las órdenes de compra en Borrador, Enviada o Confirmada."
+            />
+            <Metric
+              label="Recibido (histórico)"
+              value={money(receivedTotal)}
+              icon={CheckCircle2}
+              tint="text-emerald-600"
+              description="Suma del total con IVA de las órdenes marcadas como Recibidas."
+            />
+            <Metric
+              label="Cuentas por pagar de OC"
+              value={payableCount}
+              icon={AlertTriangle}
+              tint={payableCount ? "text-amber-600" : "text-emerald-600"}
+              description="Movimientos de Finanzas generados por órdenes de compra recibidas que siguen pendientes de pago."
+            />
+            <Metric
+              label="Proveedores activos"
+              value={suppliers.filter((s) => s.active !== false).length}
+              icon={Building2}
+              tint="text-slate-600"
+              description="Cantidad de proveedores marcados como activos."
+            />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar orden, proveedor o factura…"
+                className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500"
+              />
+            </div>
+            <select
+              value={stage}
+              onChange={(event) => setStage(event.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+            >
+              <option value="Todos">Todos los estados</option>
+              {PO_STAGES.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </div>
+          {visible.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+              <ShoppingCart className="mx-auto h-8 w-8 text-slate-300" />
+              <h3 className="mt-2 text-sm font-semibold text-slate-700">
+                Sin órdenes de compra para mostrar
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Registrá una compra a proveedor para empezar.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {visible.map((po) => (
+                <Box
+                  key={po.id}
+                  onClick={() => {
+                    setEditingPo(po);
+                    setEditorOpen(true);
+                  }}
+                  className="cursor-pointer p-4 hover:border-brand-300"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-semibold text-slate-700">
+                          {po.number || po.id}
+                        </span>
+                        <Chip className={`${PO_STAGE_STYLE[po.stage]} ring-1`}>
+                          {po.stage}
+                        </Chip>
+                        {isDeliveryOverdue(po) && (
+                          <Chip className="bg-rose-50 text-rose-700 ring-rose-200">
+                            <Clock className="h-3 w-3" />
+                            Entrega vencida
+                          </Chip>
+                        )}
+                        {po.supplierQuoteNumber && (
+                          <Chip
+                            className="bg-violet-50 text-violet-700 ring-violet-200"
+                            title="Número de cotización que te dio el proveedor (no un Presupuesto tuyo)"
+                          >
+                            Cotiz. proveedor {po.supplierQuoteNumber}
+                          </Chip>
+                        )}
+                        {po.supplierInvoiceNumber && (
+                          <Chip className="bg-sky-50 text-sky-700 ring-sky-200">
+                            Fact. {po.supplierInvoiceNumber}
+                          </Chip>
+                        )}
+                      </div>
+                      <h3 className="mt-2 text-base font-semibold text-slate-900">
+                        {po.supplierName}
+                      </h3>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {(po.items || []).length} producto(s) ·{" "}
+                        {(po.items || []).reduce(
+                          (sum, item) => sum + (Number(item.qty) || 0),
+                          0,
+                        )}{" "}
+                        unidad(es)
+                        {po.dueDate
+                          ? ` · Entrega ${budgetDate(po.dueDate)}`
+                          : ""}
+                      </p>
+                    </div>
+                    <div
+                      className="flex shrink-0 gap-1.5"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        onClick={() =>
+                          purchaseOrderReportPDF(
+                            po,
+                            suppliers.find((s) => s.id === po.supplierId),
+                            projects.find((p) => p.id === po.projectId),
+                          )
+                        }
+                        title="Descargar PDF"
+                        aria-label="Descargar PDF de la orden de compra"
+                        className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingPo(po);
+                          setEditorOpen(true);
+                        }}
+                        title="Editar orden de compra"
+                        aria-label="Editar orden de compra"
+                        className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      {onDuplicate && (
+                        <button
+                          onClick={() => wrap(onDuplicate)(po)}
+                          title="Duplicar orden de compra"
+                          aria-label="Duplicar orden de compra"
+                          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setPendingDelete(po)}
+                        title="Anular orden de compra"
+                        aria-label="Anular orden de compra"
+                        className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs">
+                    <div>
+                      <span className="block text-[10px] text-slate-400">
+                        Neto
+                      </span>
+                      <b>{money(po.netAmountUsd)}</b>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] text-slate-400">
+                        IVA
+                      </span>
+                      <b>{money(po.vatAmountUsd)}</b>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] text-slate-400">
+                        Total
+                      </span>
+                      <b>{money(po.grossAmountUsd)}</b>
+                    </div>
+                  </div>
+                  {po.stage === "Recibida" &&
+                    (() => {
+                      const payable = finances.find(
+                        (f) => f.sourcePurchaseOrderId === po.id,
+                      );
+                      if (!payable) return null;
+                      const isPaid = payable.paymentStatus !== "pending";
+                      return (
+                        <div
+                          onClick={(event) => event.stopPropagation()}
+                          className={`mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs font-medium ${isPaid ? "text-emerald-700" : "text-amber-700"}`}
+                        >
+                          <Link2 className="h-3.5 w-3.5 shrink-0" />
+                          {isPaid ? (
+                            <span>
+                              Pagada
+                              {payable.paidAt
+                                ? ` el ${budgetDate(payable.paidAt)}`
+                                : ""}
+                            </span>
+                          ) : (
+                            <span>Cuenta por pagar pendiente</span>
+                          )}
+                          {onMarkPaid &&
+                            (isPaid ? (
+                              <button
+                                onClick={() =>
+                                  wrap(onMarkPaid)(payable.id, false)
+                                }
+                                className="ml-auto rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50"
+                              >
+                                Deshacer
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  wrap(onMarkPaid)(payable.id, true)
+                                }
+                                className="ml-auto rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
+                              >
+                                Marcar como pagada
+                              </button>
+                            ))}
+                        </div>
+                      );
+                    })()}
+                </Box>
+              ))}
+            </div>
+          )}
+        </>
       )}
-      <div className="motion-list grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Pendiente de recibir" value={money(pendingTotal)} icon={Truck} tint="text-brand-600" description="Suma del total con IVA de las órdenes de compra en Borrador, Enviada o Confirmada." /><Metric label="Recibido (histórico)" value={money(receivedTotal)} icon={CheckCircle2} tint="text-emerald-600" description="Suma del total con IVA de las órdenes marcadas como Recibidas." /><Metric label="Cuentas por pagar de OC" value={payableCount} icon={AlertTriangle} tint={payableCount ? "text-amber-600" : "text-emerald-600"} description="Movimientos de Finanzas generados por órdenes de compra recibidas que siguen pendientes de pago." /><Metric label="Proveedores activos" value={suppliers.filter((s) => s.active !== false).length} icon={Building2} tint="text-slate-600" description="Cantidad de proveedores marcados como activos." /></div>
-      <div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar orden, proveedor o factura…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div><select value={stage} onChange={(event) => setStage(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="Todos">Todos los estados</option>{PO_STAGES.map((item) => <option key={item}>{item}</option>)}</select></div>
-      {visible.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><ShoppingCart className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin órdenes de compra para mostrar</h3><p className="mt-1 text-xs text-slate-400">Registrá una compra a proveedor para empezar.</p></div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{visible.map((po) => <Box key={po.id} onClick={() => { setEditingPo(po); setEditorOpen(true); }} className="cursor-pointer p-4 hover:border-brand-300"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{po.number || po.id}</span><Chip className={`${PO_STAGE_STYLE[po.stage]} ring-1`}>{po.stage}</Chip>{isDeliveryOverdue(po) && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><Clock className="h-3 w-3" />Entrega vencida</Chip>}{po.supplierQuoteNumber &&<Chip className="bg-violet-50 text-violet-700 ring-violet-200" title="Número de cotización que te dio el proveedor (no un Presupuesto tuyo)">Cotiz. proveedor {po.supplierQuoteNumber}</Chip>}{po.supplierInvoiceNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">Fact. {po.supplierInvoiceNumber}</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{po.supplierName}</h3><p className="mt-0.5 text-xs text-slate-500">{(po.items || []).length} producto(s) · {(po.items || []).reduce((sum, item) => sum + (Number(item.qty) || 0), 0)} unidad(es){po.dueDate ? ` · Entrega ${budgetDate(po.dueDate)}` : ""}</p></div><div className="flex shrink-0 gap-1.5" onClick={(event) => event.stopPropagation()}><button onClick={() => purchaseOrderReportPDF(po, suppliers.find((s) => s.id === po.supplierId), projects.find((p) => p.id === po.projectId))} title="Descargar PDF" aria-label="Descargar PDF de la orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button><button onClick={() => { setEditingPo(po); setEditorOpen(true); }} title="Editar orden de compra" aria-label="Editar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>{onDuplicate && <button onClick={() => wrap(onDuplicate)(po)} title="Duplicar orden de compra" aria-label="Duplicar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>}<button onClick={() => setPendingDelete(po)} title="Eliminar orden de compra" aria-label="Eliminar orden de compra" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs"><div><span className="block text-[10px] text-slate-400">Neto</span><b>{money(po.netAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">IVA</span><b>{money(po.vatAmountUsd)}</b></div><div><span className="block text-[10px] text-slate-400">Total</span><b>{money(po.grossAmountUsd)}</b></div></div>{po.stage === "Recibida" && (() => { const payable = finances.find((f) => f.sourcePurchaseOrderId === po.id); if (!payable) return null; const isPaid = payable.paymentStatus !== "pending"; return (
-                <div onClick={(event) => event.stopPropagation()} className={`mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs font-medium ${isPaid ? "text-emerald-700" : "text-amber-700"}`}>
-                  <Link2 className="h-3.5 w-3.5 shrink-0" />
-                  {isPaid ? <span>Pagada{payable.paidAt ? ` el ${budgetDate(payable.paidAt)}` : ""}</span> : <span>Cuenta por pagar pendiente</span>}
-                  {onMarkPaid && (isPaid
-                    ? <button onClick={() => wrap(onMarkPaid)(payable.id, false)} className="ml-auto rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50">Deshacer</button>
-                    : <button onClick={() => wrap(onMarkPaid)(payable.id, true)} className="ml-auto rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500">Marcar como pagada</button>)}
-                </div>
-              ); })()}</Box>)}</div>}
-    </>}
-    {editorOpen && <PurchaseOrderEditor po={editingPo} suppliers={suppliers} projects={projects} parts={parts} onClose={() => setEditorOpen(false)} onSave={wrap(async (form) => onSave(form, editingPo?.id))} onErr={onErr} />}
-    {pendingDelete && <ConfirmDialog title="Eliminar orden de compra" message={`Se eliminará “${pendingDelete.number || pendingDelete.id}”. ${pendingDelete.stage === "Recibida" ? "La cuenta por pagar asociada en Finanzas también se eliminará." : "No tiene movimientos financieros asociados."}`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onDelete)(pendingDelete.id); setPendingDelete(null); }} />}
-  </div>;
+      {editorOpen && (
+        <PurchaseOrderEditor
+          po={editingPo}
+          suppliers={suppliers}
+          projects={projects}
+          parts={parts}
+          onClose={() => setEditorOpen(false)}
+          onSave={wrap(async (form) => onSave(form, editingPo?.id))}
+          onErr={onErr}
+        />
+      )}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Anular orden de compra"
+          message={`Se archivará “${pendingDelete.number || pendingDelete.id}” y se conservará su trazabilidad. ${pendingDelete.stage === "Recibida" ? "También se revertirán el ingreso de stock y la cuenta por pagar asociada." : "No tiene movimientos financieros asociados."}`}
+          confirmLabel="Anular orden"
+          danger
+          onClose={() => setPendingDelete(null)}
+          onConfirm={async () => {
+            await wrap(onDelete)(pendingDelete.id);
+            setPendingDelete(null);
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
 /* ===================================== LISTADO DE MATERIALES ===================================== */
@@ -4093,7 +6120,7 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
             {/* Zona de riesgo: separada del resto para no confundirla con una acción cualquiera */}
             {ger && onDelete && (
               <div className="flex flex-wrap items-center gap-2 border-t border-rose-100 pt-3">
-                <button onClick={() => onDelete(order.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Eliminar orden</button>
+                <button onClick={() => onDelete(order.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Anular orden</button>
               </div>
             )}
           </section>
@@ -4976,8 +7003,7 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
       else if (isStale(t)) { level = "ambar"; probability = "Media"; reason = `Sin cambios ${daysSince(t._updatedAt)} d`; }
       return level ? { level, severityLabel: level === "rojo" ? "Crítico" : "Atención", title: t.title, assignee: nameOf(t.assignee), impact, probability, reason } : null;
     }).filter(Boolean)
-      .sort((a, b) => (a.level === "rojo" ? 0 : 1) - (b.level === "rojo" ? 0 : 1))
-      .slice(0, 10);
+      .sort((a, b) => (a.level === "rojo" ? 0 : 1) - (b.level === "rojo" ? 0 : 1));
     const riskNote = `Impacto = prioridad de la tarea (Urgente/Alta → Alto, Media → Medio, Baja → Bajo). Probabilidad: "Materializado" si ya venció; "Alta" si vence en 4 días y sigue sin iniciarse; "Media" si vence en 4 días ya en curso, o si lleva ${STALE_DAYS}+ días sin movimiento. Derivado del tablero, no es un registro de riesgos curado.`;
 
     // Logros: cierres de los últimos 30 días, con su fecha real de cierre.
@@ -5533,6 +7559,7 @@ const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5
 
 /* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
 function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave, onDelete, onErr }) {
+  const canWrite = me.role !== "monitor_oficina";
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState(initialProjectId);
   const [editorMode, setEditorMode] = useState(null); // { kind: "text" | "drawing", note }
@@ -5568,8 +7595,8 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave,
             fija su ancho por la opción más larga, así que la búsqueda quedaba reducida a la lupa. */}
         <div className="relative w-full sm:min-w-[200px] sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar nota…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
         <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm sm:w-auto sm:max-w-[16rem]"><option value="">Todos los proyectos</option>{projects.filter((p) => notes.some((n) => n.projectId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select>
-        <button onClick={() => startNew("text")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><StickyNote className="h-4 w-4" /> Nota de texto</button>
-        <button onClick={() => startNew("drawing")} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-brand-400"><PenLine className="h-4 w-4" /> Dibujo</button>
+        {canWrite && <button onClick={() => startNew("text")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><StickyNote className="h-4 w-4" /> Nota de texto</button>}
+        {canWrite && <button onClick={() => startNew("drawing")} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-brand-400"><PenLine className="h-4 w-4" /> Dibujo</button>}
       </div>
       {visible.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><StickyNote className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-2 text-sm font-semibold text-slate-700">Sin notas para mostrar</h3><p className="mt-1 text-xs text-slate-400">Agregá una nota o un dibujo para empezar.</p></div>
@@ -5599,10 +7626,10 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave,
                         : <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">De {note.createdByName} · vista de administrador</span>}
                   </div>
                   <div className="mt-auto flex items-center gap-1.5 border-t border-slate-100 pt-2">
-                    <button onClick={() => startDuplicate(note)} title="Duplicar" aria-label="Duplicar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>
-                    {isOwner && <button onClick={() => setShareNote(note)} title="Compartir" aria-label="Compartir nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Share2 className="h-4 w-4" /></button>}
-                    {isOwner && <button onClick={() => startEdit(note)} title="Editar" aria-label="Editar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
-                    {(isOwner || me.role === "admin") && <button onClick={() => setPendingDelete(note)} title="Eliminar" aria-label="Eliminar nota" className="ml-auto grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}
+                    {canWrite && <button onClick={() => startDuplicate(note)} title="Duplicar" aria-label="Duplicar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button>}
+                    {canWrite && isOwner && <button onClick={() => setShareNote(note)} title="Compartir" aria-label="Compartir nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Share2 className="h-4 w-4" /></button>}
+                    {canWrite && isOwner && <button onClick={() => startEdit(note)} title="Editar" aria-label="Editar nota" className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
+                    {canWrite && (isOwner || me.role === "admin") && <button onClick={() => setPendingDelete(note)} title="Eliminar" aria-label="Eliminar nota" className="ml-auto grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}
                   </div>
                 </div>
               </Box>
