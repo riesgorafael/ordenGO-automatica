@@ -1070,10 +1070,17 @@ const normalizeBudget = (input, previous = {}) => {
   budget.items = Array.isArray(budget.items) ? budget.items.map((item) => {
     const laborRole = LABOR_ROLE_COST[item.description] != null ? item.description : LABOR_DEFAULT_ROLE[item.type];
     const isLabor = Boolean(laborRole && LABOR_ROLE_COST[laborRole] != null);
-    const originalCost = Math.max(0, Number(item.unitCost) || 0);
-    const unitCost = isLabor ? LABOR_ROLE_COST[laborRole] : originalCost;
+    // La tabla de roles pasa a ser un valor SUGERIDO, no impuesto: antes el costo cargado a mano se
+    // descartaba en silencio para toda línea de mano de obra, así que un trabajo sin costo interno
+    // igual arrastraba los USD 25/h del rol y el margen nunca podía dar 100%.
+    // Se distingue "no vino el campo" de "vino en cero": un cero explícito ahora se respeta.
+    const hasCost = item.unitCost !== undefined && item.unitCost !== null && item.unitCost !== "";
+    const unitCost = hasCost ? Math.max(0, Number(item.unitCost) || 0) : (isLabor ? LABOR_ROLE_COST[laborRole] : 0);
     const suggestedSale = budget.targetMargin >= 100 ? unitCost : Math.round((unitCost / (1 - budget.targetMargin / 100)) * 100) / 100;
-    return { ...item, description: isLabor ? laborRole : item.description, unit: isLabor ? "h" : item.unit, qty: Math.max(0, Number(item.qty) || 0), unitPrice: Math.max(0, originalCost <= 0 && isLabor ? suggestedSale : Number(item.unitPrice) || 0), unitCost };
+    // El precio sugerido solo aplica cuando no vino precio. Antes se disparaba con costo 0, así que
+    // poner el costo en cero habría borrado también el precio de venta.
+    const hasPrice = item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice !== "";
+    return { ...item, description: isLabor ? laborRole : item.description, unit: isLabor ? "h" : item.unit, qty: Math.max(0, Number(item.qty) || 0), unitPrice: hasPrice ? Math.max(0, Number(item.unitPrice) || 0) : Math.max(0, suggestedSale), unitCost };
   }) : [];
   budget.additionalCosts = Array.isArray(budget.additionalCosts) ? budget.additionalCosts.map(normalizeAdditionalCost).filter((cost) => cost.description && cost.amount > 0) : [];
   budget.amount = Math.round(budget.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0) * 100) / 100;
