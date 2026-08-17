@@ -9,7 +9,7 @@ import {
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
   ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
-  Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity,
+  Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity, Sun, Moon, Monitor,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
@@ -44,6 +44,10 @@ const BRAND_THEMES = [
   { id: "energia", name: "Energía", primaryColor: "#059669", headerColor: "#16312A" },
   { id: "control", name: "Control", primaryColor: "#7C3AED", headerColor: "#261B36" },
   { id: "grafito", name: "Grafito", primaryColor: "#475569", headerColor: "#1E293B" },
+  { id: "petroleo", name: "Petróleo", primaryColor: "#0F766E", headerColor: "#073B3A" },
+  { id: "cobre", name: "Cobre", primaryColor: "#C2410C", headerColor: "#292524" },
+  { id: "acero", name: "Acero", primaryColor: "#64748B", headerColor: "#111827" },
+  { id: "contraste", name: "Alto contraste", primaryColor: "#FACC15", headerColor: "#111827" },
 ];
 const mixHex = (from, to, weight) => {
   const parse = (hex) => [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16));
@@ -54,8 +58,19 @@ const applyBrandingTheme = (branding) => {
   const root = document.documentElement; const primary = branding.primaryColor || DEFAULT_BRANDING.primaryColor; const header = branding.headerColor || DEFAULT_BRANDING.headerColor;
   [[50, mixHex(primary, "#FFFFFF", 0.94)], [100, mixHex(primary, "#FFFFFF", 0.86)], [200, mixHex(primary, "#FFFFFF", 0.7)], [300, mixHex(primary, "#FFFFFF", 0.5)], [400, mixHex(primary, "#FFFFFF", 0.24)], [500, primary], [600, mixHex(primary, "#000000", 0.12)], [700, mixHex(primary, "#000000", 0.3)]].forEach(([shade, color]) => root.style.setProperty(`--color-brand-${shade}`, color));
   root.style.setProperty("--color-ink-900", header); root.style.setProperty("--color-ink-800", mixHex(header, "#FFFFFF", 0.08));
+  root.style.setProperty("--color-brand-contrast", readableTextColor(primary));
   document.title = `${branding.appName || DEFAULT_BRANDING.appName} · ${branding.subtitle || DEFAULT_BRANDING.subtitle}`;
 };
+const readableTextColor = (hex) => {
+  const channels = [1, 3, 5].map((index) => parseInt(String(hex || "#000000").slice(index, index + 2), 16) / 255);
+  const luminance = channels.map((value) => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return (0.2126 * luminance[0] + 0.7152 * luminance[1] + 0.0722 * luminance[2]) > 0.42 ? "#111827" : "#FFFFFF";
+};
+const APPEARANCE_OPTIONS = [
+  { id: "light", name: "Claro", icon: Sun },
+  { id: "dark", name: "Oscuro", icon: Moon },
+  { id: "auto", name: "Automático", icon: Monitor },
+];
 const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#6366f1"];
 // Se pisa en cada render de <App> según branding.hideAdminModules, para que los montos se
 // enmascaren en toda la pantalla (Panel, Órdenes, Mi día, etc.) mientras el módulo Administración
@@ -568,6 +583,7 @@ export default function App() {
   const orderSyncCursor = useRef("");
   const taskSyncCursor = useRef("");
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
+  const [appearanceMode, setAppearanceMode] = useState("auto");
   HIDE_COSTS = !!branding.hideAdminModules;
   const [module, setModule] = useState("orders");
   const [oView, setOView] = useState("list");
@@ -744,6 +760,22 @@ export default function App() {
     setBooting(false);
   })(); }, []);
   useEffect(() => { applyBrandingTheme(branding); }, [branding]);
+  useEffect(() => {
+    if (!me?.id) return;
+    try { setAppearanceMode(localStorage.getItem(`ordengo_appearance_${me.id}`) || "auto"); } catch { setAppearanceMode("auto"); }
+  }, [me?.id]);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const resolved = appearanceMode === "auto" ? (media.matches ? "dark" : "light") : appearanceMode;
+      document.documentElement.dataset.appearance = resolved;
+      document.documentElement.style.colorScheme = resolved;
+    };
+    apply();
+    if (appearanceMode === "auto") media.addEventListener?.("change", apply);
+    if (me?.id) { try { localStorage.setItem(`ordengo_appearance_${me.id}`, appearanceMode); } catch {} }
+    return () => media.removeEventListener?.("change", apply);
+  }, [appearanceMode, me?.id]);
   useEffect(() => { try { localStorage.setItem("ordengo_order_filters", JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} }, [oQ, oStatus, oBillable]);
   useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} }, [pProj, pQ, pMine, pStale]);
   useEffect(() => { try { localStorage.setItem("ordengo_tech_task_view", techTaskView); } catch {} }, [techTaskView]);
@@ -866,6 +898,9 @@ export default function App() {
   const isMonitor = me.role === "monitor_oficina";
   const tvMode = isMonitor && tvSettings.tvModeEnabled;
   const isOffice = me.role === "tecnico_oficina" || isMonitor;
+  const appearanceOption = APPEARANCE_OPTIONS.find((option) => option.id === appearanceMode) || APPEARANCE_OPTIONS[2];
+  const AppearanceIcon = appearanceOption.icon;
+  const cycleAppearance = () => setAppearanceMode((current) => current === "auto" ? "light" : current === "light" ? "dark" : "auto");
   const activeProjectView = isMgr || isMonitor ? pTab : techTaskView;
   const userById = (id) => users.find((u) => u.id === id);
 
@@ -1249,6 +1284,7 @@ export default function App() {
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
+            <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
               <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" aria-label="Novedades" aria-expanded={notifOpen} aria-controls="notifications-panel" className="relative rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2">
                 <Bell className="h-4 w-4" />
@@ -1437,7 +1473,7 @@ export default function App() {
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} projects={projects} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onSaveUserProjects={saveUserProjects} onErr={err} />}
-        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} />}
+        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} appearanceMode={appearanceMode} onAppearanceModeChange={setAppearanceMode} />}
 
         {!tvMode && <footer className="relative z-10 mt-10 border-t border-slate-200 bg-slate-50 pt-4 text-xs text-slate-500">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
         </div>
@@ -8291,7 +8327,7 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   );
 }
 
-function SettingsModule({ branding, onSaveBranding }) {
+function SettingsModule({ branding, onSaveBranding, appearanceMode = "auto", onAppearanceModeChange }) {
   const [form, setForm] = useState({ ...DEFAULT_BRANDING, ...branding });
   const [saving, setSaving] = useState(false);
   const [logoError, setLogoError] = useState("");
@@ -8323,12 +8359,13 @@ function SettingsModule({ branding, onSaveBranding }) {
         <div className="border-b border-slate-100 p-4"><div className="flex items-center gap-2"><Palette className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Marca y apariencia</h3><p className="text-[11px] text-slate-500">Los cambios se aplican a todos los usuarios y dispositivos.</p></div></div></div>
         <div className="space-y-5 p-4">
           <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Logo</h4><div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center"><div className="grid min-h-20 w-full place-items-center rounded-lg p-3 sm:w-56" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Vista previa del logo" className="max-h-12 max-w-full object-contain" /></div><div className="flex-1"><div className="flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white"><Upload className="h-4 w-4" /> Cargar logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { selectLogo(event.target.files?.[0]); event.target.value = ""; }} /></label>{form.logoDataUrl && <button onClick={() => set("logoDataUrl", "")} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Usar logo original</button>}</div><p className="mt-2 text-[11px] text-slate-500">PNG transparente recomendado. Máximo 1,5 MB. También admite JPG y WebP.</p>{logoError && <p className="mt-1 text-xs font-medium text-rose-600">{logoError}</p>}</div></div></section>
-          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tema</h4><div className="grid grid-cols-2 gap-2 sm:grid-cols-5">{BRAND_THEMES.map((theme) => { const active = form.theme === theme.id && form.primaryColor.toUpperCase() === theme.primaryColor; return <button key={theme.id} onClick={() => chooseTheme(theme)} aria-pressed={active} className={`rounded-xl border p-2.5 text-left ${active ? "border-brand-500 bg-brand-50 ring-2 ring-brand-500/15" : "border-slate-200 bg-white"}`}><span className="mb-2 flex gap-1"><i className="h-5 flex-1 rounded" style={{ background: theme.primaryColor }} /><i className="h-5 flex-1 rounded" style={{ background: theme.headerColor }} /></span><span className="block truncate text-[11px] font-semibold text-slate-700">{theme.name}</span></button>; })}</div><div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Color principal"><div className="flex gap-2"><input type="color" value={form.primaryColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", primaryColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.primaryColor} readOnly className="u-input font-mono uppercase" /></div></L><L label="Color de cabecera"><div className="flex gap-2"><input type="color" value={form.headerColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", headerColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.headerColor} readOnly className="u-input font-mono uppercase" /></div></L></div></section>
+          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tema corporativo</h4><p className="mb-3 text-[11px] text-slate-500">Define la identidad para toda la empresa. Los colores de éxito, advertencia y error no se modifican.</p><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">{BRAND_THEMES.map((theme) => { const active = form.theme === theme.id && form.primaryColor.toUpperCase() === theme.primaryColor; const foreground = readableTextColor(theme.primaryColor); return <button key={theme.id} onClick={() => chooseTheme(theme)} aria-pressed={active} className={`overflow-hidden rounded-xl border text-left ${active ? "border-brand-500 ring-2 ring-brand-500/20" : "border-slate-200"}`}><span className="block p-2" style={{ background: theme.headerColor }}><i className="block h-1.5 w-10 rounded-full" style={{ background: theme.primaryColor }} /></span><span className="block bg-white p-2"><i className="mb-2 block h-5 w-3/4 rounded px-1 text-center text-[8px] not-italic leading-5" style={{ background: theme.primaryColor, color: foreground }}>Acción</i><span className="block truncate text-[11px] font-semibold text-slate-700">{theme.name}</span></span></button>; })}</div><div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Color principal"><div className="flex gap-2"><input type="color" value={form.primaryColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", primaryColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.primaryColor} readOnly className="u-input font-mono uppercase" /></div></L><L label="Color de cabecera"><div className="flex gap-2"><input type="color" value={form.headerColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", headerColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.headerColor} readOnly className="u-input font-mono uppercase" /></div></L></div></section>
+          <section className="rounded-xl border border-slate-200 bg-slate-50 p-3"><h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Apariencia personal</h4><p className="mb-3 mt-1 text-[11px] text-slate-500">Se guarda para tu usuario en este dispositivo y no cambia la vista de tus compañeros.</p><div className="grid grid-cols-3 gap-2">{APPEARANCE_OPTIONS.map((option) => { const Icon = option.icon; const active = appearanceMode === option.id; return <button key={option.id} type="button" onClick={() => onAppearanceModeChange?.(option.id)} aria-pressed={active} className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-xs font-medium ${active ? "border-brand-500 bg-brand-50 text-brand-700 ring-2 ring-brand-500/15" : "border-slate-200 bg-white text-slate-600"}`}><Icon className="h-4 w-4" />{option.name}</button>; })}</div></section>
         </div>
       </Box>
       <Box className="self-start overflow-hidden">
         <div className="border-b border-slate-100 p-4"><h3 className="text-sm font-semibold text-slate-900">Vista previa</h3><p className="mt-0.5 text-[11px] text-slate-500">Así se verá la identidad general de la aplicación.</p></div>
-        <div className="p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold text-white" style={{ background: form.primaryColor }}>Crear registro</button></div></div></div></div>
+        <div className="p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="mb-2 flex gap-1"><i className="h-2 w-12 rounded-full bg-slate-300" /><i className="h-2 w-8 rounded-full bg-slate-200" /></div><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: form.primaryColor, color: readableTextColor(form.primaryColor) }}>Crear registro</button><div className="mt-3 grid grid-cols-3 gap-1"><i className="h-7 rounded bg-emerald-100" /><i className="h-7 rounded bg-amber-100" /><i className="h-7 rounded bg-rose-100" /></div></div></div></div></div>
       </Box>
     </div>
     <Box className="overflow-hidden">
