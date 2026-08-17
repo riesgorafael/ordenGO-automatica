@@ -10,36 +10,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # corepack va ANTES de setup-node: con `cache: pnpm`, setup-node ejecuta pnpm para ubicar el
-      # store y cachearlo. Si corepack se habilita después, ese paso falla con
-      # "Unable to locate executable file: pnpm".
-      # La versión se fija igual que en el Dockerfile para que CI y la imagen resuelvan idéntico.
+
+      # setup-node va SIN `cache: pnpm`. Esa opción hace que la propia acción ejecute pnpm para
+      # ubicar el store, y pnpm todavía no existe en ese momento: de ahí el error
+      # "Unable to locate executable file: pnpm". Adelantar corepack tampoco lo resuelve del todo,
+      # porque los shims quedarían atados al Node preinstalado y setup-node instala otro después.
+      # El caché se maneja más abajo con actions/cache, que no depende del orden.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Misma versión que el Dockerfile, para que CI y la imagen de producción resuelvan idéntico.
       - name: Habilitar pnpm
         run: |
           corepack enable
           corepack prepare pnpm@10.28.2 --activate
-      - uses: actions/setup-node@v4
+          pnpm --version
+
+      - name: Ubicar el store de pnpm
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
         with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: |
-            server/pnpm-lock.yaml
-            web/pnpm-lock.yaml
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('server/pnpm-lock.yaml', 'web/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - name: Instalar backend
         working-directory: server
         run: pnpm install --frozen-lockfile
+
       - name: Probar reglas de negocio
         working-directory: server
         run: pnpm test
+
       - name: Auditar backend
         working-directory: server
         run: pnpm audit --prod
+
       - name: Instalar frontend
         working-directory: web
         run: pnpm install --frozen-lockfile
+
       - name: Compilar frontend
         working-directory: web
         run: pnpm build
+
       - name: Auditar frontend
         working-directory: web
         run: pnpm audit --prod
