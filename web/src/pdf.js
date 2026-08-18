@@ -1791,8 +1791,14 @@ export async function credentialPDF(user, branding = {}) {
     doc.setFont("helvetica", "normal"); doc.setTextColor(91, 100, 114);
     doc.text(String(value), M + 15, ty);
   };
-  pair("VENCE:", `31/12/${new Date().getFullYear()}`, footY);
+  const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  pair("VENCE:", `31 / ${MESES[11]} / ${new Date().getFullYear()}`, footY);
   if (cardId) pair("TARJETA N°:", String(s.credentialToken).replace(/-/g, "").slice(0, 8).toUpperCase(), footY + 4);
 
+  // Pie: sitio de la empresa, separado de los datos por el espacio del margen inferior.
+  if (company.website) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(4.2); doc.setTextColor(150, 158, 168);
+    doc.text(String(company.website), W / 2, H - 2.5, { align: "center" });
+  }
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }
