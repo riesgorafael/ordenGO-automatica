@@ -1428,7 +1428,11 @@ export default function App() {
             {activeModule === "purchaseOrders" && <button onClick={() => setPurchaseOrderCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden de compra</button>}
             {activeModule === "materialLists" && <button onClick={() => setMaterialListCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Listado de materiales</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
-            <div className="hidden items-center gap-2 sm:flex"><Avatar user={me} size={26} /><div className="leading-tight"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></div>
+            {/* El bloque de identidad abre el cambio de contraseña. Antes eso vivía en un botón de
+                llave aparte en la barra; al sacarlo quedaba sin ningún acceso, porque era el único
+                lugar de toda la app donde cambiar la propia clave. Colgarlo del nombre es además
+                dónde se lo busca: es una acción de la cuenta, no una herramienta más de la barra. */}
+            <button onClick={() => setPwOpen(true)} title="Cambiar contraseña" className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
             <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
@@ -1450,7 +1454,6 @@ export default function App() {
                 </div>
               )}
             </div>
-            <button onClick={() => setPwOpen(true)} title="Cambiar contraseña" aria-label="Cambiar contraseña" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><KeyRound className="h-4 w-4" /></button>
             <button onClick={logout} title="Cerrar sesión" aria-label="Cerrar sesión" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
