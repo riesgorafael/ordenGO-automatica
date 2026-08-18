@@ -3728,6 +3728,20 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   const collectionWeight = collectionSpans.reduce((sum, row) => sum + row.amount, 0);
   const avgCollectionDays = collectionWeight > 0 ? Math.round(collectionSpans.reduce((sum, row) => sum + row.days * row.amount, 0) / collectionWeight) : null;
 
+  // Próximo vencimiento de cobranza: mira hacia adelante, al revés que "Días promedio de cobro",
+  // que resume lo ya cobrado. Es la factura abierta con vencimiento pactado más cercano que todavía
+  // no venció. En openInvoices, days se mide contra el vencimiento, así que un valor negativo es
+  // tiempo que falta; el más cercano a cero es el próximo a vencer.
+  // Las ya vencidas quedan afuera a propósito: se cuentan aparte y las detalla el aging. Mezclarlas
+  // daría un "faltan -12 días", que no se lee. Y sin dueDate no hay plazo que contar: una factura
+  // sin vencimiento cargado no vence, se atrasa contra su fecha de emisión, que es otra cosa.
+  const upcomingInvoice = openInvoices
+    .filter((invoice) => invoice.hasDueDate && invoice.days < 0)
+    .sort((a, b) => b.days - a.days)[0] || null;
+  const daysToNextDue = upcomingInvoice ? -upcomingInvoice.days : null;
+  const overdueInvoiceCount = openInvoices.filter((invoice) => invoice.days > 0).length;
+  const undatedInvoiceCount = openInvoices.filter((invoice) => !invoice.hasDueDate).length;
+
   // `tone` es la clase Tailwind para pantalla; `color` el hex equivalente para el PDF.
   const AGING_BUCKETS = [{ label: "0-30 días", max: 30, tone: "bg-emerald-500", color: "#10b981" }, { label: "31-60 días", max: 60, tone: "bg-amber-500", color: "#f59e0b" }, { label: "61-90 días", max: 90, tone: "bg-orange-500", color: "#f97316" }, { label: "+90 días", max: Infinity, tone: "bg-rose-500", color: "#e11d48" }];
   const aging = AGING_BUCKETS.map((bucket, index) => {
@@ -4098,6 +4112,27 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
           </div>
           <p className="mt-1 text-[10px] text-slate-400">Escala de referencia: 90 días.</p>
         </div>}
+        {/* Bloque hacia adelante, dentro del mismo panel: arriba cuánto tardaste en cobrar, abajo
+            qué te toca cobrar ahora. Se muestra aunque no haya histórico, porque son datos
+            independientes: una empresa nueva puede tener facturas por vencer y ningún cobro aún. */}
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Próximo vencimiento</div>
+          {!upcomingInvoice ? (
+            <p className="mt-1.5 text-xs text-slate-400">{overdueInvoiceCount > 0 ? `No hay facturas por vencer: las ${overdueInvoiceCount} abierta(s) con plazo ya están vencidas.` : "No hay facturas abiertas con vencimiento pactado."}</p>
+          ) : (
+            <>
+              <div className="mt-1 flex items-baseline gap-2">
+                <b className={`text-2xl ${daysToNextDue <= 3 ? "text-rose-600" : daysToNextDue <= 7 ? "text-amber-600" : "text-slate-800"}`}>{daysToNextDue}</b>
+                <span className="text-sm text-slate-500">{daysToNextDue === 1 ? "día" : "días"}</span>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">{upcomingInvoice.clientName || "Sin cliente"} · {fmt(upcomingInvoice.balance)} · vence el {budgetDate(upcomingInvoice.dueDate)}</p>
+            </>
+          )}
+          {(overdueInvoiceCount > 0 || undatedInvoiceCount > 0) && <p className="mt-1.5 flex flex-wrap gap-1.5">
+            {overdueInvoiceCount > 0 && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">{overdueInvoiceCount} vencida(s)</span>}
+            {undatedInvoiceCount > 0 && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500" title="Sin fecha de vencimiento cargada al facturar, así que no entran en este conteo.">{undatedInvoiceCount} sin plazo</span>}
+          </p>}
+        </div>
       </Panel>
     </div>
 
