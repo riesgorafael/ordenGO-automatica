@@ -25,19 +25,44 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // incluso si una ruta olvida agregar un WHERE organization_id.
 const tenantContext = new AsyncLocalStorage();
 const rawPoolConnect = pool.connect.bind(pool);
-pool.connect = async (...args) => {
-  const client = await rawPoolConnect(...args);
+const configureTenantClient = async (client) => {
   const organizationId = tenantContext.getStore()?.organizationId;
   if (!organizationId) return client;
-  await client.query("SELECT set_config('app.organization_id',$1,false)", [organizationId]);
   const rawRelease = client.release.bind(client);
+  try {
+    await client.query("SELECT set_config('app.organization_id',$1,false)", [organizationId]);
+  } catch (error) {
+    rawRelease(error); // descarta la conexión si no pudo fijarse el tenant
+    throw error;
+  }
   let released = false;
   client.release = (...releaseArgs) => {
     if (released) return;
     released = true;
-    client.query("RESET app.organization_id").catch(() => {}).finally(() => rawRelease(...releaseArgs));
+    client.query("RESET app.organization_id")
+      .then(() => rawRelease(...releaseArgs))
+      .catch((error) => rawRelease(error)); // nunca reutilizar una conexión con contexto residual
   };
   return client;
+};
+// pg-pool usa internamente connect(callback) para implementar pool.query(), mientras que las
+// transacciones de la aplicación usan await pool.connect(). El wrapper anterior era `async` y
+// sólo contemplaba Promises: cuando pg-pool entregaba un callback, rawPoolConnect devolvía
+// undefined y terminábamos ejecutando undefined.query(). Se preservan aquí ambas firmas.
+pool.connect = (...args) => {
+  const callbackIndex = args.findIndex((argument) => typeof argument === "function");
+  if (callbackIndex >= 0) {
+    const callback = args[callbackIndex];
+    const connectArgs = args.filter((_, index) => index !== callbackIndex);
+    rawPoolConnect(...connectArgs, (error, client) => {
+      if (error) return callback(error);
+      configureTenantClient(client)
+        .then((configuredClient) => callback(null, configuredClient, configuredClient.release.bind(configuredClient)))
+        .catch((configureError) => callback(configureError));
+    });
+    return undefined;
+  }
+  return rawPoolConnect(...args).then(configureTenantClient);
 };
 
 const app = express();
