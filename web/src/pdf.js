@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo.js";
+import PRODUCT_MARK_DATA_URL from "./assets/ordengo-mark-192.png?inline";
 import { billableHoursValue } from "../../shared/domainRules.js";
 
 // Ancho del logo en el PDF (mm)
@@ -71,7 +72,9 @@ const imageFormat = (source) => {
 // Dibuja el logo configurado preservando su proporción. Si la imagen personalizada no puede
 // procesarse, conserva el logo incorporado para que ningún reporte quede sin identificación.
 function drawLogo(doc, M, y, branding = {}) {
-  const source = branding.logoDataUrl || LOGO;
+  const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+  const source = branding.logoDataUrl || (isAutomatica ? LOGO : "");
+  if (!source) return 0;
   let ratio = LOGO_RATIO;
   try { const properties = doc.getImageProperties(source); if (properties?.width && properties?.height) ratio = properties.height / properties.width; } catch {}
   let w = LOGO_W, h = w * ratio;
@@ -80,6 +83,18 @@ function drawLogo(doc, M, y, branding = {}) {
   catch { try { doc.addImage(LOGO, "PNG", M, y, LOGO_W, LOGO_W * LOGO_RATIO); } catch {} }
   return h;
 }
+function stampProductBranding(doc) {
+  const currentPage = doc.getCurrentPageInfo().pageNumber;
+  const pages = doc.getNumberOfPages();
+  for (let page = 1; page <= pages; page++) {
+    doc.setPage(page);
+    try { doc.addImage(PRODUCT_MARK_DATA_URL, "PNG", 94, 287.2, 3.6, 3.6); } catch {}
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
+    doc.text("OrdenGO", 99, 290, { align: "left" });
+  }
+  doc.setPage(Math.min(currentPage, pages));
+}
+function saveBrandedPdf(doc, fileName) { stampProductBranding(doc); doc.save(fileName); }
 function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30) {
   drawLogo(doc, M, logoY, branding);
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
@@ -415,6 +430,8 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null,
     doc.text(`Página ${page} de ${pages}`, W - M, 290, { align: "right" });
   }
 
+  stampProductBranding(doc);
+
   return doc;
 }
 
@@ -480,7 +497,7 @@ export function monthlyReportPDF(month, monthLabel, rows, sum, branding = {}) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
   doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, M, 290);
 
-  doc.save(`reporte_${month}.pdf`);
+  saveBrandedPdf(doc, `reporte_${month}.pdf`);
 }
 
 const nativeMoney = (amount, currency) => `${currency === "USD" ? "USD " : currency === "ARS" ? "ARS " : "EUR "}${(Number(amount) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -567,7 +584,7 @@ export function purchaseOrderReportPDF(po, supplier, project, branding = {}) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
   doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
 
-  doc.save(`${po.number || po.id}_orden_de_compra.pdf`);
+  saveBrandedPdf(doc, `${po.number || po.id}_orden_de_compra.pdf`);
 }
 
 export function materialListReportPDF(ml, project, client, branding = {}) {
@@ -599,7 +616,8 @@ export function materialListReportPDF(ml, project, client, branding = {}) {
   line(M + logoColW, y + headH / 2, M + logoColW + midColW);
 
   const audience = ml.audience === "interno" ? "interno" : "cliente";
-  const logoSource = audience === "interno" ? (branding.logoDataUrl || LOGO) : client?.logoDataUrl;
+  const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+  const logoSource = audience === "interno" ? (branding.logoDataUrl || (isAutomatica ? LOGO : "")) : client?.logoDataUrl;
   if (logoSource) drawFitImage(logoSource, M + 1.5, y + 1.5, logoColW - 3, headH - 3);
 
   const midX = M + logoColW + midColW / 2;
@@ -730,7 +748,7 @@ export function materialListReportPDF(ml, project, client, branding = {}) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(148, 163, 184);
   doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 293);
 
-  doc.save(`${ml.number || ml.id}_listado_de_materiales.pdf`);
+  saveBrandedPdf(doc, `${ml.number || ml.id}_listado_de_materiales.pdf`);
 }
 
 // Presupuesto en dos formatos: "cliente" (solo venta: cantidad, unidad, precio de venta, total —
@@ -838,7 +856,7 @@ export function budgetReportPDF(budget, client, audience = "cliente", branding =
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
   doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
 
-  doc.save(`${budget.number || budget.id}_presupuesto${internal ? "_interno" : ""}.pdf`);
+  saveBrandedPdf(doc, `${budget.number || budget.id}_presupuesto${internal ? "_interno" : ""}.pdf`);
 }
 
 // Resumen ejecutivo del Panel de dirección: los gráficos de Recharts son SVG/canvas en vivo, no
@@ -893,7 +911,7 @@ export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, agi
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
   doc.text(`Generado el ${new Date().toLocaleString("es-AR")}`, M, 290);
 
-  doc.save(`panel_direccion_${periodLabel.replace(/\s+/g, "_")}.pdf`);
+  saveBrandedPdf(doc, `panel_direccion_${periodLabel.replace(/\s+/g, "_")}.pdf`);
 }
 
 // Resumen financiero mensual. Antes era una lista plana de "etiqueta: valor" sin ningún gráfico:
@@ -1174,7 +1192,7 @@ export function financeReportPDF({
     doc.text(`Página ${page} de ${pages}`, W - M, 289, { align: "right" });
   }
 
-  doc.save(`finanzas_${period}.pdf`);
+  saveBrandedPdf(doc, `finanzas_${period}.pdf`);
 }
 
 const hexRgb = (hex) => {
@@ -1620,5 +1638,5 @@ export function projectStatusReportPDF({
     doc.text(`Página ${page} de ${pages}`, W - M, 289, { align: "right" });
   }
 
-  doc.save(`reporte_estado_${projectLabel.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.pdf`);
+  saveBrandedPdf(doc, `reporte_estado_${projectLabel.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.pdf`);
 }

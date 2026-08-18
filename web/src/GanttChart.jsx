@@ -301,7 +301,7 @@ function toGanttTaskShape(task, byId, todayKey) {
   };
 }
 
-export default function GanttChart({ projectId, projectName, users = [], toast, onConvertToTask }) {
+export default function GanttChart({ projectId, projectName, users = [], branding = {}, toast, onConvertToTask }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -508,7 +508,7 @@ export default function GanttChart({ projectId, projectName, users = [], toast, 
         <button onClick={() => setEditingTaskId("new")} title="Nueva tarea" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 sm:px-3 sm:text-sm">
           <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Nueva tarea</span>
         </button>
-        <button onClick={() => exportGanttToPdf(tasks, { projectName })} disabled={!tasks.length} title="Exportar PDF" className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-2.5 py-2 text-xs font-medium text-white hover:bg-brand-400 disabled:opacity-50 sm:px-3 sm:text-sm">
+        <button onClick={() => exportGanttToPdf(tasks, { projectName, branding })} disabled={!tasks.length} title="Exportar PDF" className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-2.5 py-2 text-xs font-medium text-white hover:bg-brand-400 disabled:opacity-50 sm:px-3 sm:text-sm">
           <Download className="h-4 w-4" /> <span className="hidden sm:inline">Exportar PDF</span>
         </button>
       </div>

@@ -36,7 +36,7 @@ async function req(path, opts = {}) {
 export const api = {
   login: (email, password) => req("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => req("/auth/logout", { method: "POST" }),
-  getBranding: () => req("/branding"),
+  getBranding: () => { const organization = new URLSearchParams(window.location.search).get("organization") || new URLSearchParams(window.location.search).get("empresa"); return req("/branding" + (organization ? `?organization=${encodeURIComponent(organization)}` : "")); },
   bootstrap: () => req("/bootstrap"),
   changePassword: (current, next) => req("/me/password", { method: "POST", body: JSON.stringify({ current, next }) }),
 
@@ -100,6 +100,8 @@ export const api = {
   updateUser: (id, patch) => req("/users/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteUser: (id) => req("/users/" + id, { method: "DELETE" }),
   updateBranding: (branding) => req("/settings/branding", { method: "PUT", body: JSON.stringify(branding) }),
+  companyProfile: () => req("/settings/company-profile"),
+  updateCompanyProfile: (profile) => req("/settings/company-profile", { method: "PUT", body: JSON.stringify(profile) }),
 
   notifications: () => req("/notifications"),
   readNotification: (id) => req("/notifications/" + id + "/read", { method: "POST" }),

@@ -191,3 +191,16 @@ PORT = 3000
 - Comentarios/actividad por orden y por tarea; vínculo entre una orden de campo y una tarea de proyecto.
 - Comentarios/actividad por orden y por tarea.
 - Vínculo entre una orden de campo y una tarea de proyecto.
+# Perfiles multiempresa
+
+Cada empresa dispone de datos, usuarios, marca, tarifas, costos, impuestos y módulos propios. El servidor aplica aislamiento por organización mediante Row Level Security de PostgreSQL; los permisos por rol se evalúan además dentro de cada empresa.
+
+Para dar de alta una empresa nueva, con la aplicación ya inicializada:
+
+```powershell
+$env:DATABASE_URL="postgresql://..."
+$env:ORG_ADMIN_PASSWORD="contraseña-temporal-segura"
+node server/createOrganization.js --slug=empresa --name="Empresa de Servicios SRL" --admin-email=admin@empresa.com --admin-name="Administrador"
+```
+
+El administrador creado debe cambiar la contraseña temporal en el primer ingreso. Luego configura identidad, costos y módulos desde **Configuración → Perfil operativo de la empresa**.

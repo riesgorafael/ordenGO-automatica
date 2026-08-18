@@ -8,6 +8,7 @@
 
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo";
+import PRODUCT_MARK_DATA_URL from "./assets/ordengo-mark-192.png?inline";
 
 // Trunca de verdad con "…" hasta que entra en el ancho disponible — a diferencia de
 // splitTextToSize(...)[0], que envuelve por palabra y puede devolver una primera línea que
@@ -105,7 +106,7 @@ function buildWbsIndex(tasks) {
   return wbsById;
 }
 
-export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } = {}) {
+export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, branding = {} } = {}) {
   if (!tasks.length) return;
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -123,7 +124,9 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
 
   const drawHeader = (pageIndex) => {
     let logoW = 0;
-    try { const h = 6.5; doc.addImage(LOGO, "PNG", MARGIN, 5.5, h / LOGO_RATIO, h); logoW = h / LOGO_RATIO + 3; } catch {} // cabe entre el borde y HEADER_TOP sin pisar la franja gris
+    const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+    const companyLogo = branding.logoDataUrl || (isAutomatica ? LOGO : "");
+    try { if (companyLogo) { const properties = doc.getImageProperties(companyLogo); const ratio = properties.height / properties.width || LOGO_RATIO; const h = 6.5; doc.addImage(companyLogo, undefined, MARGIN, 5.5, h / ratio, h); logoW = h / ratio + 3; } } catch {} // cabe entre el borde y HEADER_TOP sin pisar la franja gris
     doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 23, 42);
     doc.text(`CRONOGRAMA · ${projectName.toUpperCase()}`, PAGE_W / 2, 10, { align: "center" });
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
@@ -270,5 +273,12 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName } =
     doc.setLineDashPattern([], 0); // vuelve a trazo sólido antes de la próxima página (encabezado, grillas)
   }
 
+  const pages = doc.getNumberOfPages();
+  for (let page = 1; page <= pages; page++) {
+    doc.setPage(page);
+    try { doc.addImage(PRODUCT_MARK_DATA_URL, "PNG", PAGE_W / 2 - 8, PAGE_H - 8, 3.6, 3.6); } catch {}
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
+    doc.text("OrdenGO", PAGE_W / 2 - 3, PAGE_H - 5.2);
+  }
   doc.save(fileName || `Gantt_${projectName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }

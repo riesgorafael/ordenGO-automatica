@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import path from "path";
 import crypto from "crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import { registerGanttRoutes } from "./ganttRoutes.js";
@@ -19,6 +20,25 @@ if (IS_PRODUCTION && String(process.env.JWT_SECRET || "").length < 32) throw new
 if (IS_PRODUCTION && !process.env.DATABASE_URL) throw new Error("DATABASE_URL es obligatorio en producción");
 const JWT_SECRET = process.env.JWT_SECRET || "cambia-esto-en-produccion";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Cada request autenticado conserva su organización en AsyncLocalStorage. Al tomar una conexión
+// del pool se fija ese contexto en PostgreSQL; las políticas RLS hacen el aislamiento efectivo
+// incluso si una ruta olvida agregar un WHERE organization_id.
+const tenantContext = new AsyncLocalStorage();
+const rawPoolConnect = pool.connect.bind(pool);
+pool.connect = async (...args) => {
+  const client = await rawPoolConnect(...args);
+  const organizationId = tenantContext.getStore()?.organizationId;
+  if (!organizationId) return client;
+  await client.query("SELECT set_config('app.organization_id',$1,false)", [organizationId]);
+  const rawRelease = client.release.bind(client);
+  let released = false;
+  client.release = (...releaseArgs) => {
+    if (released) return;
+    released = true;
+    client.query("RESET app.organization_id").catch(() => {}).finally(() => rawRelease(...releaseArgs));
+  };
+  return client;
+};
 
 const app = express();
 app.disable("x-powered-by");
@@ -83,6 +103,36 @@ const DEFAULT_BRANDING = {
   companyEmail: "",
   companyWebsite: "www.automatica-arg.com.ar",
 };
+const DEFAULT_ORGANIZATION_ID = "org-automatica";
+const DEFAULT_COMPANY_PROFILE = {
+  locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD",
+  pricing: { defaultHourlyRate: 50, defaultInternalHourlyCost: 0, minimumBillableHours: 2, targetMargin: 35, vatRate: 21 },
+  laborRoles: [
+    { name: "Programador", cost: 50 }, { name: "Ingeniero", cost: 25 }, { name: "Asesor", cost: 20 },
+    { name: "Programador AUX", cost: 45 }, { name: "Tablerista", cost: 17 }, { name: "Dibujante", cost: 17 },
+    { name: "Administrativo", cost: 6 }, { name: "Ayudante", cost: 5 }, { name: "Programador Aprendiz", cost: 7 },
+  ],
+  features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true },
+};
+const boundedNumber = (value, fallback, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(value)) ? Number(value) : fallback));
+const normalizeCompanyProfile = (value = {}) => {
+  const pricing = value.pricing || {};
+  const roles = Array.isArray(value.laborRoles) ? value.laborRoles.map((role) => ({ name: String(role?.name || "").trim().slice(0, 60), cost: boundedNumber(role?.cost, 0, 0, 100000) })).filter((role) => role.name).slice(0, 30) : DEFAULT_COMPANY_PROFILE.laborRoles;
+  return {
+    locale: ["es-AR", "es-UY", "es-CL", "es-MX", "en-US"].includes(value.locale) ? value.locale : DEFAULT_COMPANY_PROFILE.locale,
+    timezone: String(value.timezone || DEFAULT_COMPANY_PROFILE.timezone).trim().slice(0, 80),
+    baseCurrency: ["USD", "ARS", "EUR"].includes(value.baseCurrency) ? value.baseCurrency : DEFAULT_COMPANY_PROFILE.baseCurrency,
+    pricing: {
+      defaultHourlyRate: boundedNumber(pricing.defaultHourlyRate, 50, 0, 100000),
+      defaultInternalHourlyCost: boundedNumber(pricing.defaultInternalHourlyCost, 0, 0, 100000),
+      minimumBillableHours: boundedNumber(pricing.minimumBillableHours, 2, 0, 24),
+      targetMargin: boundedNumber(pricing.targetMargin, 35, 0, 95),
+      vatRate: boundedNumber(pricing.vatRate, 21, 0, 100),
+    },
+    laborRoles: roles.length ? roles : DEFAULT_COMPANY_PROFILE.laborRoles,
+    features: Object.fromEntries(Object.keys(DEFAULT_COMPANY_PROFILE.features).map((key) => [key, value.features?.[key] !== false])),
+  };
+};
 const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
 const normalizeBranding = (value = {}) => ({
@@ -106,9 +156,16 @@ const normalizeBranding = (value = {}) => ({
   tvCycleSeconds: Math.min(300, Math.max(10, Math.round(Number(value.tvCycleSeconds) || 30))),
   hideAdminModules: value.hideAdminModules === true,
 });
-async function loadBranding() {
-  const row = (await pool.query("SELECT value FROM app_settings WHERE key='branding_v1'")).rows[0];
+async function loadBranding(organizationId = tenantContext.getStore()?.organizationId) {
+  const query = organizationId
+    ? pool.query("SELECT value FROM app_settings WHERE organization_id=$1 AND key='branding_v1'", [organizationId])
+    : pool.query("SELECT value FROM app_settings WHERE key='branding_v1' ORDER BY updated_at DESC LIMIT 1");
+  const row = (await query).rows[0];
   return normalizeBranding(row?.value || {});
+}
+async function loadCompanyProfile(organizationId) {
+  const row = (await pool.query("SELECT profile FROM organizations WHERE id=$1", [organizationId || tenantContext.getStore()?.organizationId || DEFAULT_ORGANIZATION_ID])).rows[0];
+  return normalizeCompanyProfile(row?.profile || {});
 }
 async function consumeRateLimit(key, windowMs, max) {
   const interval = `${Math.max(1000, windowMs)} milliseconds`;
@@ -189,6 +246,39 @@ async function initDb() {
       created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS gantt_tasks ( id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
   `);
+  // Migración multiempresa. Los datos existentes pasan a la organización Automática sin alterar
+  // IDs ni relaciones. RLS aplica el tenant de la sesión a lecturas, escrituras y eliminaciones.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organizations(
+      id text PRIMARY KEY, slug text UNIQUE NOT NULL, name text NOT NULL,
+      active boolean NOT NULL DEFAULT true, plan text NOT NULL DEFAULT 'professional',
+      profile jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
+    INSERT INTO organizations(id,slug,name,profile)
+      VALUES('org-automatica','automatica','AUTOMATICA ARG',$1)
+      ON CONFLICT(id) DO NOTHING;
+  `, [DEFAULT_COMPANY_PROFILE]);
+  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
+  for (const table of tenantTables) {
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS organization_id text DEFAULT '${DEFAULT_ORGANIZATION_ID}'; UPDATE ${table} SET organization_id='${DEFAULT_ORGANIZATION_ID}' WHERE organization_id IS NULL; ALTER TABLE ${table} ALTER COLUMN organization_id SET NOT NULL;`);
+    await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='${table}_organization_fk') THEN ALTER TABLE ${table} ADD CONSTRAINT ${table}_organization_fk FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;`);
+  }
+  // Cada empresa puede tener las mismas claves de configuración (branding, cierres, cotización).
+  await pool.query(`DO $$ DECLARE definition text; BEGIN SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint WHERE conname='app_settings_pkey' AND conrelid='app_settings'::regclass; IF definition IS NULL OR position('organization_id' in definition)=0 THEN ALTER TABLE app_settings DROP CONSTRAINT IF EXISTS app_settings_pkey; ALTER TABLE app_settings ADD CONSTRAINT app_settings_pkey PRIMARY KEY(organization_id,key); END IF; END $$;`);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION ordengo_apply_organization() RETURNS trigger AS $$
+    DECLARE active_org text;
+    BEGIN
+      active_org := NULLIF(current_setting('app.organization_id', true), '');
+      IF active_org IS NOT NULL THEN NEW.organization_id := active_org; END IF;
+      IF NEW.organization_id IS NULL THEN NEW.organization_id := '${DEFAULT_ORGANIZATION_ID}'; END IF;
+      RETURN NEW;
+    END; $$ LANGUAGE plpgsql;
+  `);
+  for (const table of tenantTables) {
+    await pool.query(`DROP TRIGGER IF EXISTS ${table}_organization_trigger ON ${table}; CREATE TRIGGER ${table}_organization_trigger BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION ordengo_apply_organization();`);
+    await pool.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${table} FORCE ROW LEVEL SECURITY; DROP POLICY IF EXISTS ${table}_tenant_policy ON ${table}; CREATE POLICY ${table}_tenant_policy ON ${table} USING (NULLIF(current_setting('app.organization_id',true),'') IS NULL OR organization_id=NULLIF(current_setting('app.organization_id',true),'')) WITH CHECK (NULLIF(current_setting('app.organization_id',true),'') IS NULL OR organization_id=NULLIF(current_setting('app.organization_id',true),''));`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ${table}_organization_idx ON ${table}(organization_id);`);
+  }
   await pool.query("CREATE INDEX IF NOT EXISTS gantt_tasks_project_idx ON gantt_tasks (project_id);");
   // Baja definitiva del módulo de gestión industrial (activos, contratos/SLA y documentación
   // técnica). Se eliminan las tablas y sus datos por pedido expreso. Las órdenes conservan los
@@ -260,7 +350,7 @@ async function initDb() {
       }
       await pool.query("UPDATE orders SET data=$2, updated_at=updated_at WHERE id=$1", [row.id, order]);
     }
-    await pool.query("INSERT INTO app_settings(key,value) VALUES('order_assignment_ids_v1',$1) ON CONFLICT(key) DO NOTHING", [{ migratedAt: new Date().toISOString() }]);
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('order_assignment_ids_v1',$1) ON CONFLICT(organization_id,key) DO NOTHING", [{ migratedAt: new Date().toISOString() }]);
   }
 
   const adminEmail = (process.env.ADMIN_EMAIL || "admin@empresa.com").toLowerCase();
@@ -281,7 +371,7 @@ async function initDb() {
   // Mismo criterio que el catálogo: la demo se siembra una vez y nunca se reintenta, así borrar
   // los clientes de ejemplo es definitivo.
   const clientsSeedDone = (await pool.query("SELECT 1 FROM app_settings WHERE key='demo_clients_seed_v1'")).rowCount > 0;
-  if (!clientsSeedDone) await pool.query("INSERT INTO app_settings(key,value) VALUES('demo_clients_seed_v1',$1) ON CONFLICT(key) DO NOTHING", [{ seededAt: new Date().toISOString() }]);
+  if (!clientsSeedDone) await pool.query("INSERT INTO app_settings(key,value) VALUES('demo_clients_seed_v1',$1) ON CONFLICT(organization_id,key) DO NOTHING", [{ seededAt: new Date().toISOString() }]);
   if (!clientsSeedDone && (await pool.query("SELECT count(*)::int n FROM clients")).rows[0].n === 0) {
     const clients = [
       { id: "c1", code: "LDV", name: "Lácteos del Valle", site: "Planta Norte, Nave 2" },
@@ -330,7 +420,7 @@ async function initDb() {
     }
     // Se marca igual aunque no se haya sembrado: en instalaciones que ya tienen catálogo, esto
     // deja registrado que la siembra no debe volver a intentarse nunca.
-    await pool.query("INSERT INTO app_settings(key,value) VALUES('demo_parts_seed_v1',$1) ON CONFLICT(key) DO NOTHING", [{ seededAt: new Date().toISOString() }]);
+    await pool.query("INSERT INTO app_settings(key,value) VALUES('demo_parts_seed_v1',$1) ON CONFLICT(organization_id,key) DO NOTHING", [{ seededAt: new Date().toISOString() }]);
   }
 
   // Alta única del monitor para instalaciones existentes. El marcador evita recrearlo
@@ -511,7 +601,7 @@ async function initDb() {
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
-const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, mustChangePassword: u.mustchangepassword || false, settings: u.settings || {} });
+const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, organizationId: u.organization_id, mustChangePassword: u.mustchangepassword || false, settings: u.settings || {} });
 // Config de pantalla TV por usuario (Monitor Oficina): permite N televisores, cada uno con su propia cuenta e identidad.
 const buildSettingsPatch = (body, current = {}) => {
   const patch = {};
@@ -772,7 +862,7 @@ async function migrateLegacyDataAssets() {
       throw error;
     } finally { db.release(); }
   }
-  await pool.query("INSERT INTO app_settings(key,value) VALUES('file_assets_migration_v1',$1) ON CONFLICT(key) DO NOTHING", [{ migratedAt: new Date().toISOString(), orders: orderRows.length, finances: financeRows.length }]);
+  await pool.query("INSERT INTO app_settings(key,value) VALUES('file_assets_migration_v1',$1) ON CONFLICT(organization_id,key) DO NOTHING", [{ migratedAt: new Date().toISOString(), orders: orderRows.length, finances: financeRows.length }]);
 }
 // Los ítems de una OC son texto libre del proveedor (sku/descripción), sin vínculo obligatorio al
 // catálogo — se intenta emparejar por nombre igual que materialsFromInventory; lo que no matchea
@@ -822,14 +912,23 @@ async function auth(req, res, next) {
   if (!t) return res.status(401).json({ error: "Sin token" });
   try {
     const claims = jwt.verify(t, JWT_SECRET, { algorithms: ["HS256"] });
-    const current = (await pool.query("SELECT id,name,role,active,mustchangepassword,token_version FROM users WHERE id=$1", [claims.id])).rows[0];
+    // Esta consulta ocurre antes de activar RLS; además valida que el tenant del JWT siga siendo
+    // el mismo que el vigente en la cuenta.
+    const current = (await pool.query("SELECT id,name,role,active,mustchangepassword,token_version,organization_id FROM users WHERE id=$1", [claims.id])).rows[0];
     if (!current?.active) return res.status(401).json({ error: "La cuenta está inactiva o ya no existe" });
+    if (claims.organizationId && claims.organizationId !== current.organization_id) return res.status(401).json({ error: "La organización de la sesión ya no es válida" });
     // Si el token trae un token_version anterior al vigente en la base, ya fue revocado (cambio
     // de contraseña propio o forzado por un admin) — se rechaza aunque todavía no haya expirado.
     if ((claims.tokenVersion || 0) !== (current.token_version || 0)) return res.status(401).json({ error: "La sesión ya no es válida. Iniciá sesión de nuevo." });
     if (current.mustchangepassword && !["/api/bootstrap", "/api/me/password"].includes(req.path)) return res.status(403).json({ error: "Debes cambiar la contraseña temporal antes de continuar" });
-    req.user = { id: current.id, name: current.name, role: current.role, mustChangePassword: current.mustchangepassword, requestId: String(req.requestId || crypto.randomUUID()).slice(0, 100), ip: String(req.ip || req.socket.remoteAddress || "").slice(0, 100) };
-    next();
+    const featureByPrefix = [["/api/budgets", "budgets"], ["/api/finances", "finances"], ["/api/finance-", "finances"], ["/api/orders", "orders"], ["/api/projects", "projects"], ["/api/tasks", "projects"], ["/api/gantt", "projects"], ["/api/clients", "clients"], ["/api/purchase-orders", "purchaseOrders"], ["/api/suppliers", "purchaseOrders"], ["/api/material-lists", "materialLists"], ["/api/parts", "inventory"], ["/api/stock", "inventory"], ["/api/whiteboard", "whiteboard"], ["/api/users", "team"], ["/api/audit-log", "team"]];
+    const requiredFeature = featureByPrefix.find(([prefix]) => req.path.startsWith(prefix))?.[1];
+    if (requiredFeature) {
+      const profile = await loadCompanyProfile(current.organization_id);
+      if (profile.features?.[requiredFeature] === false) return res.status(403).json({ error: "Este módulo no está habilitado para la empresa" });
+    }
+    req.user = { id: current.id, name: current.name, role: current.role, organizationId: current.organization_id, mustChangePassword: current.mustchangepassword, requestId: String(req.requestId || crypto.randomUUID()).slice(0, 100), ip: String(req.ip || req.socket.remoteAddress || "").slice(0, 100) };
+    tenantContext.run({ organizationId: current.organization_id }, next);
   } catch { res.status(401).json({ error: "Token inválido" }); }
 }
 const requireRole = (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: "No autorizado" });
@@ -972,8 +1071,15 @@ async function ensureProjectAccess(userId, projectId) {
 }
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
-app.get("/api/branding", async (_req, res) => {
-  try { res.json(await loadBranding()); } catch { res.json(DEFAULT_BRANDING); }
+app.get("/api/branding", async (req, res) => {
+  try {
+    const requested = String(req.query.organization || req.headers["x-organization"] || "").trim().toLowerCase();
+    const hostname = String(req.hostname || "").split(".")[0].toLowerCase();
+    const slug = requested || (hostname && !["www", "orden-go-app", "localhost"].includes(hostname) ? hostname : "automatica");
+    const organization = (await pool.query("SELECT id FROM organizations WHERE slug=$1 AND active=true", [slug])).rows[0]
+      || (await pool.query("SELECT id FROM organizations WHERE id=$1", [DEFAULT_ORGANIZATION_ID])).rows[0];
+    res.json(await loadBranding(organization?.id || DEFAULT_ORGANIZATION_ID));
+  } catch { res.json(DEFAULT_BRANDING); }
 });
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ordengo", at: new Date().toISOString() }));
 app.get("/api/ready", async (_req, res) => { try { await pool.query("SELECT 1"); res.json({ status: "ready" }); } catch { res.status(503).json({ status: "unavailable" }); } });
@@ -985,7 +1091,7 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   if (!u || !u.active || !bcrypt.compareSync(password || "", u.password_hash))
     return res.status(401).json({ error: "Correo o contraseña inválidos" });
   await pool.query("DELETE FROM rate_limits WHERE key=$1", [`login:${req.loginAttemptKey}`]);
-  const token = jwt.sign({ id: u.id, role: u.role, name: u.name, tokenVersion: u.token_version || 0 }, JWT_SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ id: u.id, role: u.role, name: u.name, organizationId: u.organization_id, tokenVersion: u.token_version || 0 }, JWT_SECRET, { expiresIn: "7d" });
   res.setHeader("Set-Cookie", `og_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${IS_PRODUCTION ? "; Secure" : ""}`);
   res.json({ authenticated: true, user: pubUser(u) });
 });
@@ -1003,7 +1109,7 @@ app.post("/api/me/password", auth, async (req, res) => {
   // no quede invalidada también.
   const tokenVersion = (u.token_version || 0) + 1;
   await pool.query("UPDATE users SET password_hash=$2, mustchangepassword=false, token_version=$3 WHERE id=$1", [u.id, bcrypt.hashSync(next, 10), tokenVersion]);
-  const token = jwt.sign({ id: u.id, role: u.role, name: u.name, tokenVersion }, JWT_SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ id: u.id, role: u.role, name: u.name, organizationId: u.organization_id, tokenVersion }, JWT_SECRET, { expiresIn: "7d" });
   res.setHeader("Set-Cookie", `og_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${IS_PRODUCTION ? "; Secure" : ""}`);
   res.json({ ok: true, authenticated: true });
 });
@@ -1011,7 +1117,7 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const tec = isTec(req.user.role);
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, sup, po, ml, wb] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, wb] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
     pool.query("SELECT * FROM users ORDER BY created_at"),
     pool.query("SELECT data FROM clients"),
@@ -1023,6 +1129,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
     pool.query("SELECT data FROM parts ORDER BY data->>'name'"),
     loadBranding(),
+    loadCompanyProfile(req.user.organizationId),
     pool.query("SELECT data FROM suppliers ORDER BY data->>'name'"),
     pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC"),
     pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC"),
@@ -1067,23 +1174,24 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     me: pubUser(me.rows[0]),
     users: u.rows.map((user) => directoryUser(user, req.user.role)),
     clients: visibleClients,
-    projects: visibleProjects,
-    budgets: tec || isMonitor(req.user.role) ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
-    finances: tec || isMonitor(req.user.role) ? [] : fi.rows.map((r) => {
+    projects: companyProfile.features.projects === false ? [] : visibleProjects,
+    budgets: tec || isMonitor(req.user.role) || companyProfile.features.budgets === false ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
+    finances: tec || isMonitor(req.user.role) || companyProfile.features.finances === false ? [] : fi.rows.map((r) => {
       // Los adjuntos no viajan en el listado (son data: URIs pesados): solo cuántos hay.
       const { attachmentUrl, attachments, ...summary } = r.data;
       const count = Array.isArray(attachments) ? attachments.length : (attachmentUrl ? 1 : 0);
       return { ...summary, hasAttachment: count > 0, attachmentCount: count, _updatedAt: r.updated_at };
     }),
-    orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
-    tasks: ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
+    orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role) || companyProfile.features.orders === false) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    tasks: companyProfile.features.projects === false ? [] : ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: notifRows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
-    purchaseOrders: tec || isMonitor(req.user.role) ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    materialLists: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    whiteboardNotes: wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    purchaseOrders: tec || isMonitor(req.user.role) || companyProfile.features.purchaseOrders === false ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    materialLists: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    whiteboardNotes: companyProfile.features.whiteboard === false ? [] : wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
+    companyProfile,
   });
 });
 
@@ -1096,9 +1204,20 @@ app.put("/api/settings/branding", auth, requireRole("admin"), async (req, res) =
   if (Buffer.byteLength(logo, "utf8") > 2 * 1024 * 1024) return res.status(400).json({ error: "El logo no puede superar 2 MB" });
   if (!validHexColor(input.primaryColor) || !validHexColor(input.headerColor)) return res.status(400).json({ error: "Los colores deben estar en formato hexadecimal" });
   const branding = normalizeBranding(input);
-  await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('branding_v1',$1,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [branding]);
+  await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('branding_v1',$1,now()) ON CONFLICT(organization_id,key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [branding]);
   await auditChange({ entityType: "settings", entityId: "branding_v1", action: "update", user: req.user, beforeData: { appName: previousBranding.appName, theme: previousBranding.theme, primaryColor: previousBranding.primaryColor }, afterData: { appName: branding.appName, theme: branding.theme, primaryColor: branding.primaryColor } });
   res.json(branding);
+});
+
+app.get("/api/settings/company-profile", auth, requireRole("admin", "gerente"), async (req, res) => {
+  res.json(await loadCompanyProfile(req.user.organizationId));
+});
+app.put("/api/settings/company-profile", auth, requireRole("admin"), async (req, res) => {
+  const before = await loadCompanyProfile(req.user.organizationId);
+  const profile = normalizeCompanyProfile(req.body || {});
+  await pool.query("UPDATE organizations SET profile=$2,updated_at=now() WHERE id=$1", [req.user.organizationId, profile]);
+  await auditChange({ entityType: "organization", entityId: req.user.organizationId, action: "update_profile", user: req.user, beforeData: before, afterData: profile });
+  res.json(profile);
 });
 
 /* ------------------------------------------------ Notificaciones ------------------------------------------------ */
@@ -1343,7 +1462,8 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   if (!invoiceDate || !invoiceNumber) throw new Error("INVOICE_FIELDS_REQUIRED");
   await assertFinancePeriodOpen(invoiceDate, db);
   const net = Math.round((Number(budget.amount) || 0) * 100) / 100;
-  const vatRate = 21;
+  const companyProfile = await loadCompanyProfile(user?.organizationId);
+  const vatRate = companyProfile.pricing.vatRate;
   const vatAmount = Math.round(net * vatRate) / 100;
   const grossAmount = Math.round((net + vatAmount) * 100) / 100;
   const existing = (await db.query("SELECT id,data FROM financial_movements WHERE data->>'sourceBudgetId'=$1 LIMIT 1", [budget.id])).rows[0];
@@ -1882,14 +2002,17 @@ app.delete("/api/whiteboard-notes/:id", auth, requireProjectWrite, async (req, r
 });
 
 app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
-  const budget = normalizeBudget(req.body);
+  const profile = await loadCompanyProfile(req.user.organizationId);
+  const budget = normalizeBudget({ targetMargin: profile.pricing.targetMargin, ...(req.body || {}) });
   if (budget.stage === "Pagado") return res.status(400).json({ error: "El estado Pagado se asigna automáticamente al registrar el cobro completo." });
   if (!String(budget.client || "").trim() || !String(budget.title || "").trim()) return res.status(400).json({ error: "Cliente y nombre del presupuesto son obligatorios." });
   if (!budget.id) {
     const year = new Date().getFullYear();
-    const rows = (await pool.query("SELECT id FROM budgets WHERE id LIKE $1", [`PRES-${year}-%`])).rows;
+    const tenantPrefix = req.user.organizationId === DEFAULT_ORGANIZATION_ID ? "" : `${String(req.user.organizationId).replace(/^org-/, "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)}-`;
+    const stem = `PRES-${tenantPrefix}${year}-`;
+    const rows = (await pool.query("SELECT id FROM budgets WHERE id LIKE $1", [`${stem}%`])).rows;
     const next = Math.max(0, ...rows.map((row) => Number(String(row.id).split("-").pop()) || 0)) + 1;
-    budget.id = `PRES-${year}-${String(next).padStart(3, "0")}`;
+    budget.id = `${stem}${String(next).padStart(3, "0")}`;
   }
   budget.number = budget.number || budget.id;
   if (["Aprobado", "Facturado", "Pagado"].includes(budget.stage) && !budget.purchaseOrderNumber) return res.status(400).json({ error: "El número de OC del cliente es obligatorio para aprobar el presupuesto." });
@@ -2076,7 +2199,7 @@ app.get("/api/exchange-rates/wholesale", auth, requireRole("admin", "gerente"), 
     // updatedAt identifica el día hábil publicado; fetchedAt, cuándo se realizó la consulta.
     const data = { currency: "USD", arsPerUsd: value, buy: null, sell: value, updatedAt: `${quote.fecha}T00:00:00-03:00`, source: "Banco Central de la República Argentina", sourceLabel: "Dólar mayorista · Comunicación A 3500", sourceUrl: "https://www.bcra.gob.ar/principales-variables/", variableId: 5 };
     wholesaleRateCache = { cachedAt: Date.now(), data };
-    await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('wholesale_rate_last_good',$1,now()) ON CONFLICT(key) DO UPDATE SET value=$1,updated_at=now()", [data]);
+    await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('wholesale_rate_last_good',$1,now()) ON CONFLICT(organization_id,key) DO UPDATE SET value=$1,updated_at=now()", [data]);
     res.json({ ...data, fetchedAt: new Date().toISOString() });
   } catch (error) {
     if (wholesaleRateCache?.data) return res.json({ ...wholesaleRateCache.data, fetchedAt: new Date(wholesaleRateCache.cachedAt).toISOString(), stale: true });
@@ -2134,7 +2257,7 @@ const normalizeFinancialMovement = (input, previous = {}) => {
   movement.amountUsd = movement.currency === "USD" ? movement.amount : movement.exchangeRate > 0 ? movement.amount / movement.exchangeRate : 0;
   movement.amountUsd = Math.round(movement.amountUsd * 1000000) / 1000000;
   if (movement.kind === "invoice") {
-    movement.vatRate = 21;
+    movement.vatRate = boundedNumber(movement.vatRate, 21, 0, 100);
     movement.netAmountUsd = Math.round(movement.amountUsd * 100) / 100;
     movement.vatAmountUsd = Math.round(movement.netAmountUsd * movement.vatRate) / 100;
     movement.grossAmountUsd = Math.round((movement.netAmountUsd + movement.vatAmountUsd) * 100) / 100;
@@ -2282,7 +2405,7 @@ app.put("/api/finance-period-locks/:period", auth, requireRole("admin"), async (
   const current = await financePeriodLocks();
   const locked = req.body?.locked !== false;
   const lockedPeriods = [...new Set(locked ? [...current, period] : current.filter((item) => item !== period))].sort();
-  await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('finance_period_locks_v1',$1,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()", [{ lockedPeriods, updatedBy: req.user.id, updatedAt: new Date().toISOString() }]);
+  await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('finance_period_locks_v1',$1,now()) ON CONFLICT(organization_id,key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()", [{ lockedPeriods, updatedBy: req.user.id, updatedAt: new Date().toISOString() }]);
   await auditChange({ entityType: "finance_period", entityId: period, action: locked ? "close" : "reopen", user: req.user, beforeData: { locked: current.includes(period) }, afterData: { locked } });
   res.json({ lockedPeriods });
 });
@@ -2290,7 +2413,9 @@ app.put("/api/finance-period-locks/:period", auth, requireRole("admin"), async (
 app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res) => {
   if ((req.body?.kind || "expense") === "expense" && !["paid", "pending"].includes(req.body?.paymentStatus)) return res.status(400).json({ error: "Indica si el gasto está pagado o pendiente de pago." });
   if ((req.body?.kind || "expense") === "expense" && req.body?.paymentStatus === "pending" && !String(req.body?.dueDate || "").slice(0, 10)) return res.status(400).json({ error: "Indica el vencimiento del gasto pendiente." });
-  let movement = await hydrateIncomeAllocationLinks(normalizeFinancialMovement(req.body));
+  const profile = await loadCompanyProfile(req.user.organizationId);
+  const financeInput = (req.body?.kind === "invoice" && req.body?.vatRate == null) ? { ...(req.body || {}), vatRate: profile.pricing.vatRate } : req.body;
+  let movement = await hydrateIncomeAllocationLinks(normalizeFinancialMovement(financeInput));
   movement = await applyApprovedBudgetLink(movement);
   try { await assertFinancePeriodOpen(movement.date); } catch (error) { if (error.code === "FINANCE_PERIOD_LOCKED") return res.status(409).json({ error: error.message }); throw error; }
   if (!String(movement.concept || "").trim() || movement.amount <= 0 || !movement.date) return res.status(400).json({ error: "Concepto, importe y fecha son obligatorios." });
@@ -2536,6 +2661,7 @@ app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
 
 app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req, res) => {
   let o = { ...(req.body || {}) };
+  const companyProfile = await loadCompanyProfile(req.user.organizationId);
   o.status = o.status || "Borrador";
   if (o.status === "En progreso") o.status = "En proceso de ejecución";
   o.assignedTechs = sanitizeAssignedTechs(o.assignedTechs);
@@ -2567,13 +2693,16 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
     if (matchedClient) o.clientId = matchedClient.id;
   }
   await hydrateOrderAssignments(o);
-  if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = Number(process.env.DEFAULT_RATE) || 50;
+  if (o.rate === undefined || o.rate === null || o.rate === "") o.rate = companyProfile.pricing.defaultHourlyRate;
   o.rate = normalizedRateValue(o.rate);
+  if (o.laborCost === undefined || o.laborCost === null || o.laborCost === "") o.laborCost = companyProfile.pricing.defaultInternalHourlyCost;
   o.laborCost = wholeMoneyValue(o.laborCost);
+  if (o.minimumBillableHours === undefined || o.minimumBillableHours === null || o.minimumBillableHours === "") o.minimumBillableHours = companyProfile.pricing.minimumBillableHours;
   o.technicians = Math.max(1, Math.round(Number(o.technicians) || 1));
   o.materials = await materialsFromInventory(o.materials);
   if (!o.id) {
     const year2 = String(new Date().getFullYear()).slice(-2);
+    const tenantPrefix = req.user.organizationId === DEFAULT_ORGANIZATION_ID ? "" : `${String(req.user.organizationId).replace(/^org-/, "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)}-`;
     // Un cliente puede tener varias plantas, cada una con su propio código de numeración.
     // Si la orden indica de qué planta se trata (siteCode), ese código manda sobre el del cliente.
     let code = String(o.siteCode || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
@@ -2585,15 +2714,15 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
     // El correlativo se mantiene por sitio + año. La expresión regular reconoce cualquier formato
     // histórico de folio (con año de 2 o 4 dígitos, con o sin código de tipo) para no reiniciar
     // ni pisar la numeración ya usada.
-    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id ~ $1", [`^OT-${code}-([A-Z]{2,4}-)?(20)?${year2}-`])).rows[0].c + 1;
+    const n = (await pool.query("SELECT count(*)::int c FROM orders WHERE id ~ $1", [`^OT-${tenantPrefix}${code}-([A-Z]{2,4}-)?(20)?${year2}-`])).rows[0].c + 1;
     // Si la orden queda vinculada a un presupuesto aprobado/facturado, el folio incorpora su número
     // como referencia directa (ej. OT-VTU-26-001-026367), para poder rastrearla sin abrirla.
     const budgetSuffix = o.budgetId ? String(o.quoteNumber || o.budgetNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
-    o.id = `OT-${code}-${year2}-${String(n).padStart(3, "0")}${budgetSuffix ? `-${budgetSuffix}` : ""}`;
+    o.id = `OT-${tenantPrefix}${code}-${year2}-${String(n).padStart(3, "0")}${budgetSuffix ? `-${budgetSuffix}` : ""}`;
   }
   if (isTec(req.user.role)) {
     // El técnico nunca fija importes: la tarifa la define el servidor y Gerencia la ajusta después.
-    o.rate = normalizedRateValue(process.env.DEFAULT_RATE || 50); o.currency = "USD"; o.laborBillable = true; o.laborCost = 0;
+    o.rate = normalizedRateValue(companyProfile.pricing.defaultHourlyRate); o.currency = companyProfile.baseCurrency; o.laborBillable = true; o.laborCost = companyProfile.pricing.defaultInternalHourlyCost;
     if (Array.isArray(o.materials)) o.materials = o.materials.map((m) => ({ ...m, billable: true }));
     if (o.status === "Facturada") o.status = "Aprobada";
   }
@@ -2961,13 +3090,14 @@ const AR_OFFSET_MS = 3 * 60 * 60 * 1000;
 const arDate = () => new Date(Date.now() - AR_OFFSET_MS);
 const arDayKey = () => arDate().toISOString().slice(0, 10);
 
-async function runDailyDigest() {
+async function runOrganizationDailyDigest(organizationId) {
+ return tenantContext.run({ organizationId }, async () => {
   const today = arDayKey();
   // El marcado es atómico y va ANTES de notificar: si dos instancias arrancan a la vez, solo una
   // gana el UPDATE y la otra sale sin mandar nada. Un resumen perdido es preferible a uno doble.
   const claimed = await pool.query(
     `INSERT INTO app_settings(key, value, updated_at) VALUES($1, $2, now())
-     ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+     ON CONFLICT(organization_id,key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
      WHERE app_settings.value->>'day' IS DISTINCT FROM $3
      RETURNING key`,
     [DIGEST_KEY, { day: today }, today]);
@@ -3015,6 +3145,14 @@ async function runDailyDigest() {
     sent++;
   }
   console.log(`Resumen diario ${today}: ${sent} notificación(es).`);
+  return sent;
+ });
+}
+
+async function runDailyDigest() {
+  const organizations = (await pool.query("SELECT id FROM organizations WHERE active=true ORDER BY id")).rows;
+  let sent = 0;
+  for (const organization of organizations) sent += await runOrganizationDailyDigest(organization.id);
   return sent;
 }
 

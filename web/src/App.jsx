@@ -12,7 +12,7 @@ import {
   Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity, Sun, Moon, Monitor,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
-import { LOGO, LOGO_LIGHT } from "./logo";
+import { LOGO, LOGO_LIGHT, PRODUCT_LOGO } from "./logo";
 const pdfModule = () => import("./pdf");
 let REPORT_BRANDING = {};
 const withReportBranding = (args, expected) => args.length >= expected ? args : [...args, REPORT_BRANDING];
@@ -34,10 +34,22 @@ import { clearOfflineUserData, clearOrderDraft, flushOfflineQueue, loadOrderDraf
 
 /* ===================================== CONFIG ===================================== */
 const CUR = "USD ";
-const DEFAULT_RATE = 50;
+let DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const allowedModulesForRole = (role) => role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+const DEFAULT_COMPANY_PROFILE = { locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD", pricing: { defaultHourlyRate: 50, defaultInternalHourlyCost: 0, minimumBillableHours: 2, targetMargin: 35, vatRate: 21 }, laborRoles: [], features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true } };
+const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", team: "team" };
+const allowedModulesForRole = (role, profile = DEFAULT_COMPANY_PROFILE) => {
+  const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+  return byRole.filter((moduleId) => !MODULE_FEATURE[moduleId] || profile.features?.[MODULE_FEATURE[moduleId]] !== false);
+};
 const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "", hideAdminModules: false, companyCuit: "20351960206", companyLegalName: "AUTOMATICA ARG", companyIvaCondition: "IVA Responsable Inscripto", companyAddress: "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", companyPhone: "+54 3462 596041", companyEmail: "", companyWebsite: "www.automatica-arg.com.ar" };
+function CompanyLogo({ branding = DEFAULT_BRANDING, dark = false, className = "", alt }) {
+  const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+  const source = branding.logoDataUrl || (isAutomatica ? (dark ? LOGO_LIGHT : LOGO) : "");
+  if (source) return <img src={source} alt={alt || `Logo de ${branding.companyName || "empresa"}`} className={className} />;
+  const initials = String(branding.companyName || "Empresa").split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  return <span role="img" aria-label={alt || `Identidad de ${branding.companyName || "empresa"}`} className={`grid shrink-0 place-items-center rounded-md bg-white/10 px-2 text-xs font-bold ${className}`}>{initials || "EM"}</span>;
+}
 const cuitDigits = (value) => String(value || "").replace(/\D/g, "");
 const formatCuit = (value) => { const digits = cuitDigits(value); return digits.length === 11 ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}` : digits; };
 const BRAND_THEMES = [
@@ -78,6 +90,7 @@ const PALETTE = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899
 // enmascaren en toda la pantalla (Panel, Órdenes, Mi día, etc.) mientras el módulo Administración
 // esté oculto — sin tener que pasar la bandera como prop a cada componente que usa money().
 let HIDE_COSTS = false;
+let ACTIVE_COMPANY_PROFILE = DEFAULT_COMPANY_PROFILE;
 const money = (n) => (HIDE_COSTS ? "***" : `${CUR}${(Number(n) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const wholeMoney = (value) => Math.max(0, Math.round(Number(value) || 0));
 // Los diálogos de confirmación viven dentro de cada módulo (no en el estado global de App),
@@ -155,7 +168,7 @@ const BUDGET_STAGE_PROBABILITY = { "Borrador": 10, "En preparación": 25, "Envia
 // Debe coincidir con BUDGET_REJECTION_REASONS del servidor: ahí se valida que el motivo esté en
 // la lista, así que agregar uno solo de un lado lo haría rechazar el guardado.
 const BUDGET_REJECTION_REASONS = ["Precio", "Plazo de entrega", "Competencia", "Alcance técnico", "Presupuesto del cliente", "Proyecto postergado", "Sin respuesta", "Otro"];
-const LABOR_ROLES = [
+let LABOR_ROLES = [
   { name: "Programador", cost: 50 }, { name: "Ingeniero", cost: 25 }, { name: "Asesor", cost: 20 },
   { name: "Programador AUX", cost: 45 }, { name: "Tablerista", cost: 17 }, { name: "Dibujante", cost: 17 },
   { name: "Administrativo", cost: 6 }, { name: "Ayudante", cost: 5 }, { name: "Programador Aprendiz", cost: 7 },
@@ -585,6 +598,10 @@ export default function App() {
   const orderSyncCursor = useRef("");
   const taskSyncCursor = useRef("");
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
+  const [companyProfile, setCompanyProfile] = useState(DEFAULT_COMPANY_PROFILE);
+  ACTIVE_COMPANY_PROFILE = companyProfile;
+  DEFAULT_RATE = Number(companyProfile.pricing?.defaultHourlyRate) || 50;
+  if (companyProfile.laborRoles?.length) LABOR_ROLES = companyProfile.laborRoles;
   REPORT_BRANDING = branding;
   const [appearanceMode, setAppearanceMode] = useState("auto");
   HIDE_COSTS = !!branding.hideAdminModules;
@@ -744,14 +761,14 @@ export default function App() {
   const boot = async () => {
     const d = await api.bootstrap();
     setOfflineUser(d.me.id); setOfflineCount(offlineQueueSize());
-    setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING);
+    setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING); setCompanyProfile(d.companyProfile || DEFAULT_COMPANY_PROFILE);
     orderSyncCursor.current = (d.orders || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
     taskSyncCursor.current = (d.tasks || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current);
     setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setWhiteboardNotes(d.whiteboardNotes || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
-      const allowed = allowedModulesForRole(d.me.role);
+      const allowed = allowedModulesForRole(d.me.role, d.companyProfile || DEFAULT_COMPANY_PROFILE);
       if (allowed.includes(savedNavigation.module)) setModule(savedNavigation.module);
       if (["list", "report"].includes(savedNavigation.orderTab)) setOTab(savedNavigation.orderTab);
       if (["board", "calendar", "reports"].includes(savedNavigation.projectTab)) setPTab(savedNavigation.projectTab);
@@ -784,10 +801,10 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("ordengo_tech_task_view", techTaskView); } catch {} }, [techTaskView]);
   useEffect(() => {
     if (!me) return;
-    const allowed = allowedModulesForRole(me.role);
+    const allowed = allowedModulesForRole(me.role, companyProfile);
     const safeModule = allowed.includes(module) ? module : (me.role === "monitor_oficina" ? "projects" : "inicio");
     try { localStorage.setItem(`ordengo_navigation_${me.id}`, JSON.stringify({ module: safeModule, orderTab: oTab, projectTab: pTab })); } catch {}
-  }, [me, module, oTab, pTab]);
+  }, [me, module, oTab, pTab, companyProfile]);
 
   useEffect(() => {
     if (!me || !online || module !== "orders") return;
@@ -1119,6 +1136,7 @@ export default function App() {
   const patchUser = async (id, patch) => { const u = await api.updateUser(id, patch); setUsers((p) => p.map((x) => (x.id === id ? u : x))); };
   const removeUser = async (id) => { await api.deleteUser(id); setUsers((p) => p.filter((x) => x.id !== id)); };
   const saveBranding = async (value) => { try { const saved = await api.updateBranding(value); setBranding(saved); toast("Identidad visual actualizada", "success"); return saved; } catch (e) { err(e); return null; } };
+  const saveCompanyProfile = async (value) => { try { const saved = await api.updateCompanyProfile(value); setCompanyProfile(saved); toast("Perfil empresarial actualizado", "success"); return saved; } catch (e) { err(e); return null; } };
 
   /* Notificaciones */
   const unread = notifs.filter((n) => !n.read).length;
@@ -1221,7 +1239,7 @@ export default function App() {
   // el resto se organiza en Negocio (pipeline comercial → compras → resultado
   // financiero, de uso frecuente para gerencia) y Utilidades (herramientas y
   // catálogos de uso esporádico, plegados en un menú aparte).
-  const modTabs = isMonitor ? [
+  const roleModTabs = isMonitor ? [
     { id: "projects", label: "Proyectos", icon: LayoutGrid },
     { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
   ] : [
@@ -1239,6 +1257,8 @@ export default function App() {
     ...(isAdmin ? [{ id: "team", label: "Equipo", icon: Users, group: "Utilidades" }] : []),
     ...(isAdmin ? [{ id: "settings", label: "Configuración", icon: Settings2, group: "Utilidades" }] : []),
   ];
+  const allowedForCompany = new Set(allowedModulesForRole(me.role, companyProfile));
+  const modTabs = roleModTabs.filter((tab) => allowedForCompany.has(tab.id));
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
   const activeModule = allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio");
@@ -1275,8 +1295,9 @@ export default function App() {
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100">
         <div className={`mx-auto flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3 ${tvMode ? "max-w-none lg:px-7" : "max-w-6xl"}`}>
           <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
-            <img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-7 max-w-28 shrink object-contain sm:max-w-36" />
-            <div className="min-w-0 max-w-24 leading-tight border-l border-ink-800 pl-2 sm:max-w-none sm:pl-2.5"><div className="truncate text-sm font-semibold">{branding.appName || "OrdenGO"}</div><div className="hidden truncate text-[11px] text-slate-400 min-[400px]:block">{branding.subtitle || "Campo + Proyectos"}</div></div>
+            <div className="flex h-8 shrink-0 items-center rounded-lg bg-white px-1.5 shadow-sm ring-1 ring-white/10 sm:h-9 sm:px-2"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-6 w-auto object-contain sm:h-7" /></div>
+            <div className="hidden h-7 w-px bg-slate-700 min-[390px]:block" aria-hidden="true" />
+            <div className="hidden min-w-0 items-center gap-2 min-[390px]:flex"><CompanyLogo branding={branding} dark className="h-7 max-w-20 shrink-0 object-contain text-white" /><div className="hidden min-w-0 max-w-28 leading-tight sm:block"><div className="truncate text-xs font-semibold text-slate-200">{branding.companyName || "Empresa"}</div><div className="truncate text-[10px] text-slate-400">{branding.subtitle || "Campo + Proyectos"}</div></div></div>
           </div>
           <div className="flex shrink-0 items-center gap-0 sm:gap-2">
             {activeModule === "orders" && <button onClick={() => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
@@ -1463,7 +1484,7 @@ export default function App() {
               const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} me={me} branding={branding} whiteboardNotes={whiteboardNotes} reportSignal={projectReportSignal} onConsumeReport={() => setProjectReportSignal(0)} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
-              if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
+              if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} branding={branding} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
               if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
               if (isMgr) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} />;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
@@ -1476,7 +1497,7 @@ export default function App() {
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} branding={branding} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} branding={branding} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} projects={projects} me={me} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onSaveUserProjects={saveUserProjects} onErr={err} />}
-        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} onSaveBranding={saveBranding} appearanceMode={appearanceMode} onAppearanceModeChange={setAppearanceMode} />}
+        {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} companyProfile={companyProfile} onSaveBranding={saveBranding} onSaveCompanyProfile={saveCompanyProfile} appearanceMode={appearanceMode} onAppearanceModeChange={setAppearanceMode} />}
 
         {!tvMode && <footer className="relative z-10 mt-10 border-t border-slate-200 bg-slate-50 pt-4 text-xs text-slate-500">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
         </div>
@@ -1582,9 +1603,9 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
         <div className="pointer-events-none absolute -right-10 top-1/2 h-[30rem] w-[30rem] -translate-y-1/2 rounded-full border border-white/5" />
         <div className="pointer-events-none absolute left-0 top-0 h-64 w-64 bg-brand-500/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
-          <div className="mb-8 flex min-h-14 w-fit min-w-14 items-center justify-center rounded-2xl bg-white/5 px-3 ring-1 ring-white/10"><img src={branding.logoDataUrl || LOGO_LIGHT} alt={branding.companyName || branding.appName} className="h-8 max-w-52 object-contain" /></div>
-          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-brand-400">{branding.companyName || "AUTOMATICA ARG"}</div>
-          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">{branding.appName || "OrdenGO"}</h1>
+          <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-black/10"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
+          <div className="mb-4 flex items-center gap-3"><CompanyLogo branding={branding} dark className="h-9 max-w-36 object-contain text-white" /><div className="border-l border-white/15 pl-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-400">Entorno de<br /><span className="text-slate-200">{branding.companyName || "Empresa"}</span></div></div>
+          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Gestión conectada, de punta a punta</h1>
           <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-400">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
           <ul className="mt-8 space-y-3">
             {bullets.map((b) => (<li key={b} className="flex items-center gap-3 text-sm text-slate-200"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-brand-500/20 text-brand-400"><CheckCircle2 className="h-3.5 w-3.5" /></span>{b}</li>))}
@@ -1595,7 +1616,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
       {/* Tarjeta de acceso */}
       <div className="flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-sm">
-          <div className="mb-6 flex items-center gap-3 lg:hidden"><img src={branding.logoDataUrl || LOGO} alt={branding.companyName || branding.appName} className="h-10 max-w-52 object-contain" /><div><b className="block text-sm text-slate-800">{branding.appName}</b><span className="text-xs text-slate-500">{branding.subtitle}</span></div></div>
+          <div className="mb-6 lg:hidden"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-auto w-56 max-w-full object-contain" /><div className="mt-3 flex items-center gap-2 border-t border-slate-200 pt-3"><CompanyLogo branding={branding} className="h-8 max-w-28 object-contain text-slate-700" /><div><b className="block text-xs text-slate-800">{branding.companyName || "Empresa"}</b><span className="text-[11px] text-slate-500">{branding.subtitle}</span></div></div></div>
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
             <div className="h-1 bg-brand-500" />
             <div className="p-6 sm:p-7">
@@ -4073,7 +4094,10 @@ const defaultBudgetClient = (clients) =>
 const emptyBudget = (me, clients) => {
   const client = defaultBudgetClient(clients);
   const site = clientSites(client).find((s) => /venado tuerto/i.test(s.name || "")) || clientSites(client)[0];
-  return { number: "", clientId: client?.id || "", client: client?.name || "", site: site?.name || client?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: BUDGET_STAGE_PROBABILITY.Borrador, targetMargin: 35, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: "Ingeniero", qty: 1, unit: "hs", unitPrice: 38.46, unitCost: 25 }] };
+  const role = LABOR_ROLES.find((item) => item.name === "Ingeniero") || LABOR_ROLES[0] || { name: "Ingeniero", cost: 0 };
+  const margin = Number(ACTIVE_COMPANY_PROFILE.pricing?.targetMargin) || 0;
+  const suggested = margin >= 100 ? role.cost : Math.round((role.cost / (1 - margin / 100)) * 100) / 100;
+  return { number: "", clientId: client?.id || "", client: client?.name || "", site: site?.name || client?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: BUDGET_STAGE_PROBABILITY.Borrador, targetMargin: margin, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: role.name, qty: 1, unit: "hs", unitPrice: suggested, unitCost: role.cost }] };
 };
 
 function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpenOrder, onClose, onSave }) {
@@ -4139,7 +4163,7 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpe
           )}
         </Section>}
 
-        {form.stage === "Facturado" && <Section title="Datos de facturación · IVA 21%"><div className="grid grid-cols-1 gap-2 sm:grid-cols-3"><L label="N.º de factura *"><input value={form.invoiceNumber || ""} onChange={(event) => set("invoiceNumber", event.target.value)} placeholder="Ej. FC A 0001-00000123" className="u-input" /></L><L label="Fecha de facturación *"><input type="date" value={form.invoicedAt || ""} onChange={(event) => set("invoicedAt", event.target.value)} className="u-input" /></L><L label="Vencimiento"><input type="date" value={form.invoiceDueDate || ""} onChange={(event) => set("invoiceDueDate", event.target.value)} className="u-input" /></L></div><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3"><div className="rounded-xl bg-slate-50 p-3"><span className="block text-[10px] uppercase text-slate-400">Neto sin IVA</span><b>{money(amount)}</b></div><div className="rounded-xl bg-amber-50 p-3"><span className="block text-[10px] uppercase text-amber-600">IVA 21%</span><b className="text-amber-700">{money(Math.round(amount * 21) / 100)}</b></div><div className="rounded-xl bg-sky-50 p-3"><span className="block text-[10px] uppercase text-sky-600">Total con IVA</span><b className="text-sky-700">{money(Math.round(amount * 121) / 100)}</b></div></div><L label="Detalle de factura"><input value={form.invoiceDetail || ""} onChange={(event) => set("invoiceDetail", event.target.value)} placeholder="Anticipo, hito, avance o saldo final" className="u-input" /></L><p className="mt-2 text-[11px] text-slate-500">Al guardar se generará o actualizará automáticamente la factura en Finanzas usando la fecha indicada.</p></Section>}
+        {form.stage === "Facturado" && (() => { const vatRate = Number(ACTIVE_COMPANY_PROFILE.pricing?.vatRate) || 0; const vat = Math.round(amount * vatRate) / 100; return <Section title={`Datos de facturación · Impuesto ${vatRate}%`}><div className="grid grid-cols-1 gap-2 sm:grid-cols-3"><L label="N.º de factura *"><input value={form.invoiceNumber || ""} onChange={(event) => set("invoiceNumber", event.target.value)} placeholder="Ej. FC A 0001-00000123" className="u-input" /></L><L label="Fecha de facturación *"><input type="date" value={form.invoicedAt || ""} onChange={(event) => set("invoicedAt", event.target.value)} className="u-input" /></L><L label="Vencimiento"><input type="date" value={form.invoiceDueDate || ""} onChange={(event) => set("invoiceDueDate", event.target.value)} className="u-input" /></L></div><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3"><div className="rounded-xl bg-slate-50 p-3"><span className="block text-[10px] uppercase text-slate-400">Neto</span><b>{money(amount)}</b></div><div className="rounded-xl bg-amber-50 p-3"><span className="block text-[10px] uppercase text-amber-600">Impuesto {vatRate}%</span><b className="text-amber-700">{money(vat)}</b></div><div className="rounded-xl bg-sky-50 p-3"><span className="block text-[10px] uppercase text-sky-600">Total</span><b className="text-sky-700">{money(Math.round((amount + vat) * 100) / 100)}</b></div></div><L label="Detalle de factura"><input value={form.invoiceDetail || ""} onChange={(event) => set("invoiceDetail", event.target.value)} placeholder="Anticipo, hito, avance o saldo final" className="u-input" /></L><p className="mt-2 text-[11px] text-slate-500">Al guardar se generará o actualizará automáticamente la factura en Finanzas usando la fecha indicada.</p></Section>; })()}
 
         <Section title="Alcance técnico"><textarea value={form.scope || ""} onChange={(event) => set("scope", event.target.value)} rows={4} placeholder="Equipos, señales, software, tableros, documentación, puesta en marcha y entregables" className="u-input resize-none" /><div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3"><textarea value={form.assumptions || ""} onChange={(event) => set("assumptions", event.target.value)} rows={3} placeholder="Supuestos y condiciones" className="u-input resize-none" /><textarea value={form.exclusions || ""} onChange={(event) => set("exclusions", event.target.value)} rows={3} placeholder="Exclusiones" className="u-input resize-none" /><textarea value={form.risks || ""} onChange={(event) => set("risks", event.target.value)} rows={3} placeholder="Riesgos técnicos y dependencias" className="u-input resize-none" /></div></Section>
 
@@ -4202,11 +4226,12 @@ function ProjectInvoiceModal({ budget, project, onClose, onSave }) {
   const [form, setForm] = useState({ invoiceNumber: "", date: todayStr(), dueDate: "", amount: Number(budget.amount) || 0, detail: "" });
   const [saving, setSaving] = useState(false);
   const net = Number(form.amount) || 0;
-  const vat = Math.round(net * 21) / 100;
+  const vatRate = Number(ACTIVE_COMPANY_PROFILE.pricing?.vatRate) || 0;
+  const vat = Math.round(net * vatRate) / 100;
   const gross = Math.round((net + vat) * 100) / 100;
   const submit = async () => {
     setSaving(true);
-    const saved = await onSave({ kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate: 21, vatAmountUsd: vat, grossAmountUsd: gross, currency: "USD", exchangeRate: 1, date: form.date, dueDate: form.dueDate, invoiceNumber: form.invoiceNumber.trim(), receiptNumber: form.invoiceNumber.trim(), detail: form.detail, projectId: project?.id || budget.projectId, budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || project?.clientId || "", clientName: budget.client || project?.client || "", paymentStatus: "pending" });
+    const saved = await onSave({ kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vat, grossAmountUsd: gross, currency: "USD", exchangeRate: 1, date: form.date, dueDate: form.dueDate, invoiceNumber: form.invoiceNumber.trim(), receiptNumber: form.invoiceNumber.trim(), detail: form.detail, projectId: project?.id || budget.projectId, budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || project?.clientId || "", clientName: budget.client || project?.client || "", paymentStatus: "pending" });
     setSaving(false);
     if (saved) onClose();
   };
@@ -8332,7 +8357,37 @@ function DrawingCanvasEditor({ note, projects, saving, onCancel, onSave }) {
   );
 }
 
-function SettingsModule({ branding, onSaveBranding, appearanceMode = "auto", onAppearanceModeChange }) {
+function CompanyProfileSettings({ value, onSave }) {
+  const [form, setForm] = useState(value || DEFAULT_COMPANY_PROFILE);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setForm(value || DEFAULT_COMPANY_PROFILE), [value]);
+  const setPricing = (key, next) => setForm((current) => ({ ...current, pricing: { ...current.pricing, [key]: next } }));
+  const setFeature = (key, next) => setForm((current) => ({ ...current, features: { ...current.features, [key]: next } }));
+  const updateRole = (index, patch) => setForm((current) => ({ ...current, laborRoles: current.laborRoles.map((role, roleIndex) => roleIndex === index ? { ...role, ...patch } : role) }));
+  const removeRole = (index) => setForm((current) => ({ ...current, laborRoles: current.laborRoles.filter((_, roleIndex) => roleIndex !== index) }));
+  const save = async () => { setSaving(true); await onSave(form); setSaving(false); };
+  const featureLabels = { panel: "Panel de dirección", budgets: "Presupuestos", finances: "Finanzas", orders: "Órdenes de trabajo", projects: "Proyectos", whiteboard: "Notas", materialLists: "Listas de materiales", clients: "Clientes", purchaseOrders: "Compras", inventory: "Inventario", team: "Equipo" };
+  return <Box className="overflow-hidden border-2 border-brand-100">
+    <div className="border-b border-slate-100 bg-brand-50/40 p-4"><div className="flex items-center gap-2"><Briefcase className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Perfil operativo de la empresa</h3><p className="text-[11px] text-slate-500">Tarifas, costos y módulos propios de esta organización. No afectan a otras empresas.</p></div></div></div>
+    <div className="space-y-5 p-4">
+      <section><h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Criterios económicos</h4><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <L label="Moneda base"><select value={form.baseCurrency} onChange={(e) => setForm((current) => ({ ...current, baseCurrency: e.target.value }))} className="u-input"><option>USD</option><option>ARS</option><option>EUR</option></select></L>
+        <L label="Tarifa/h de venta"><input type="number" min="0" step="1" value={form.pricing?.defaultHourlyRate ?? 50} onChange={(e) => setPricing("defaultHourlyRate", e.target.value)} className="u-input" /></L>
+        <L label="Costo interno/h"><input type="number" min="0" step="1" value={form.pricing?.defaultInternalHourlyCost ?? 0} onChange={(e) => setPricing("defaultInternalHourlyCost", e.target.value)} className="u-input" /></L>
+        <L label="Mínimo facturable (h)"><input type="number" min="0" max="24" step="0.5" value={form.pricing?.minimumBillableHours ?? 2} onChange={(e) => setPricing("minimumBillableHours", e.target.value)} className="u-input" /></L>
+        <L label="Margen objetivo (%)"><input type="number" min="0" max="95" step="1" value={form.pricing?.targetMargin ?? 35} onChange={(e) => setPricing("targetMargin", e.target.value)} className="u-input" /></L>
+        <L label="IVA / impuesto (%)"><input type="number" min="0" max="100" step="0.1" value={form.pricing?.vatRate ?? 21} onChange={(e) => setPricing("vatRate", e.target.value)} className="u-input" /></L>
+        <L label="Idioma"><select value={form.locale} onChange={(e) => setForm((current) => ({ ...current, locale: e.target.value }))} className="u-input"><option value="es-AR">Español · Argentina</option><option value="es-UY">Español · Uruguay</option><option value="es-CL">Español · Chile</option><option value="es-MX">Español · México</option><option value="en-US">English · US</option></select></L>
+        <div className="sm:col-span-2"><L label="Zona horaria"><input value={form.timezone || ""} onChange={(e) => setForm((current) => ({ ...current, timezone: e.target.value }))} placeholder="America/Buenos_Aires" className="u-input" /></L></div>
+      </div></section>
+      <section><div className="mb-2 flex items-center justify-between"><div><h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Perfiles de mano de obra</h4><p className="mt-1 text-[11px] text-slate-500">El costo se propone automáticamente al estimar un presupuesto y puede ajustarse en cada línea.</p></div><button type="button" onClick={() => setForm((current) => ({ ...current, laborRoles: [...(current.laborRoles || []), { name: "Nuevo perfil", cost: 0 }] }))} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar</button></div><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{(form.laborRoles || []).map((role, index) => <div key={`${index}-${role.name}`} className="grid grid-cols-[minmax(0,1fr)_6rem_2.5rem] gap-2 rounded-lg border border-slate-200 p-2"><input value={role.name} onChange={(e) => updateRole(index, { name: e.target.value })} aria-label="Nombre del perfil" className="u-input" /><input type="number" min="0" step="1" value={role.cost} onChange={(e) => updateRole(index, { cost: e.target.value })} aria-label={`Costo de ${role.name}`} className="u-input" /><button type="button" onClick={() => removeRole(index)} aria-label={`Eliminar ${role.name}`} className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>)}</div></section>
+      <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Módulos habilitados</h4><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(featureLabels).map(([key, label]) => <label key={key} className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700"><input type="checkbox" checked={form.features?.[key] !== false} onChange={(e) => setFeature(key, e.target.checked)} />{label}</label>)}</div><p className="mt-2 text-[11px] text-slate-500">La configuración restringe la navegación de la empresa; los permisos por rol siguen aplicándose dentro de cada módulo.</p></section>
+      <div className="flex justify-end"><button disabled={saving || !(form.laborRoles || []).length} onClick={save} className="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar perfil operativo</button></div>
+    </div>
+  </Box>;
+}
+
+function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompanyProfile, appearanceMode = "auto", onAppearanceModeChange }) {
   const [form, setForm] = useState({ ...DEFAULT_BRANDING, ...branding });
   const [saving, setSaving] = useState(false);
   const [logoError, setLogoError] = useState("");
@@ -8344,14 +8399,23 @@ function SettingsModule({ branding, onSaveBranding, appearanceMode = "auto", onA
     setLogoError("");
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setLogoError("Usa una imagen PNG, JPG o WebP."); return; }
     if (file.size > 1.5 * 1024 * 1024) { setLogoError("El archivo supera 1,5 MB. Reduce su tamaño antes de cargarlo."); return; }
-    const reader = new FileReader();
-    reader.onload = () => set("logoDataUrl", String(reader.result || ""));
-    reader.onerror = () => setLogoError("No se pudo leer la imagen.");
-    reader.readAsDataURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      if (image.naturalWidth < 320 || image.naturalHeight < 80) { setLogoError("El logo es demasiado pequeño. Usa al menos 320 × 80 px para conservar nitidez."); return; }
+      const reader = new FileReader();
+      reader.onload = () => set("logoDataUrl", String(reader.result || ""));
+      reader.onerror = () => setLogoError("No se pudo leer la imagen.");
+      reader.readAsDataURL(file);
+    };
+    image.onerror = () => { URL.revokeObjectURL(objectUrl); setLogoError("La imagen no es válida o está dañada."); };
+    image.src = objectUrl;
   };
   const save = async () => { setSaving(true); await onSaveBranding(form); setSaving(false); };
   return <div className="space-y-5">
-    <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad visual y tema general de la aplicación.</p></div>
+    <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad, estructura de costos y modelo operativo de esta empresa.</p></div>
+    <CompanyProfileSettings value={companyProfile} onSave={onSaveCompanyProfile} />
     <Box className="overflow-hidden border-2 border-brand-100">
       <div className="border-b border-slate-100 bg-brand-50/40 p-4"><div className="flex items-center gap-2"><Building2 className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Datos de la empresa</h3><p className="text-[11px] text-slate-500">Nombre, subtítulo y datos fiscales — se usan en toda la app y en la validación de comprobantes.</p></div></div></div>
       <div className="space-y-5 p-4">
@@ -8363,14 +8427,14 @@ function SettingsModule({ branding, onSaveBranding, appearanceMode = "auto", onA
       <Box className="overflow-hidden">
         <div className="border-b border-slate-100 p-4"><div className="flex items-center gap-2"><Palette className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Marca y apariencia</h3><p className="text-[11px] text-slate-500">Los cambios se aplican a todos los usuarios y dispositivos.</p></div></div></div>
         <div className="space-y-5 p-4">
-          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Logo institucional</h4><div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center"><div className="grid min-h-20 w-full place-items-center rounded-lg p-3 sm:w-56" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Vista previa del logo" className="max-h-12 max-w-full object-contain" /></div><div className="flex-1"><div className="flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white"><Upload className="h-4 w-4" /> Cargar logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { selectLogo(event.target.files?.[0]); event.target.value = ""; }} /></label>{form.logoDataUrl && <button onClick={() => set("logoDataUrl", "")} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Usar logo original</button>}</div><p className="mt-2 text-[11px] text-slate-500">Se utiliza en la aplicación y en todos los reportes emitidos. PNG transparente recomendado; máximo 1,5 MB. También admite JPG y WebP.</p>{logoError && <p className="mt-1 text-xs font-medium text-rose-600">{logoError}</p>}</div></div></section>
+          <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Logo de la empresa asociada</h4><div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center"><div className="grid min-h-20 w-full place-items-center rounded-lg p-3 sm:w-56" style={{ background: form.headerColor }}><CompanyLogo branding={form} dark className="max-h-12 max-w-full object-contain text-white" /></div><div className="flex-1"><div className="flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white"><Upload className="h-4 w-4" /> Cargar logo<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { selectLogo(event.target.files?.[0]); event.target.value = ""; }} /></label>{form.logoDataUrl && <button onClick={() => set("logoDataUrl", "")} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">Quitar logo de empresa</button>}</div><p className="mt-2 text-[11px] text-slate-500">OrdenGO conserva su marca; este distintivo identifica exclusivamente a tu empresa en la aplicación y los reportes. Recomendado: PNG o WebP, fondo transparente, mínimo 320 × 80 px y máximo 1,5 MB.</p>{logoError && <p className="mt-1 text-xs font-medium text-rose-600">{logoError}</p>}</div></div></section>
           <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tema corporativo</h4><p className="mb-3 text-[11px] text-slate-500">Define la identidad para toda la empresa. Los colores de éxito, advertencia y error no se modifican.</p><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">{BRAND_THEMES.map((theme) => { const active = form.theme === theme.id && form.primaryColor.toUpperCase() === theme.primaryColor; const foreground = readableTextColor(theme.primaryColor); return <button key={theme.id} onClick={() => chooseTheme(theme)} aria-pressed={active} className={`overflow-hidden rounded-xl border text-left ${active ? "border-brand-500 ring-2 ring-brand-500/20" : "border-slate-200"}`}><span className="block p-2" style={{ background: theme.headerColor }}><i className="block h-1.5 w-10 rounded-full" style={{ background: theme.primaryColor }} /></span><span className="block bg-white p-2"><i className="mb-2 block h-5 w-3/4 rounded px-1 text-center text-[8px] not-italic leading-5" style={{ background: theme.primaryColor, color: foreground }}>Acción</i><span className="block truncate text-[11px] font-semibold text-slate-700">{theme.name}</span></span></button>; })}</div><div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Color principal"><div className="flex gap-2"><input type="color" value={form.primaryColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", primaryColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.primaryColor} readOnly className="u-input font-mono uppercase" /></div></L><L label="Color de cabecera"><div className="flex gap-2"><input type="color" value={form.headerColor} onChange={(event) => setForm((current) => ({ ...current, theme: "personalizado", headerColor: event.target.value.toUpperCase() }))} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1" /><input value={form.headerColor} readOnly className="u-input font-mono uppercase" /></div></L></div></section>
           <section className="rounded-xl border border-slate-200 bg-slate-50 p-3"><h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Apariencia personal</h4><p className="mb-3 mt-1 text-[11px] text-slate-500">Se guarda para tu usuario en este dispositivo y no cambia la vista de tus compañeros.</p><div className="grid grid-cols-3 gap-2">{APPEARANCE_OPTIONS.map((option) => { const Icon = option.icon; const active = appearanceMode === option.id; return <button key={option.id} type="button" onClick={() => onAppearanceModeChange?.(option.id)} aria-pressed={active} className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-xs font-medium ${active ? "border-brand-500 bg-brand-50 text-brand-700 ring-2 ring-brand-500/15" : "border-slate-200 bg-white text-slate-600"}`}><Icon className="h-4 w-4" />{option.name}</button>; })}</div></section>
         </div>
       </Box>
       <Box className="self-start overflow-hidden">
         <div className="border-b border-slate-100 p-4"><h3 className="text-sm font-semibold text-slate-900">Vista previa</h3><p className="mt-0.5 text-[11px] text-slate-500">Aplicación y encabezado institucional de los reportes.</p></div>
-        <div className="space-y-4 p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><img src={form.logoDataUrl || LOGO_LIGHT} alt="Logo" className="h-7 max-w-28 object-contain" /><div className="border-l border-white/15 pl-2"><b className="block text-xs">{form.appName || "Aplicación"}</b><span className="block text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="mb-2 flex gap-1"><i className="h-2 w-12 rounded-full bg-slate-300" /><i className="h-2 w-8 rounded-full bg-slate-200" /></div><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: form.primaryColor, color: readableTextColor(form.primaryColor) }}>Crear registro</button><div className="mt-3 grid grid-cols-3 gap-1"><i className="h-7 rounded bg-emerald-100" /><i className="h-7 rounded bg-amber-100" /><i className="h-7 rounded bg-rose-100" /></div></div></div></div><div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Encabezado del reporte</p><div className="rounded-xl border border-slate-200 bg-white p-4"><img src={form.logoDataUrl || LOGO} alt="Logo para reportes" className="mb-3 max-h-10 max-w-40 object-contain" /><div className="space-y-0.5 text-[10px] leading-relaxed text-slate-500"><b className="block text-xs text-slate-700">{form.companyLegalName || form.companyName || "Empresa"}</b>{form.companyCuit && <div>CUIT: {formatCuit(form.companyCuit)}</div>}{form.companyAddress && <div>{form.companyAddress}</div>}{form.companyPhone && <div>Tel.: {form.companyPhone}</div>}{form.companyEmail && <div>{form.companyEmail}</div>}{form.companyWebsite && <div>{form.companyWebsite}</div>}</div></div></div></div>
+        <div className="space-y-4 p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><span className="rounded-md bg-white px-1.5 py-1"><img src={PRODUCT_LOGO} alt="OrdenGO" className="h-5 w-auto" /></span><span className="h-6 w-px bg-white/15" /><CompanyLogo branding={form} dark className="h-7 max-w-24 object-contain text-white" /><div className="min-w-0 border-l border-white/15 pl-2"><b className="block truncate text-xs">{form.companyName || "Empresa"}</b><span className="block truncate text-[9px] text-white/65">{form.subtitle || "Subtítulo"}</span></div></div><div className="bg-slate-50 p-3"><div className="mb-2 flex gap-1"><i className="h-2 w-12 rounded-full bg-slate-300" /><i className="h-2 w-8 rounded-full bg-slate-200" /></div><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: form.primaryColor, color: readableTextColor(form.primaryColor) }}>Crear registro</button><div className="mt-3 grid grid-cols-3 gap-1"><i className="h-7 rounded bg-emerald-100" /><i className="h-7 rounded bg-amber-100" /><i className="h-7 rounded bg-rose-100" /></div></div></div></div><div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Encabezado del reporte</p><div className="rounded-xl border border-slate-200 bg-white p-4"><CompanyLogo branding={form} className="mb-3 max-h-10 max-w-40 object-contain text-slate-700" /><div className="space-y-0.5 text-[10px] leading-relaxed text-slate-500"><b className="block text-xs text-slate-700">{form.companyLegalName || form.companyName || "Empresa"}</b>{form.companyCuit && <div>CUIT: {formatCuit(form.companyCuit)}</div>}{form.companyAddress && <div>{form.companyAddress}</div>}{form.companyPhone && <div>Tel.: {form.companyPhone}</div>}{form.companyEmail && <div>{form.companyEmail}</div>}{form.companyWebsite && <div>{form.companyWebsite}</div>}<div className="mt-3 border-t border-slate-100 pt-2 text-[9px] font-semibold text-sky-700">Generado con OrdenGO</div></div></div></div></div>
       </Box>
     </div>
     <Box className="overflow-hidden">
