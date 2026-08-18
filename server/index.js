@@ -162,7 +162,9 @@ const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
 const normalizeBranding = (value = {}) => ({
   ...DEFAULT_BRANDING,
-  appName: String(value.appName || DEFAULT_BRANDING.appName).trim().slice(0, 40),
+  // OrdenGO es la marca fija del producto; cada tenant personaliza su empresa, logo y tema,
+  // pero no puede renombrar la aplicación desde la interfaz ni mediante la API.
+  appName: DEFAULT_BRANDING.appName,
   subtitle: String(value.subtitle || DEFAULT_BRANDING.subtitle).trim().slice(0, 80),
   companyName: String(value.companyName || DEFAULT_BRANDING.companyName).trim().slice(0, 80),
   companyCuit: digitsOnly(value.companyCuit).slice(0, 11),
