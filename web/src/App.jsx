@@ -649,7 +649,57 @@ const Metric = ({ label, value, icon: Icon, tint, caption = "", description = ""
 const HealthBar = ({ v, color }) => (<div className="motion-progress h-2 w-full rounded-full bg-slate-200"><div className="h-2 rounded-full" style={{ width: `${v}%`, background: color || "#0ea5e9" }} /></div>);
 
 /* ===================================== APP ===================================== */
+/* Verificación pública de una credencial. Es lo que abre el QR impreso en la tarjeta: se entra por
+   ?credencial=<token>, sin sesión, y muestra sólo lo que ya está impreso —foto, nombre, cargo— más
+   si la persona sigue vigente, que es el dato que no se puede falsificar imprimiendo una tarjeta.
+   Se resuelve con un parámetro de URL en lugar de un router porque agregar una dependencia exigiría
+   regenerar el lockfile, y el build corre con --frozen-lockfile. */
+function CredentialCheck({ token }) {
+  const [state, setState] = useState({ status: "loading" });
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/credential/${encodeURIComponent(token)}`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(String(response.status))))
+      .then((data) => { if (alive) setState({ status: "ok", data }); })
+      // No se distingue "no existe" de "error de red" en el mensaje: en portería la acción es la
+      // misma —no dar acceso— y detallar cuál es ayudaría a sondear tokens.
+      .catch(() => { if (alive) setState({ status: "error" }); });
+    return () => { alive = false; };
+  }, [token]);
+  const person = state.data;
+  const valid = state.status === "ok" && person?.active;
+  return (
+    <div className="grid min-h-screen place-items-center bg-slate-100 p-4">
+      <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-lg">
+        <div className={`px-5 py-4 text-center text-sm font-semibold text-white ${state.status === "loading" ? "bg-slate-400" : valid ? "bg-emerald-600" : "bg-rose-600"}`}>
+          {state.status === "loading" ? "Verificando…" : valid ? "Credencial vigente" : "Credencial no vigente"}
+        </div>
+        {state.status === "ok" ? (
+          <div className="p-5 text-center">
+            <div className="mx-auto grid h-28 w-28 place-items-center overflow-hidden rounded-full bg-slate-200">
+              {person.photoDataUrl ? <img src={person.photoDataUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-2xl font-semibold text-slate-500">{initials(person.name)}</span>}
+            </div>
+            <h1 className="mt-3 text-lg font-semibold text-slate-900">{person.name}</h1>
+            {person.position && <p className="text-sm text-slate-500">{person.position}</p>}
+            {person.organizationName && <p className="mt-2 text-xs font-medium text-slate-600">{person.organizationName}</p>}
+            {!person.active && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">Esta persona ya no figura activa. No autorices el ingreso con esta credencial.</p>}
+            <p className="mt-4 text-[11px] text-slate-400">Verificado el {new Date(person.checkedAt).toLocaleString("es-AR")}</p>
+          </div>
+        ) : state.status === "error" ? (
+          <div className="p-6 text-center">
+            <AlertTriangle className="mx-auto h-8 w-8 text-rose-500" />
+            <p className="mt-3 text-sm text-slate-600">No se pudo verificar esta credencial.</p>
+            <p className="mt-1 text-xs text-slate-400">Revisá la conexión y volvé a escanear. Si el problema persiste, no autorices el ingreso.</p>
+          </div>
+        ) : <div className="grid place-items-center p-10"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  // Se lee una sola vez: la URL no cambia sin recargar y esto decide qué se renderiza.
+  const [credentialToken] = useState(() => new URLSearchParams(window.location.search).get("credencial") || "");
   const savedOrderFilters = useMemo(() => ({ q: "", status: "Todas", billable: false }), []);
   const savedProjectFilters = useMemo(() => ({ project: "all", q: "", mine: false, stale: false }), []);
   const [booting, setBooting] = useState(true);
@@ -1024,6 +1074,9 @@ export default function App() {
   };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
+  // Va antes de booting, del error de arranque y del login: quien escanea el QR en portería no tiene
+  // sesión, y si esta rama quedara después caería en la pantalla de acceso en vez de la verificación.
+  if (credentialToken) return <CredentialCheck token={credentialToken} />;
   if (booting) return <div className="grid min-h-screen place-items-center bg-ink-900 text-slate-300"><div className="motion-page flex flex-col items-center gap-3" role="status" aria-label="Cargando OrdenGO"><div className="skeleton h-9 w-36 rounded-lg" /><Loader2 className="h-5 w-5 animate-spin" /></div></div>;
   // Falló la carga con sesión válida. Se muestra el error en vez de una app vacía: un catálogo
   // en cero por un fallo de red es indistinguible de un catálogo realmente borrado.
