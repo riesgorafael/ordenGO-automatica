@@ -3712,6 +3712,18 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   // "Por cobrar" se deriva de los saldos comerciales abiertos, no de restar dos equivalentes en
   // USD calculados con cotizaciones de fechas distintas.
   const receivable = Math.round(openInvoices.reduce((sum, invoice) => sum + invoice.balance, 0) * 100) / 100;
+  // Neto del saldo pendiente, sin IVA. Se prorratea el saldo de cada factura por su propia
+  // proporción neto/bruto en lugar de dividir el total por una alícuota supuesta: cada factura
+  // guarda su amountUsd y su vatAmountUsd, y pueden convivir alícuotas distintas (21, 10,5, exento)
+  // o cobros parciales. Dividir el total por 1,21 daría un número plausible pero equivocado en
+  // cuanto haya una sola factura con otra alícuota.
+  const receivableNet = Math.round(openInvoices.reduce((sum, invoice) => {
+    const gross = invoice.gross || 0;
+    const net = Number(invoice.amountUsd) || 0;
+    // Sin bruto conocido no hay proporción que aplicar; se toma el saldo como neto para no inflarlo.
+    return sum + (gross > 0 ? invoice.balance * (net / gross) : invoice.balance);
+  }, 0) * 100) / 100;
+  const receivableVat = Math.round((receivable - receivableNet) * 100) / 100;
   // Días promedio de cobro: cuánto tarda en entrar la plata desde que se emite la factura. Se
   // pondera por importe — que una factura chica se pague rápido no compensa que una grande demore.
   // Solo se miden cobros imputados a una factura concreta; sin esa vinculación no hay par de fechas.
@@ -3735,8 +3747,12 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   // Las ya vencidas quedan afuera a propósito: se cuentan aparte y las detalla el aging. Mezclarlas
   // daría un "faltan -12 días", que no se lee. Y sin dueDate no hay plazo que contar: una factura
   // sin vencimiento cargado no vence, se atrasa contra su fecha de emisión, que es otra cosa.
+  // days <= 0, no < 0: el cero es "vence hoy" y tiene que entrar acá. Con < 0 se caía por el medio,
+  // porque tampoco llegaba al conteo de vencidas (days > 0), y la factura desaparecía de la vista
+  // justo el día del vencimiento. Peor todavía, aparecía a la mañana y se esfumaba después del
+  // mediodía, porque days se calcula contra las 12:00 de la fecha de referencia.
   const upcomingInvoice = openInvoices
-    .filter((invoice) => invoice.hasDueDate && invoice.days < 0)
+    .filter((invoice) => invoice.hasDueDate && invoice.days <= 0)
     .sort((a, b) => b.days - a.days)[0] || null;
   const daysToNextDue = upcomingInvoice ? -upcomingInvoice.days : null;
   const overdueInvoiceCount = openInvoices.filter((invoice) => invoice.days > 0).length;
@@ -4122,8 +4138,9 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
           ) : (
             <>
               <div className="mt-1 flex items-baseline gap-2">
-                <b className={`text-2xl ${daysToNextDue <= 3 ? "text-rose-600" : daysToNextDue <= 7 ? "text-amber-600" : "text-slate-800"}`}>{daysToNextDue}</b>
-                <span className="text-sm text-slate-500">{daysToNextDue === 1 ? "día" : "días"}</span>
+                {daysToNextDue === 0
+                  ? <b className="text-2xl text-rose-600">Vence hoy</b>
+                  : <><b className={`text-2xl ${daysToNextDue <= 3 ? "text-rose-600" : daysToNextDue <= 7 ? "text-amber-600" : "text-slate-800"}`}>{daysToNextDue}</b><span className="text-sm text-slate-500">{daysToNextDue === 1 ? "día" : "días"}</span></>}
               </div>
               <p className="mt-1 text-[11px] text-slate-500">{upcomingInvoice.clientName || "Sin cliente"} · {fmt(upcomingInvoice.balance)} · vence el {budgetDate(upcomingInvoice.dueDate)}</p>
             </>
@@ -4137,7 +4154,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     </div>
 
     <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-      <Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={Clock} tint={receivable > 0 ? "text-amber-600" : "text-emerald-600"} detail="Saldo bruto pendiente, con IVA" description="Saldo comercial de facturas abiertas, luego de imputar cobros y retenciones. Se conserva la cotización histórica de cada operación." />
+      <Kpi label="Cuentas por cobrar" value={fmt(receivable)} alt={alt(receivable)} icon={Clock} tint={receivable > 0 ? "text-amber-600" : "text-emerald-600"} detail={`Neto ${fmt(receivableNet)} + IVA ${fmt(receivableVat)}`} description="Saldo comercial de facturas abiertas, luego de imputar cobros y retenciones. Se conserva la cotización histórica de cada operación." />
       <Kpi label="Cuentas por pagar" value={fmt(payable)} alt={alt(payable)} icon={Clock} tint={overduePayables.length ? "text-rose-600" : payable > 0 ? "text-amber-600" : "text-emerald-600"} detail={`${overduePayables.length} vencida(s) · ${dueSoonPayables.length} en 7 días · ${undatedPayables.length} sin fecha`} description="Suma bruta de facturas y gastos devengados pendientes. Las órdenes de compra aún no recibidas se muestran aparte como compras comprometidas." />
       <Kpi label="Posición estimada de IVA" value={fmt(Math.abs(vatPayable))} alt={alt(Math.abs(vatPayable))} icon={AlertTriangle} tint={vatPayable > 0 ? "text-amber-600" : "text-emerald-600"} detail={vatPayable > 0 ? `A pagar · débito ${fmt(vatDebit)} − crédito computable ${fmt(vatCredit)}` : "Saldo a favor"} description="Estimación: débito fiscal de ventas menos crédito fiscal computable de compras. Debe conciliarse con el Libro IVA antes de presentar." />
     </div>
@@ -4515,6 +4532,19 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
     // margen posible, cuando en realidad es un margen desconocido. Se distingue igual que ya lo
     // hace "Ejecución del presupuesto" en Finanzas, que muestra "Sin costo estimado".
     const costMissing = budgetCost <= 0 && (Number(budget.amount) || 0) > 0;
+    // Coherencia entre lo planificado y lo costeado. "Recursos" (teamSize × durationDays) y el costo
+    // estimado (suma de las líneas) son campos independientes que nadie cruzaba: se podía aprobar un
+    // trabajo de 2 personas por 114 días con USD 25 de costo y la tarjeta mostraba 99% de margen en
+    // verde. Ese margen después alimenta el del proyecto y los reportes a gerencia, así que el error
+    // no queda en la tarjeta. Se compara contra el perfil de mano de obra más barato de la empresa,
+    // a 8 horas por jornada: si ni siquiera pagando al más barato dan los números, falta cargar las
+    // horas en las líneas. Es un aviso, no un bloqueo: un presupuesto de reventa de materiales puede
+    // tener plazo largo y poca mano de obra legítimamente.
+    const laborRates = LABOR_ROLES.map((item) => Number(item.cost) || 0).filter((cost) => cost > 0);
+    const cheapestLaborRate = laborRates.length ? Math.min(...laborRates) : 0;
+    const plannedPersonDays = (Number(budget.teamSize) || 0) * (Number(budget.durationDays) || 0);
+    const costPerPersonDay = plannedPersonDays > 0 && budgetCost > 0 ? budgetCost / plannedPersonDays : null;
+    const costUnderPlan = costPerPersonDay != null && cheapestLaborRate > 0 && costPerPersonDay < cheapestLaborRate * 8;
     // Ciclo de venta: de la creación a la aprobación. En un ganado ese es el dato útil, no la
     // antigüedad desde que se creó, que sigue creciendo para siempre después del cierre.
     // Se evalúa sobre budget.stage y no sobre el estado efectivo: "Pagado" derivado solo puede
@@ -4533,7 +4563,7 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
   const billedGross = payment.fullyPaid ? payment.cash : payment.billedGross;
   const collected = payment.cash;
   const collectedPct = payment.progress;
-  const fullyPaid = billedGross > 0 && collected >= billedGross - 0.01; const project = projects.find((item) => item.id === budget.projectId); const ageDays = budget.createdAt ? daysSince(budget.createdAt) : null; const weightedValue = (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100; return <Box key={budget.id} onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} className="flex h-full cursor-pointer flex-col p-4 hover:border-brand-300"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{budget.number || budget.id}</span><Chip className={`${BUDGET_STYLE[displayStage]} ring-1`}>{displayStage}</Chip>{fullyPaid ? <Chip className="bg-emerald-600 font-semibold text-white ring-emerald-700/20">Pagado</Chip> : collected > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20">Cobrado {collectedPct}%</Chip>}{budget.purchaseOrderNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">OC {budget.purchaseOrderNumber}</Chip>}{Number(budget.additionalCostTotal) > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Costos extra {money(budget.additionalCostTotal)}</Chip>}{followDue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><AlertTriangle className="h-3 w-3" /> Seguimiento vencido</Chip>}{offerExpired && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><Clock className="h-3 w-3" /> Oferta vencida</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{budget.title}</h3><p className="mt-0.5 text-xs text-slate-500">{budget.client}{budget.site ? ` · ${budget.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5" onClick={(event) => event.stopPropagation()}><button onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} title="Editar presupuesto" aria-label="Editar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => onDuplicate(budget)} title="Duplicar presupuesto" aria-label="Duplicar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button><button onClick={() => onDelete(budget)} title="Eliminar presupuesto" aria-label="Eliminar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs sm:grid-cols-4"><div><span className="block text-[10px] text-slate-400">Valor</span><b>{money(budget.amount)}</b></div><div><span className="block text-[10px] text-slate-400">Valor ponderado</span><b>{money(weightedValue)}</b></div><div><span className="block text-[10px] text-slate-400">Probabilidad</span><b>{budget.probability || 0}%</b></div><div><span className="flex items-center gap-1 text-[10px] text-slate-400">Margen actual{costMissing ? <HelpHint text="Este presupuesto no tiene costo estimado cargado, así que su margen todavía no se puede calcular. Cargalo en el editor para conocer la rentabilidad real." /> : ["Aprobado", "Facturado"].includes(budget.stage) && <HelpHint text="Costo congelado: quedó fijado al aprobar el presupuesto y solo cambia si se cargan costos adicionales." />}</span>{costMissing ? <b className="text-amber-600">Sin costo cargado</b> : <b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{Number(budget.amount) > 0 ? <span className="ml-1 font-normal text-slate-400">· {Math.round((margin / Number(budget.amount)) * 100)}%</span> : null}</b>}</div></div><div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-slate-600">{isWon
+  const fullyPaid = billedGross > 0 && collected >= billedGross - 0.01; const project = projects.find((item) => item.id === budget.projectId); const ageDays = budget.createdAt ? daysSince(budget.createdAt) : null; const weightedValue = (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100; return <Box key={budget.id} onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} className="flex h-full cursor-pointer flex-col p-4 hover:border-brand-300"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{budget.number || budget.id}</span><Chip className={`${BUDGET_STYLE[displayStage]} ring-1`}>{displayStage}</Chip>{fullyPaid ? <Chip className="bg-emerald-600 font-semibold text-white ring-emerald-700/20">Pagado</Chip> : collected > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20">Cobrado {collectedPct}%</Chip>}{budget.purchaseOrderNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">OC {budget.purchaseOrderNumber}</Chip>}{Number(budget.additionalCostTotal) > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Costos extra {money(budget.additionalCostTotal)}</Chip>}{costUnderPlan && <Chip className="bg-amber-50 text-amber-700 ring-amber-200" title={`El plan son ${plannedPersonDays} jornada(s)-persona y el costo cargado es ${money(budgetCost)}: ${money(costPerPersonDay)} por jornada, por debajo del perfil más barato (${money(cheapestLaborRate)}/h). Probablemente falten las horas de mano de obra en las líneas.`}><AlertTriangle className="h-3 w-3" /> Costo incompatible con el plan</Chip>}{followDue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><AlertTriangle className="h-3 w-3" /> Seguimiento vencido</Chip>}{offerExpired && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><Clock className="h-3 w-3" /> Oferta vencida</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{budget.title}</h3><p className="mt-0.5 text-xs text-slate-500">{budget.client}{budget.site ? ` · ${budget.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5" onClick={(event) => event.stopPropagation()}><button onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} title="Editar presupuesto" aria-label="Editar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => onDuplicate(budget)} title="Duplicar presupuesto" aria-label="Duplicar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button><button onClick={() => onDelete(budget)} title="Eliminar presupuesto" aria-label="Eliminar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs sm:grid-cols-4"><div><span className="block text-[10px] text-slate-400">Valor</span><b>{money(budget.amount)}</b></div><div><span className="block text-[10px] text-slate-400">Valor ponderado</span><b>{money(weightedValue)}</b></div><div><span className="block text-[10px] text-slate-400">Probabilidad</span><b>{budget.probability || 0}%</b></div><div><span className="flex items-center gap-1 text-[10px] text-slate-400">Margen actual{costMissing ? <HelpHint text="Este presupuesto no tiene costo estimado cargado, así que su margen todavía no se puede calcular. Cargalo en el editor para conocer la rentabilidad real." /> : ["Aprobado", "Facturado"].includes(budget.stage) && <HelpHint text="Costo congelado: quedó fijado al aprobar el presupuesto y solo cambia si se cargan costos adicionales." />}</span>{costMissing ? <b className="text-amber-600">Sin costo cargado</b> : <b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{Number(budget.amount) > 0 ? <span className="ml-1 font-normal text-slate-400">· {Math.round((margin / Number(budget.amount)) * 100)}%</span> : null}</b>}</div></div><div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-slate-600">{isWon
       // En un presupuesto ganado, "próxima acción", "seguimiento" y "válido hasta" son campos de
       // negociación que ya no aplican: mostraban "Sin definir" ocupando media tarjeta. Se sustituyen
       // por los datos del cierre, que es lo que sí se consulta después de ganar.
