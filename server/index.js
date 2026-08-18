@@ -479,6 +479,47 @@ async function initDb() {
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='gantt_tasks_project_tenant_fk') THEN ALTER TABLE gantt_tasks ADD CONSTRAINT gantt_tasks_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE CASCADE NOT VALID; END IF;
     END $$;
   `);
+  // Los folios visibles (OT-..., OC-..., tareas, materiales, etc.) sólo deben ser únicos dentro
+  // de cada empresa. Las versiones iniciales conservaban PRIMARY KEY(id), por lo que una segunda
+  // organización podía chocar con un identificador legítimo de la primera y el alta desaparecía
+  // al refrescar. Se eliminan primero las FK antiguas de una sola columna y luego se migra cada
+  // entidad operativa a PRIMARY KEY(organization_id,id). Las FK *_tenant_fk creadas arriba son
+  // las únicas relaciones válidas entre entidades multiempresa.
+  // Estos módulos fueron retirados y versiones antiguas podían conservar FK simples hacia
+  // projects/clients. Se quitan antes de cambiar las claves para no bloquear la migración.
+  await pool.query("DROP TABLE IF EXISTS technical_documents; DROP TABLE IF EXISTS service_contracts; DROP TABLE IF EXISTS assets;");
+  await pool.query(`
+    ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_part_id_fkey;
+    ALTER TABLE gantt_tasks DROP CONSTRAINT IF EXISTS gantt_tasks_project_id_fkey;
+    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_client_fk;
+    ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_client_fk;
+    ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_project_fk;
+    ALTER TABLE financial_movements DROP CONSTRAINT IF EXISTS finances_client_fk;
+    ALTER TABLE financial_movements DROP CONSTRAINT IF EXISTS finances_project_fk;
+    ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_client_fk;
+    ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_project_fk;
+    ALTER TABLE material_lists DROP CONSTRAINT IF EXISTS material_lists_client_fk;
+    ALTER TABLE material_lists DROP CONSTRAINT IF EXISTS material_lists_project_fk;
+  `);
+  const tenantEntityTables = [
+    "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications",
+    "parts", "suppliers", "purchase_orders", "material_lists", "whiteboard_notes", "stock_movements",
+    "audit_log", "file_assets", "gantt_tasks",
+  ];
+  for (const table of tenantEntityTables) {
+    await pool.query(`
+      DO $$ DECLARE definition text;
+      BEGIN
+        SELECT pg_get_constraintdef(oid) INTO definition
+          FROM pg_constraint
+         WHERE conname='${table}_pkey' AND conrelid='${table}'::regclass;
+        IF definition IS NULL OR position('organization_id' in definition)=0 THEN
+          ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_pkey;
+          ALTER TABLE ${table} ADD CONSTRAINT ${table}_pkey PRIMARY KEY(organization_id,id);
+        END IF;
+      END $$;
+    `);
+  }
   await pool.query(`
     ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
     ALTER TABLE budgets ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
@@ -523,37 +564,10 @@ async function initDb() {
   // campos que habían copiado del contrato (responseSlaHours, minimumBillableHours, assetId): son
   // el respaldo del criterio con el que se facturó cada OT y se siguen respetando para no alterar
   // el histórico. Las órdenes nuevas usan los valores por defecto (SLA 2 h, mínimo 2 h).
-  await pool.query("DROP TABLE IF EXISTS technical_documents; DROP TABLE IF EXISTS service_contracts; DROP TABLE IF EXISTS assets;");
   await pool.query("CREATE INDEX IF NOT EXISTS stock_movements_part_date_idx ON stock_movements (part_id, created_at DESC); CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log (entity_type, entity_id, created_at DESC);");
   await pool.query("CREATE INDEX IF NOT EXISTS file_assets_entity_idx ON file_assets(entity_type,entity_id);");
   await pool.query("ALTER TABLE file_assets ADD COLUMN IF NOT EXISTS size_bytes integer; ALTER TABLE file_assets ADD COLUMN IF NOT EXISTS sha256 text;");
   await pool.query("CREATE INDEX IF NOT EXISTS orders_updated_idx ON orders(updated_at); CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at); CREATE INDEX IF NOT EXISTS orders_project_idx ON orders((data->>'projectId')); CREATE INDEX IF NOT EXISTS tasks_project_idx ON tasks((data->>'project')); CREATE INDEX IF NOT EXISTS budgets_project_idx ON budgets((data->>'projectId')); CREATE INDEX IF NOT EXISTS finances_project_idx ON financial_movements((data->>'projectId'));");
-  // Columnas relacionales generadas: conservan compatibilidad con JSONB, pero desde ahora la base
-  // impide que nuevas escrituras creen referencias a clientes/proyectos inexistentes. NOT VALID
-  // evita bloquear el arranque por datos históricos; la consulta de auditoría permite sanearlos y
-  // luego validar las restricciones en una ventana de mantenimiento.
-  await pool.query(`
-    ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
-    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
-    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
-    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
-    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
-    ALTER TABLE orders ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
-    ALTER TABLE orders ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
-    ALTER TABLE material_lists ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
-    ALTER TABLE material_lists ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='projects_client_fk') THEN ALTER TABLE projects ADD CONSTRAINT projects_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_client_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_project_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_client_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_project_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_client_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_project_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='material_lists_client_fk') THEN ALTER TABLE material_lists ADD CONSTRAINT material_lists_client_fk FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT NOT VALID; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='material_lists_project_fk') THEN ALTER TABLE material_lists ADD CONSTRAINT material_lists_project_fk FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE RESTRICT NOT VALID; END IF;
-    END $$;
-  `);
   // Migración idempotente para instalaciones existentes
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mustchangepassword boolean DEFAULT false;");
   // Config individual por usuario (pantalla TV: nombre, modo TV, rotación) — permite N televisores, uno por cuenta Monitor Oficina.
@@ -563,6 +577,11 @@ async function initDb() {
   // propia o por un admin) invalida de inmediato cualquier token viejo, aunque todavía no expire.
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 0;");
   await pool.query("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS request_id text; ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip_address text;");
+
+  // Todo lo que sigue son siembras y migraciones de compatibilidad de la instalación histórica.
+  // Se ejecutan bajo el tenant de AUTOMATICA para que un reinicio nunca lea ni reescriba filas de
+  // una empresa nueva que reutilice los mismos folios visibles (p. ej. c1, sp1 u OT-2026-001).
+  await tenantContext.run({ organizationId: DEFAULT_ORGANIZATION_ID }, async () => {
 
   // Migra asignaciones históricas basadas en nombres a identificadores inmutables. Solo se
   // resuelven nombres inequívocos; si hay dos usuarios con el mismo nombre, la orden queda sin
@@ -836,6 +855,7 @@ async function initDb() {
     await syncBudgetPaymentStatuses(budgetIds, pool, null);
     await pool.query("INSERT INTO app_settings(key,value) VALUES('budget_payment_settlement_v2',$1)", [{ reconciled: budgetIds.length, paymentStates: ["paid", "partial"] }]);
   }
+  });
 }
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
@@ -878,8 +898,11 @@ const timelineErrorsValue = (technical, now = Date.now()) => {
 };
 async function notify(userId, text, link) {
   if (!userId) return;
-  const id = "n" + Date.now() + Math.floor(Math.random() * 100000);
-  try { await pool.query("INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4)", [id, userId, text, link || null]); } catch {}
+  const organizationId = tenantContext.getStore()?.organizationId;
+  if (!organizationId) throw new Error("No se puede crear una notificación sin organización activa");
+  const id = crypto.randomUUID();
+  try { await pool.query("INSERT INTO notifications(id,user_id,text,link,organization_id) VALUES($1,$2,$3,$4,$5)", [id, userId, text, link || null, organizationId]); }
+  catch (error) { console.error("No se pudo crear la notificación:", error.message); }
 }
 
 // Envío de correo de notificación de asignación de tareas. Se configura por variables de
@@ -997,33 +1020,38 @@ async function materialsFromInventory(materials, onlyMissing = false, trustClien
 async function adjustPartStock(partId, delta, db = pool, meta = {}) {
   const quantity = Number(delta);
   if (!partId || !Number.isFinite(quantity) || quantity === 0) return null;
+  const organizationId = meta.organizationId || tenantContext.getStore()?.organizationId;
+  if (!organizationId) throw new Error("No se puede ajustar inventario sin organización activa");
   // La suma se ejecuta dentro del UPDATE, no como read-modify-write en JavaScript. Así dos
   // recepciones/consumos simultáneos no pisan el saldo calculado por la otra operación.
   const row = (await db.query(
     `UPDATE parts
-       SET data=jsonb_set(data,'{stock}',to_jsonb(COALESCE((data->>'stock')::numeric,0)+$2::numeric),true), updated_at=now()
+     SET data=jsonb_set(data,'{stock}',to_jsonb(COALESCE((data->>'stock')::numeric,0)+$2::numeric),true), updated_at=now()
      WHERE id=$1
+       AND organization_id=$3
        AND ($2::numeric > 0 OR COALESCE((data->>'stock')::numeric,0)+$2::numeric >= 0)
      RETURNING data`,
-    [partId, quantity],
+    [partId, quantity, organizationId],
   )).rows[0];
   if (!row) {
-    const exists = (await db.query("SELECT data->>'stock' AS stock FROM parts WHERE id=$1", [partId])).rows[0];
+    const exists = (await db.query("SELECT data->>'stock' AS stock FROM parts WHERE id=$1 AND organization_id=$2", [partId, organizationId])).rows[0];
     const error = new Error(exists ? `Stock insuficiente para ${partId}. Disponible: ${Number(exists.stock) || 0}.` : `El repuesto ${partId} no existe.`);
     error.code = exists ? "INSUFFICIENT_STOCK" : "PART_NOT_FOUND";
     throw error;
   }
   await db.query(
-    "INSERT INTO stock_movements(id,part_id,quantity,balance,movement_type,source_type,source_id,note,user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-    [crypto.randomUUID(), partId, quantity, Number(row.data.stock) || 0, meta.movementType || (quantity > 0 ? "Entrada" : "Salida"), meta.sourceType || "Ajuste", meta.sourceId || "", String(meta.note || "").slice(0, 300), meta.userId || null],
+    "INSERT INTO stock_movements(id,part_id,quantity,balance,movement_type,source_type,source_id,note,user_id,organization_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+    [crypto.randomUUID(), partId, quantity, Number(row.data.stock) || 0, meta.movementType || (quantity > 0 ? "Entrada" : "Salida"), meta.sourceType || "Ajuste", meta.sourceId || "", String(meta.note || "").slice(0, 300), meta.userId || null, organizationId],
   );
   return row.data;
 }
 
 async function auditChange({ entityType, entityId, action, user, beforeData = null, afterData = null, reason = "" }, db = pool) {
+  const organizationId = user?.organizationId || tenantContext.getStore()?.organizationId;
+  if (!organizationId) throw new Error("No se puede auditar una operación sin organización activa");
   await db.query(
-    "INSERT INTO audit_log(id,entity_type,entity_id,action,user_id,user_name,before_data,after_data,reason,request_id,ip_address) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-    [crypto.randomUUID(), entityType, entityId, action, user?.id || null, user?.name || "Sistema", beforeData, afterData, String(reason || "").slice(0, 500), user?.requestId || null, user?.ip || null],
+    "INSERT INTO audit_log(id,entity_type,entity_id,action,user_id,user_name,before_data,after_data,reason,request_id,ip_address,organization_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    [crypto.randomUUID(), entityType, entityId, action, user?.id || null, user?.name || "Sistema", beforeData, afterData, String(reason || "").slice(0, 500), user?.requestId || null, user?.ip || null, organizationId],
   );
 }
 const DATA_URL_PATTERN = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i;
@@ -1044,7 +1072,9 @@ async function storeDataAsset(value, { entityType, entityId, fieldName, original
   const mime = match[1].toLowerCase();
   if (!assetSignatureMatches(content, mime)) throw Object.assign(new Error("El contenido del archivo no coincide con su formato declarado."), { code: "INVALID_ASSET" });
   const id = crypto.randomUUID();
-  await db.query("INSERT INTO file_assets(id,entity_type,entity_id,field_name,original_name,mime_type,size_bytes,sha256,content,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [id, entityType, entityId, fieldName, String(originalName || "").slice(0, 180), mime, content.length, crypto.createHash("sha256").update(content).digest("hex"), content, userId]);
+  const organizationId = tenantContext.getStore()?.organizationId;
+  if (!organizationId) throw new Error("No se puede guardar un archivo sin organización activa");
+  await db.query("INSERT INTO file_assets(id,entity_type,entity_id,field_name,original_name,mime_type,size_bytes,sha256,content,created_by,organization_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [id, entityType, entityId, fieldName, String(originalName || "").slice(0, 180), mime, content.length, crypto.createHash("sha256").update(content).digest("hex"), content, userId, organizationId]);
   return `/api/files/${id}`;
 }
 async function externalizeOrderAssets(order, db, userId) {
@@ -1071,34 +1101,38 @@ async function externalizeFinancialAssets(movement, db, userId) {
 }
 async function migrateLegacyDataAssets() {
   if ((await pool.query("SELECT 1 FROM app_settings WHERE key='file_assets_migration_v1'")).rowCount) return;
-  const orderRows = (await pool.query("SELECT id,data FROM orders WHERE data::text LIKE '%data:%'")).rows;
+  const orderRows = (await pool.query("SELECT id,data,organization_id FROM orders WHERE data::text LIKE '%data:%'")).rows;
   for (const row of orderRows) {
-    const db = await pool.connect();
-    try {
-      await db.query("BEGIN");
-      const migrated = await externalizeOrderAssets({ ...row.data, id: row.id }, db, null);
-      await db.query("UPDATE orders SET data=$2,updated_at=updated_at WHERE id=$1", [row.id, migrated]);
-      await db.query("COMMIT");
-    } catch (error) {
-      await db.query("ROLLBACK");
-      throw error;
-    } finally { db.release(); }
+    await tenantContext.run({ organizationId: row.organization_id }, async () => {
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        const migrated = await externalizeOrderAssets({ ...row.data, id: row.id }, db, null);
+        await db.query("UPDATE orders SET data=$2,updated_at=updated_at WHERE id=$1 AND organization_id=$3", [row.id, migrated, row.organization_id]);
+        await db.query("COMMIT");
+      } catch (error) {
+        await db.query("ROLLBACK");
+        throw error;
+      } finally { db.release(); }
+    });
   }
-  const financeRows = (await pool.query("SELECT id,data FROM financial_movements WHERE data::text LIKE '%data:%'")).rows;
+  const financeRows = (await pool.query("SELECT id,data,organization_id FROM financial_movements WHERE data::text LIKE '%data:%'")).rows;
   for (const row of financeRows) {
-    const db = await pool.connect();
-    try {
-      await db.query("BEGIN");
-      const legacyAttachments = Array.isArray(row.data.attachments) && row.data.attachments.length
-        ? row.data.attachments
-        : (row.data.attachmentUrl ? [{ name: row.data.attachmentName || "comprobante", url: row.data.attachmentUrl }] : []);
-      const migrated = await externalizeFinancialAssets({ ...row.data, id: row.id, attachments: legacyAttachments }, db, null);
-      await db.query("UPDATE financial_movements SET data=$2,updated_at=updated_at WHERE id=$1", [row.id, migrated]);
-      await db.query("COMMIT");
-    } catch (error) {
-      await db.query("ROLLBACK");
-      throw error;
-    } finally { db.release(); }
+    await tenantContext.run({ organizationId: row.organization_id }, async () => {
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        const legacyAttachments = Array.isArray(row.data.attachments) && row.data.attachments.length
+          ? row.data.attachments
+          : (row.data.attachmentUrl ? [{ name: row.data.attachmentName || "comprobante", url: row.data.attachmentUrl }] : []);
+        const migrated = await externalizeFinancialAssets({ ...row.data, id: row.id, attachments: legacyAttachments }, db, null);
+        await db.query("UPDATE financial_movements SET data=$2,updated_at=updated_at WHERE id=$1 AND organization_id=$3", [row.id, migrated, row.organization_id]);
+        await db.query("COMMIT");
+      } catch (error) {
+        await db.query("ROLLBACK");
+        throw error;
+      } finally { db.release(); }
+    });
   }
   await pool.query("INSERT INTO app_settings(key,value) VALUES('file_assets_migration_v1',$1) ON CONFLICT(organization_id,key) DO NOTHING", [{ migratedAt: new Date().toISOString(), orders: orderRows.length, finances: financeRows.length }]);
 }
@@ -1277,7 +1311,7 @@ async function upsertOrderCostExpense(order, db = pool) {
     updatedAt: new Date().toISOString(),
   };
   await assertFinancePeriodOpen(movement.date, db);
-  await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
+  await db.query("INSERT INTO financial_movements(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id')) ON CONFLICT(organization_id,id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
   return movement;
 }
 // ¿El usuario (si es técnico) tiene permiso sobre este proyecto?
@@ -1377,8 +1411,8 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   for (const t of dueSoonTasks) {
     try {
       await pool.query(
-        "INSERT INTO notifications(id,user_id,text,link) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING",
-        [`due-${t.id}`, req.user.id, `La tarea ${t.id}: ${t.title} vence pronto (${t.due}).`, "task:" + t.id],
+        "INSERT INTO notifications(id,user_id,text,link,organization_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT (organization_id,id) DO NOTHING",
+        [`due-${t.id}`, req.user.id, `La tarea ${t.id}: ${t.title} vence pronto (${t.due}).`, "task:" + t.id, organizationId],
       );
     } catch {}
   }
@@ -1479,14 +1513,14 @@ app.post("/api/clients", auth, requireProjectWrite, async (req, res) => {
   // Evita duplicados por nombre (reutiliza el existente)
   const dup = existing.find((x) => (x.name || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase());
   if (dup) return res.json(dup);
-  if (!c.id) c.id = "c" + Date.now();
+  if (!c.id) c.id = `c-${crypto.randomUUID()}`;
   if (c.code) {
     const taken = new Set(existing.map((x) => x.code).filter(Boolean));
     if (taken.has(c.code)) return res.status(400).json({ error: "Ese código de cliente ya existe" });
   } else {
     c.code = await uniqueClientCode(codeFromName(c.name));
   }
-  try { await pool.query("INSERT INTO clients(id,data) VALUES($1,$2)", [c.id, c]); await auditChange({ entityType: "client", entityId: c.id, action: "create", user: req.user, afterData: { code: c.code, name: c.name } }); }
+  try { await pool.query("INSERT INTO clients(id,data,organization_id) VALUES($1,$2,$3)", [c.id, c, req.user.organizationId]); await auditChange({ entityType: "client", entityId: c.id, action: "create", user: req.user, afterData: { code: c.code, name: c.name } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un cliente con ese identificador" }); throw error; }
   res.json(c);
 });
@@ -1549,7 +1583,7 @@ app.delete("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req
 
 /* ------------------------------------------------ Proyectos ------------------------------------------------ */
 app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const p = { ...(req.body || {}) }; if (!p.id) p.id = "p" + Date.now();
+  const p = { ...(req.body || {}) }; if (!p.id) p.id = `p-${crypto.randomUUID()}`;
   p.name = String(p.name || "").trim(); p.key = String(p.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
   if (!p.name) return res.status(400).json({ error: "El nombre del proyecto es obligatorio" });
   if ((await pool.query("SELECT 1 FROM projects WHERE upper(data->>'key')=upper($1) LIMIT 1", [p.key])).rows[0]) return res.status(409).json({ error: "Ya existe un proyecto con esa clave" });
@@ -1557,7 +1591,7 @@ app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res
     const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
     p.allowedUsers = monitors;
   }
-  try { await pool.query("INSERT INTO projects(id,data) VALUES($1,$2)", [p.id, p]); await auditChange({ entityType: "project", entityId: p.id, action: "create", user: req.user, afterData: { key: p.key, name: p.name, clientId: p.clientId || "" } }); }
+  try { await pool.query("INSERT INTO projects(id,data,organization_id) VALUES($1,$2,$3)", [p.id, p, req.user.organizationId]); await auditChange({ entityType: "project", entityId: p.id, action: "create", user: req.user, afterData: { key: p.key, name: p.name, clientId: p.clientId || "" } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un proyecto con ese identificador" }); throw error; }
   res.json(p);
 });
@@ -1712,7 +1746,7 @@ async function upsertBudgetInvoice(budget, user, db = pool) {
   const arsQuote = wholesaleRateCache?.data?.arsPerUsd || null;
   const arsReference = arsQuote ? { arsPerUsd: arsQuote, source: "BCRA dólar mayorista · Comunicación A 3500", quotedAt: wholesaleRateCache?.data?.updatedAt || null, netArs: Math.round(net * arsQuote * 100) / 100, vatArs: Math.round(vatAmount * arsQuote * 100) / 100, grossArs: Math.round(grossAmount * arsQuote * 100) / 100 } : (existing?.data?.arsReference || null);
   const invoice = { ...(existing?.data || {}), id, kind: "invoice", concept: `Factura ${budget.number || budget.id} · ${budget.title}`, amount: net, amountUsd: net, netAmountUsd: net, vatRate, vatAmountUsd: vatAmount, grossAmountUsd: grossAmount, arsReference, currency: "USD", exchangeRate: 1, date: invoiceDate, dueDate: budget.invoiceDueDate || "", invoiceNumber, receiptNumber: invoiceNumber, detail: budget.invoiceDetail || "", projectId: budget.projectId || "", budgetId: budget.id, budgetNumber: budget.number || budget.id, purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "", clientId: budget.clientId || "", clientName: budget.client || "", sourceBudgetId: budget.id, paymentStatus: existing?.data?.paymentStatus || "pending", createdAt: existing?.data?.createdAt || new Date().toISOString(), createdBy: existing?.data?.createdBy || user.id, createdByName: existing?.data?.createdByName || user.name, updatedAt: new Date().toISOString() };
-  await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, invoice]);
+  await db.query("INSERT INTO financial_movements(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id')) ON CONFLICT(organization_id,id) DO UPDATE SET data=$2, updated_at=now()", [id, invoice]);
   return invoice;
 }
 
@@ -1852,7 +1886,7 @@ async function upsertPurchaseOrderPayable(po, user, db = pool) {
     updatedAt: new Date().toISOString(),
   };
   await assertFinancePeriodOpen(movement.date, db);
-  await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
+  await db.query("INSERT INTO financial_movements(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id')) ON CONFLICT(organization_id,id) DO UPDATE SET data=$2, updated_at=now()", [id, movement]);
   return movement;
 }
 
@@ -1867,7 +1901,7 @@ app.post("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, re
   const existingRows = (await pool.query("SELECT data FROM suppliers")).rows.map((r) => r.data);
   const dup = existingRows.find((x) => (x.name || "").trim().toLowerCase() === s.name.toLowerCase());
   if (dup) return res.json(dup);
-  if (!s.id) s.id = "sup" + Date.now();
+  if (!s.id) s.id = `sup-${crypto.randomUUID()}`;
   s.cuit = String(s.cuit || "").trim().slice(0, 20);
   s.address = String(s.address || "").trim().slice(0, 200);
   s.locality = String(s.locality || "").trim().slice(0, 120);
@@ -1885,7 +1919,7 @@ app.post("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, re
   } else {
     s.code = await uniqueSupplierCode(codeFromSupplierName(s.name));
   }
-  try { await pool.query("INSERT INTO suppliers(id,data) VALUES($1,$2)", [s.id, s]); }
+  try { await pool.query("INSERT INTO suppliers(id,data,organization_id) VALUES($1,$2,$3)", [s.id, s, req.user.organizationId]); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un proveedor con ese identificador" }); throw error; }
   await auditChange({ entityType: "supplier", entityId: s.id, action: "create", user: req.user, afterData: { name: s.name, code: s.code, active: s.active } });
   res.json(s);
@@ -1959,7 +1993,7 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateL
       }
       po.stockAppliedAt = new Date().toISOString();
     }
-    await db.query("INSERT INTO purchase_orders(id,data) VALUES($1,$2)", [po.id, po]);
+    await db.query("INSERT INTO purchase_orders(id,data,organization_id) VALUES($1,$2,$3)", [po.id, po, req.user.organizationId]);
     const generatedMovement = await upsertPurchaseOrderPayable(po, req.user, db);
     await auditChange({ entityType: "purchase_order", entityId: po.id, action: "create", user: req.user, afterData: { stage: po.stage, supplierId: po.supplierId, grossAmountUsd: po.grossAmountUsd } }, db);
     await db.query("COMMIT");
@@ -2137,7 +2171,7 @@ app.post("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico")
   ml.number = ml.id;
   ml.createdAt = ml.createdAt || new Date().toISOString();
   ml.createdBy = ml.createdBy || req.user.id; ml.createdByName = ml.createdByName || req.user.name;
-  try { await pool.query("INSERT INTO material_lists(id,data) VALUES($1,$2)", [ml.id, ml]); }
+  try { await pool.query("INSERT INTO material_lists(id,data,organization_id) VALUES($1,$2,$3)", [ml.id, ml, req.user.organizationId]); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un listado con ese identificador" }); throw error; }
   await auditChange({ entityType: "material_list", entityId: ml.id, action: "create", user: req.user, afterData: { projectId: ml.projectId, audience: ml.audience, sections: ml.sections.length } });
   res.json(ml);
@@ -2199,7 +2233,7 @@ app.post("/api/whiteboard-notes", auth, requireProjectWrite, async (req, res) =>
   const n = normalizeWhiteboardNote(req.body);
   if (n.type === "text" && !n.title && !n.content) return res.status(400).json({ error: "La nota necesita un título o contenido." });
   if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
-  if (!n.id) n.id = "wbn" + Date.now();
+  if (!n.id) n.id = `wbn-${crypto.randomUUID()}`;
   if (n.projectId && !(await pool.query("SELECT 1 FROM projects WHERE id=$1 AND organization_id=$2", [n.projectId, req.user.organizationId])).rowCount) return res.status(400).json({ error: "El proyecto no pertenece a esta empresa." });
   n.createdAt = new Date().toISOString();
   n.createdBy = req.user.id; n.createdByName = req.user.name;
@@ -2271,7 +2305,7 @@ app.post("/api/budgets", auth, requireRole("admin", "gerente"), apiRateLimit(60)
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await db.query("INSERT INTO budgets(id,data) VALUES($1,$2)", [budget.id, budget]);
+    await db.query("INSERT INTO budgets(id,data,organization_id) VALUES($1,$2,$3)", [budget.id, budget, req.user.organizationId]);
     const generatedInvoice = await upsertBudgetInvoice(budget, req.user, db);
     await auditChange({ entityType: "budget", entityId: budget.id, action: "create", user: req.user, afterData: { number: budget.number, stage: budget.stage, amount: budget.amount, clientId: budget.clientId || "" } }, db);
     await db.query("COMMIT");
@@ -2391,12 +2425,12 @@ app.post("/api/budgets/:id/convert", auth, requireRole("admin", "gerente"), asyn
       await db.query("COMMIT");
       return res.json({ budget, project: existing });
     }
-    const projectId = "p" + Date.now();
+    const projectId = `p-${crypto.randomUUID()}`;
     const rawKey = String(req.body?.key || budget.title || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
     const key = await uniqueProjectKey(rawKey || "PRJ", db);
     const monitors = (await db.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
     const project = { id: projectId, key, name: budget.title, color: req.body?.color || "#F18700", allowedUsers: monitors, budgetId: budget.id, clientId: budget.clientId || "", client: budget.client, site: budget.site || "", plannedStart: budget.plannedStart || "", plannedEnd: budget.plannedEnd || "", estimatedAmount: budget.amount, currency: "USD", purchaseOrderNumber: budget.purchaseOrderNumber || "", purchaseOrderDate: budget.purchaseOrderDate || "" };
-    await db.query("INSERT INTO projects(id,data) VALUES($1,$2)", [projectId, project]);
+    await db.query("INSERT INTO projects(id,data,organization_id) VALUES($1,$2,$3)", [projectId, project, req.user.organizationId]);
     const updated = { ...budget, stage: ["Facturado", "Pagado"].includes(budget.stage) ? budget.stage : "Aprobado", probability: 100, projectId, approvedAt: budget.approvedAt || new Date().toISOString(), activity: [...(budget.activity || []), { type: "converted", text: `Convertido en proyecto ${key}`, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
     await db.query("UPDATE budgets SET data=$2, updated_at=now() WHERE id=$1", [budget.id, updated]);
     if (["Facturado", "Pagado"].includes(updated.stage)) await upsertBudgetInvoice(updated, req.user, db);
@@ -2685,7 +2719,7 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
   try {
     await db.query("BEGIN");
     movement = await externalizeFinancialAssets(movement, db, req.user.id);
-    await db.query("INSERT INTO financial_movements(id,data) VALUES($1,$2)", [movement.id, movement]);
+    await db.query("INSERT INTO financial_movements(id,data,organization_id) VALUES($1,$2,$3)", [movement.id, movement, req.user.organizationId]);
     const updatedBudgets = movement.kind === "income" ? await syncBudgetPaymentStatuses(movementBudgetIds(movement), db, req.user) : [];
     await auditChange({ entityType: "financial_movement", entityId: movement.id, action: "create", user: req.user, afterData: { kind: movement.kind, amountUsd: movement.amountUsd, projectId: movement.projectId || "", budgetId: movement.budgetId || "" } }, db);
     await db.query("COMMIT");
@@ -2787,7 +2821,7 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
   const src = (await pool.query("SELECT data FROM projects WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!src) return res.status(404).json({ error: "No existe" });
   const body = req.body || {};
-  const newId = "p" + Date.now();
+  const newId = `p-${crypto.randomUUID()}`;
   const assignee = body.assignee || null;                 // reasignar todas las tareas (opcional)
   if (assignee && !(await assigneeIsAllowed(assignee))) return res.status(400).json({ error: "El responsable seleccionado no admite asignación de tareas" });
   const resetStatus = body.resetStatus !== false;         // por defecto, arranca en "Por hacer"
@@ -2797,7 +2831,7 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
     await db.query("BEGIN");
     const key = await uniqueProjectKey(body.key || src.key || "PRJ", db);
     const project = { ...src, id: newId, key, name: body.name || `${src.name} (copia)`, allowedUsers };
-    await db.query("INSERT INTO projects(id,data) VALUES($1,$2)", [newId, project]);
+    await db.query("INSERT INTO projects(id,data,organization_id) VALUES($1,$2,$3)", [newId, project, req.user.organizationId]);
     const srcTasks = (await db.query("SELECT data FROM tasks WHERE data->>'project'=$1", [req.params.id])).rows.map((r) => r.data)
       .sort((a, b) => (parseInt(String(a.id).split("-")[1], 10) || 0) - (parseInt(String(b.id).split("-")[1], 10) || 0));
     const newTasks = [];
@@ -2807,7 +2841,7 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
       if (assignee) nt.assignee = assignee;
       if (resetStatus) nt.status = "Por hacer";
       delete nt._updatedAt;
-      await db.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [nt.id, nt]);
+      await db.query("INSERT INTO tasks(id,data,organization_id) VALUES($1,$2,$3)", [nt.id, nt, req.user.organizationId]);
       newTasks.push(nt); i++;
     }
     await db.query("COMMIT");
@@ -2819,19 +2853,31 @@ app.post("/api/projects/:id/duplicate", auth, requireRole("admin", "gerente"), a
 
 /* ------------------------------------------------ Repuestos / Inventario ------------------------------------------------ */
 app.post("/api/parts", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const p = { ...(req.body || {}) }; if (!p.id) p.id = "sp" + Date.now();
+  const p = { ...(req.body || {}) }; if (!p.id) p.id = `sp-${crypto.randomUUID()}`;
   p.name = String(p.name || "").trim();
   if (!p.name) return res.status(400).json({ error: "El nombre del repuesto es obligatorio" });
   p.category = MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro";
   ["price", "cost"].forEach((k) => { if (p[k] !== undefined) p[k] = wholeMoneyValue(p[k]); });
   ["stock", "minStock"].forEach((k) => { if (p[k] !== undefined) p[k] = Number(p[k]) || 0; });
-  try { await pool.query("INSERT INTO parts(id,data) VALUES($1,$2)", [p.id, p]); }
-  catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un repuesto con ese identificador" }); throw error; }
-  await auditChange({ entityType: "part", entityId: p.id, action: "create", user: req.user, afterData: { name: p.name, stock: p.stock, price: p.price, cost: p.cost } });
-  res.json(p);
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const inserted = (await db.query(
+      "INSERT INTO parts(id,data,organization_id) VALUES($1,$2,$3) RETURNING data,organization_id",
+      [p.id, p, req.user.organizationId],
+    )).rows[0];
+    if (!inserted || inserted.organization_id !== req.user.organizationId) throw new Error("El artículo no quedó asociado a la empresa activa");
+    await auditChange({ entityType: "part", entityId: p.id, action: "create", user: req.user, afterData: { name: p.name, stock: p.stock, price: p.price, cost: p.cost } }, db);
+    await db.query("COMMIT");
+    res.status(201).json(inserted.data);
+  } catch (error) {
+    await db.query("ROLLBACK");
+    if (error.code === "23505") return res.status(409).json({ error: "Ya existe un repuesto con ese identificador dentro de esta empresa" });
+    throw error;
+  } finally { db.release(); }
 });
 app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const { rows } = await pool.query("SELECT data FROM parts WHERE id=$1", [req.params.id]);
+  const { rows } = await pool.query("SELECT data FROM parts WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId]);
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const patch = { ...(req.body || {}) };
   if (patch.category !== undefined) patch.category = MATERIAL_LIST_DISCIPLINES.includes(patch.category) ? patch.category : "Otro";
@@ -2844,7 +2890,8 @@ app.patch("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, r
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await db.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+    const updated = await db.query("UPDATE parts SET data=$2, updated_at=now() WHERE id=$1 AND organization_id=$3", [req.params.id, merged, req.user.organizationId]);
+    if (!updated.rowCount) throw new Error("El artículo ya no existe en la empresa activa");
     let result = merged;
     if (requestedStock !== undefined) {
       const delta = requestedStock - (Number(previous.stock) || 0);
@@ -2865,8 +2912,8 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
   // históricas ya se aplicaron y borrar el material no altera nada.
   const reference = JSON.stringify([{ partId: req.params.id }]);
   const [orders, purchases] = await Promise.all([
-    pool.query("SELECT count(*)::int count FROM orders WHERE data->'materials' @> $1::jsonb AND data->>'stockDeductedAt' IS NULL", [reference]),
-    pool.query("SELECT count(*)::int count FROM purchase_orders WHERE data->'items' @> $1::jsonb AND data->>'stockAppliedAt' IS NULL AND data->>'stage' <> 'Cancelada'", [reference]),
+    pool.query("SELECT count(*)::int count FROM orders WHERE data->'materials' @> $1::jsonb AND data->>'stockDeductedAt' IS NULL AND organization_id=$2", [reference, req.user.organizationId]),
+    pool.query("SELECT count(*)::int count FROM purchase_orders WHERE data->'items' @> $1::jsonb AND data->>'stockAppliedAt' IS NULL AND data->>'stage' <> 'Cancelada' AND organization_id=$2", [reference, req.user.organizationId]),
   ]);
   const pendingOrders = Number(orders.rows[0]?.count || 0);
   const pendingPurchases = Number(purchases.rows[0]?.count || 0);
@@ -2874,9 +2921,9 @@ app.delete("/api/parts/:id", auth, requireRole("admin", "gerente"), async (req, 
     const detail = [pendingOrders ? `${pendingOrders} orden(es) de trabajo sin completar` : "", pendingPurchases ? `${pendingPurchases} orden(es) de compra sin recibir` : ""].filter(Boolean).join(" y ");
     return res.status(409).json({ error: `No se puede eliminar: el material figura en ${detail}. Al completarlas, su stock no se movería. Quitalo de esos documentos primero.` });
   }
-  const movements = Number((await pool.query("SELECT count(*)::int count FROM stock_movements WHERE part_id=$1", [req.params.id])).rows[0]?.count || 0);
+  const movements = Number((await pool.query("SELECT count(*)::int count FROM stock_movements WHERE part_id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId])).rows[0]?.count || 0);
   if (movements) return res.status(409).json({ error: `No se puede eliminar: el repuesto tiene ${movements} movimiento(s) históricos. Marcá el repuesto como inactivo para conservar la trazabilidad.` });
-  const deleted = await pool.query("DELETE FROM parts WHERE id=$1 RETURNING id,data", [req.params.id]);
+  const deleted = await pool.query("DELETE FROM parts WHERE id=$1 AND organization_id=$2 RETURNING id,data", [req.params.id, req.user.organizationId]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
   await auditChange({ entityType: "part", entityId: req.params.id, action: "delete", user: req.user, beforeData: { name: deleted.rows[0].data.name, stock: deleted.rows[0].data.stock } });
   res.status(204).end();
@@ -2974,7 +3021,7 @@ app.post("/api/orders", auth, requireOrdersAccess, apiRateLimit(60), async (req,
   try {
     await db.query("BEGIN");
     o = await externalizeOrderAssets(o, db, req.user.id);
-    await db.query("INSERT INTO orders(id,data) VALUES($1,$2)", [o.id, o]);
+    await db.query("INSERT INTO orders(id,data,organization_id) VALUES($1,$2,$3)", [o.id, o, req.user.organizationId]);
     await auditChange({ entityType: "order", entityId: o.id, action: "create", user: req.user, afterData: { status: o.status, client: o.client, projectId: o.projectId || "", assignedTechIds: o.assignedTechIds || [] } }, db);
     await db.query("COMMIT");
     res.json(isTec(req.user.role) ? stripMoney(o) : o);
@@ -3125,7 +3172,7 @@ app.get("/api/tasks", auth, async (req, res) => {
   res.json(tasks.filter((t) => allowedProjectIds.has(t.project)));
 });
 app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
-  const t = { ...(req.body || {}) }; if (!t.id) t.id = "T-" + Date.now();
+  const t = { ...(req.body || {}) }; if (!t.id) t.id = `T-${crypto.randomUUID()}`;
   t.title = String(t.title || "").trim();
   if (!t.title || !t.project) return res.status(400).json({ error: "Proyecto y título son obligatorios" });
   if (!(await tecCanProject(req.user, t.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
@@ -3143,7 +3190,7 @@ app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
     const ids = (await pool.query("SELECT id FROM tasks WHERE id LIKE $1", [`${key}-%`])).rows.map((row) => Number(String(row.id).slice(key.length + 1)) || 0);
     t.id = `${key}-${Math.max(0, ...ids) + 1}`;
   }
-  await pool.query("INSERT INTO tasks(id,data) VALUES($1,$2)", [t.id, t]);
+  await pool.query("INSERT INTO tasks(id,data,organization_id) VALUES($1,$2,$3)", [t.id, t, req.user.organizationId]);
   await auditChange({ entityType: "task", entityId: t.id, action: "create", user: req.user, afterData: { project: t.project, status: t.status, assignee: t.assignee } });
   if (t.assignee) await ensureProjectAccess(t.assignee, t.project);
   // Notifica al responsable si es una asignación nueva (a otra persona)
@@ -3204,7 +3251,7 @@ app.post("/api/users", auth, requireRole("admin"), async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: "El correo no es válido" });
   if (role !== undefined && !VALID_ROLES.has(role)) return res.status(400).json({ error: "Rol inválido" });
   if (String(password).length < 8) return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres" });
-  const id = "u" + Date.now();
+  const id = `u-${crypto.randomUUID()}`;
   const hash = bcrypt.hashSync(password, 10);
   const settings = buildSettingsPatch(req.body || {}) || {};
   try {

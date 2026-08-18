@@ -135,8 +135,9 @@ export async function importTasksToProject(pool, projectId, tasks, sourceFilenam
         importedAt,
       };
       await client.query(
-        `INSERT INTO gantt_tasks (id, project_id, data) VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO UPDATE SET data = $3, updated_at = now()`,
+        `INSERT INTO gantt_tasks (id, project_id, data, organization_id)
+         VALUES ($1, $2, $3, current_setting('app.organization_id'))
+         ON CONFLICT (organization_id, id) DO UPDATE SET data = $3, updated_at = now()`,
         [id, projectId, data]
       );
     }

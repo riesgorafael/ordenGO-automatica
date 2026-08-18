@@ -5,6 +5,7 @@
 // Dependencia adicional: npm i multer
 
 import multer from "multer";
+import crypto from "node:crypto";
 import { parseProjectFile, importTasksToProject } from "./ganttImport.js";
 
 const upload = multer({
@@ -74,7 +75,7 @@ export function registerGanttRoutes(app, pool, { auth, requireRole, tecCanProjec
       if (!exists) return res.status(400).json({ error: `La tarea predecesora ${dep.taskId} no existe en este proyecto` });
     }
 
-    const id = `GT-${projectId}-M${Date.now()}`;
+    const id = `GT-${projectId}-M${crypto.randomUUID()}`;
     const durationDays = Math.max(1, Math.round((new Date(body.end) - new Date(body.start)) / 86400000) + 1);
     const data = {
       id, projectId,

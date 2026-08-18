@@ -7,6 +7,7 @@ import path from "node:path";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverSource = readFileSync(path.join(here, "..", "index.js"), "utf8");
 const ganttSource = readFileSync(path.join(here, "..", "ganttRoutes.js"), "utf8");
+const ganttImportSource = readFileSync(path.join(here, "..", "ganttImport.js"), "utf8");
 const createOrganizationSource = readFileSync(path.join(here, "..", "createOrganization.js"), "utf8");
 const webSource = readFileSync(path.join(here, "..", "..", "web", "src", "App.jsx"), "utf8");
 const pdfSource = readFileSync(path.join(here, "..", "..", "web", "src", "pdf.js"), "utf8");
@@ -49,6 +50,27 @@ test("una organización nueva se confirma sólo si nace sin datos operativos", (
   assert.match(createOrganizationSource, /const emptyBusinessTables =/);
   assert.match(createOrganizationSource, /WHERE organization_id=\$1/);
   assert.match(createOrganizationSource, /Alta multiempresa inválida/);
+});
+
+test("los identificadores operativos pueden repetirse únicamente entre empresas", () => {
+  assert.match(serverSource, /PRIMARY KEY\(organization_id,id\)/);
+  for (const table of ["clients", "projects", "budgets", "financial_movements", "orders", "tasks", "parts", "purchase_orders", "whiteboard_notes", "gantt_tasks"]) {
+    assert.match(serverSource, new RegExp(`tenantEntityTables[\\s\\S]*["']${table}["']`), `${table} debe usar clave primaria por tenant`);
+  }
+  assert.doesNotMatch(ganttImportSource, /ON CONFLICT \(id\)/);
+  assert.match(ganttImportSource, /ON CONFLICT \(organization_id, id\)/);
+});
+
+test("el alta de inventario confirma persistencia y auditoría en la misma empresa", () => {
+  assert.match(serverSource, /sp-\$\{crypto\.randomUUID\(\)\}/);
+  assert.match(serverSource, /INSERT INTO parts\(id,data,organization_id\).*RETURNING data,organization_id/);
+  assert.match(serverSource, /inserted\.organization_id !== req\.user\.organizationId/);
+  assert.match(serverSource, /auditChange\([\s\S]*entityType: "part"[\s\S]*}, db\)/);
+});
+
+test("las migraciones históricas de arranque no recorren empresas nuevas", () => {
+  assert.match(serverSource, /tenantContext\.run\(\{ organizationId: DEFAULT_ORGANIZATION_ID \}, async \(\) => \{/);
+  assert.match(serverSource, /Todo lo que sigue son siembras y migraciones de compatibilidad/);
 });
 
 test("los reportes de OT usan el branding explícito del tenant y toleran adjuntos dañados", () => {
