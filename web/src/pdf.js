@@ -1689,9 +1689,20 @@ export async function credentialPDF(user, branding = {}, companyProfileData = {}
     doc.rect(0, i, W, 1.05, "F");
   }
 
-  if (branding.logoDataUrl) {
-    try { doc.addImage(branding.logoDataUrl, "PNG", M + 4, 5, W - (M + 4) * 2, 11, undefined, "FAST"); } catch {}
-  } else {
+  // El logo se resuelve igual que en los reportes: en la organización Automática no viene en
+  // logoDataUrl sino del logo incorporado, marcado por builtInCompanyLogo. Mirar sólo logoDataUrl
+  // hacía caer al respaldo de texto justo en la empresa que sí tiene logo cargado.
+  const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
+  let logoDrawn = false;
+  if (logoSource) {
+    // Se respeta la proporción real de la imagen: forzarla a un alto fijo deformaba el isotipo.
+    let ratio = LOGO_RATIO;
+    try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
+    let lw = W - (M + 5) * 2, lh = lw * ratio;
+    if (lh > 13) { lh = 13; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", (W - lw) / 2, 5, lw, lh, undefined, "FAST"); logoDrawn = true; } catch {}
+  }
+  if (!logoDrawn) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(255, 255, 255);
     doc.text(company.name.toUpperCase(), W / 2, 12, { align: "center" });
   }
@@ -1729,7 +1740,8 @@ export async function credentialPDF(user, branding = {}, companyProfileData = {}
   }
 
   /* ---------- Zona de datos ---------- */
-  doc.setFillColor(246, 248, 251); doc.rect(0, 58, W, H - 58, "F");
+  doc.setFillColor(246, 248, 251); doc.rect(0, 58, W, H - 58 - 5, "F");
+  doc.setFillColor(255, 255, 255); doc.rect(0, H - 5, W, 5, "F");
   let y = 65;
   doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(...header);
   const nameLines = doc.splitTextToSize(String(user?.name || "").toUpperCase(), W - M * 2).slice(0, 2);
@@ -1755,7 +1767,7 @@ export async function credentialPDF(user, branding = {}, companyProfileData = {}
   }
   if (company.website) {
     doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(148, 163, 184);
-    doc.text(String(company.website), W / 2, H - 3, { align: "center" });
+    doc.text(String(company.website), W / 2, H - 2.5, { align: "center" });
   }
 
   /* ---------- Dorso ---------- */
