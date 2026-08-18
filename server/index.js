@@ -3527,11 +3527,20 @@ async function runOrganizationDailyDigest(organizationId) {
     }
     return acc;
   }, {});
-  const overdueInvoices = movements.filter((movement) => {
-    if (movement.kind !== "invoice" || !movement.dueDate || movement.dueDate >= today) return false;
+  // Saldo abierto de una factura, en bruto: es lo que falta que entre, IVA incluido.
+  const invoiceOpenBalance = (movement) => {
     const gross = Number(movement.grossAmountUsd) || ((Number(movement.amountUsd) || 0) + (Number(movement.vatAmountUsd) || 0));
-    return gross - (collectedByInvoice[movement.id] || 0) > 0.01;
-  });
+    return gross - (collectedByInvoice[movement.id] || 0);
+  };
+  const isOpenInvoice = (movement) => movement.kind === "invoice" && movement.dueDate && invoiceOpenBalance(movement) > 0.01;
+  const overdueInvoices = movements.filter((movement) => isOpenInvoice(movement) && movement.dueDate < today);
+  // Aviso anticipado de cobranza: siete días antes del vencimiento pactado. Antes sólo se avisaba
+  // cuando la factura ya estaba vencida, o sea cuando reclamar ya llegaba tarde. La ventana incluye
+  // hoy, así que una factura que vence hoy también entra; deja de avisarse recién cuando se cobra o
+  // cuando pasa a vencida y la toma el aviso de arriba.
+  const invoiceDueLimit = new Date(arDate().getTime() + 7 * 86400000).toISOString().slice(0, 10);
+  const upcomingInvoices = movements.filter((movement) => isOpenInvoice(movement) && movement.dueDate >= today && movement.dueDate <= invoiceDueLimit);
+  const upcomingInvoicesTotal = Math.round(upcomingInvoices.reduce((sum, movement) => sum + invoiceOpenBalance(movement), 0) * 100) / 100;
   const soon = new Date(arDate().getTime() + 4 * 86400000).toISOString().slice(0, 10);
   const pending = tasks.filter((task) => task.status !== "Hecho" && task.due);
   let sent = 0;
@@ -3550,6 +3559,7 @@ async function runOrganizationDailyDigest(organizationId) {
       if (followUps) parts.push(`${followUps} seguimiento(s) de presupuesto atrasado(s)`);
       if (latePurchases) parts.push(`${latePurchases} orden(es) de compra demorada(s)`);
       if (overdueInvoices.length) parts.push(`${overdueInvoices.length} factura(s) con el cobro vencido`);
+      if (upcomingInvoices.length) parts.push(`${upcomingInvoices.length} factura(s) por cobrar en 7 días (USD ${upcomingInvoicesTotal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
     }
     if (!parts.length) continue; // a quien no tiene nada pendiente no se le escribe
     await notify(user.id, `Resumen de hoy: ${parts.join(" · ")}.`, null);
