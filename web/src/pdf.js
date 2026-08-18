@@ -28,12 +28,28 @@ const assetAsDataUrl = async (value) => {
   const blob = await response.blob();
   return await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
 };
-const orderWithEmbeddedAssets = async (order) => ({
-  ...order,
-  signatureUrl: await assetAsDataUrl(order.signatureUrl),
-  technicianSignatureUrl: await assetAsDataUrl(order.technicianSignatureUrl),
-  photos: await Promise.all((order.photos || []).map(async (photo) => ({ ...photo, url: await assetAsDataUrl(photo.url), preview: await assetAsDataUrl(photo.preview) }))),
-});
+const orderWithEmbeddedAssets = async (order) => {
+  const warnings = [];
+  const safeAsset = async (value, label) => {
+    try { return await assetAsDataUrl(value); }
+    catch (error) { warnings.push(`${label}: ${error?.message || "archivo no disponible"}`); return ""; }
+  };
+  const photos = [];
+  for (const [index, photo] of (order.photos || []).entries()) {
+    const url = await safeAsset(photo?.url, `Evidencia ${index + 1}`);
+    const preview = photo?.preview === photo?.url ? url : await safeAsset(photo?.preview, `Vista previa ${index + 1}`);
+    // Los documentos se conservan en el listado aunque su binario no se incruste; una imagen
+    // inaccesible se omite. Ningún adjunto aislado debe impedir generar todo el reporte.
+    if (photo?.kind === "document" || url) photos.push({ ...photo, url, preview: preview || url });
+  }
+  return {
+    ...order,
+    signatureUrl: await safeAsset(order.signatureUrl, "Firma del cliente"),
+    technicianSignatureUrl: await safeAsset(order.technicianSignatureUrl, "Firma del técnico"),
+    photos,
+    _reportAssetWarnings: warnings,
+  };
+};
 const billedHours = billableHoursValue;
 function totals(o) {
   const hours = billedHours(o);
@@ -419,9 +435,9 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null,
   return doc;
 }
 
-export async function clientOrderReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "client", project, branding).save(`${order.id}_cliente.pdf`); }
-export async function valuedClientReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "valued", project, branding).save(`${order.id}_cliente_valorizado.pdf`); }
-export async function internalOrderReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "internal", project, branding).save(`${order.id}_interno.pdf`); }
+export async function clientOrderReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "client", project, branding).save(`${order.id}_cliente.pdf`); return printable._reportAssetWarnings; }
+export async function valuedClientReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "valued", project, branding).save(`${order.id}_cliente_valorizado.pdf`); return printable._reportAssetWarnings; }
+export async function internalOrderReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "internal", project, branding).save(`${order.id}_interno.pdf`); return printable._reportAssetWarnings; }
 
 export function monthlyReportPDF(month, monthLabel, rows, sum, branding = {}) {
   const doc = new jsPDF("p", "mm", "a4");

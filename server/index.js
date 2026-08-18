@@ -118,7 +118,7 @@ const DEFAULT_BRANDING = {
   appName: "OrdenGO",
   subtitle: "Gestión de servicios",
   companyName: "",
-  theme: "industrial",
+  theme: "ordengo",
   primaryColor: "#0EA5C5",
   headerColor: "#0B315F",
   logoDataUrl: "",
@@ -381,6 +381,138 @@ async function initDb() {
   await pool.query(`GRANT USAGE ON SCHEMA public TO ${TENANT_DB_ROLE}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${TENANT_DB_ROLE}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${TENANT_DB_ROLE};`);
   await pool.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${TENANT_DB_ROLE}; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE,SELECT ON SEQUENCES TO ${TENANT_DB_ROLE};`);
   await pool.query(`ALTER TABLE organizations ENABLE ROW LEVEL SECURITY; ALTER TABLE organizations FORCE ROW LEVEL SECURITY; DROP POLICY IF EXISTS organizations_tenant_policy ON organizations; CREATE POLICY organizations_tenant_policy ON organizations USING ((current_user <> '${TENANT_DB_ROLE}' AND NULLIF(current_setting('app.organization_id',true),'') IS NULL) OR id=NULLIF(current_setting('app.organization_id',true),'')) WITH CHECK ((current_user <> '${TENANT_DB_ROLE}' AND NULLIF(current_setting('app.organization_id',true),'') IS NULL) OR id=NULLIF(current_setting('app.organization_id',true),''));`);
+  // Verificación fail-closed: si una migración futura agrega una tabla al conjunto multiempresa
+  // pero deja RLS desactivado, sin FORCE o sin política, la API no debe arrancar y exponer datos.
+  const isolationAudit = await pool.query(`
+    SELECT tenant_table.table_name,
+           table_class.relrowsecurity AS rls_enabled,
+           table_class.relforcerowsecurity AS rls_forced,
+           EXISTS (
+             SELECT 1 FROM pg_policies policy
+              WHERE policy.schemaname='public' AND policy.tablename=tenant_table.table_name
+           ) AS has_policy
+      FROM unnest($1::text[]) AS tenant_table(table_name)
+      JOIN pg_class table_class ON table_class.oid=('public.' || tenant_table.table_name)::regclass
+  `, [tenantTables]);
+  const unsafeTables = isolationAudit.rows.filter((row) => !row.rls_enabled || !row.rls_forced || !row.has_policy);
+  const tenantRole = (await pool.query("SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname=$1", [TENANT_DB_ROLE])).rows[0];
+  if (unsafeTables.length || !tenantRole || tenantRole.rolbypassrls || tenantRole.rolsuper) {
+    throw new Error(`Aislamiento multiempresa inválido: ${unsafeTables.map((row) => row.table_name).join(", ") || TENANT_DB_ROLE}`);
+  }
+  // Prueba real de aislamiento sobre PostgreSQL, no sólo inspección de configuración. Se crean
+  // dos notas temporales dentro de una transacción, se cambia al rol de la aplicación y se exige
+  // que el tenant A no pueda leer la nota B. ROLLBACK elimina todas las filas de prueba.
+  const isolationProbe = await rawPoolConnect();
+  try {
+    const probeSuffix = crypto.randomUUID();
+    const organizationA = `org-probe-a-${probeSuffix}`;
+    const organizationB = `org-probe-b-${probeSuffix}`;
+    const noteA = `note-probe-a-${probeSuffix}`;
+    const noteB = `note-probe-b-${probeSuffix}`;
+    await isolationProbe.query("BEGIN");
+    await isolationProbe.query("INSERT INTO organizations(id,slug,name,profile) VALUES($1,$2,'Probe A','{}'),($3,$4,'Probe B','{}')", [organizationA, `probe-a-${probeSuffix}`, organizationB, `probe-b-${probeSuffix}`]);
+    await isolationProbe.query("INSERT INTO whiteboard_notes(id,data,organization_id) VALUES($1,$2,$3),($4,$5,$6)", [noteA, { id: noteA, title: "A" }, organizationA, noteB, { id: noteB, title: "B" }, organizationB]);
+    await isolationProbe.query("SELECT set_config('app.organization_id',$1,true)", [organizationA]);
+    await isolationProbe.query(`SET LOCAL ROLE ${TENANT_DB_ROLE}`);
+    const visibleProbeNotes = (await isolationProbe.query("SELECT id FROM whiteboard_notes WHERE id=ANY($1::text[]) ORDER BY id", [[noteA, noteB]])).rows.map((row) => row.id);
+    if (visibleProbeNotes.length !== 1 || visibleProbeNotes[0] !== noteA) throw new Error("La política RLS permitió leer otro tenant");
+    await isolationProbe.query("ROLLBACK");
+  } catch (error) {
+    try { await isolationProbe.query("ROLLBACK"); } catch {}
+    throw new Error(`Aislamiento multiempresa inválido: ${error.message}`);
+  } finally {
+    isolationProbe.release();
+  }
+  // Repara notas creadas por versiones previas cuyo organization_id no coincide con el creador.
+  // No se eliminan: vuelven al tenant del autor. Después se quitan vínculos a proyectos o usuarios
+  // externos para que ni siquiera queden referencias cruzadas ocultas dentro del JSON.
+  await pool.query(`
+    UPDATE whiteboard_notes note
+       SET organization_id=author.organization_id, updated_at=now()
+      FROM users author
+     WHERE note.data->>'createdBy'=author.id
+       AND note.organization_id<>author.organization_id
+  `);
+  await pool.query(`
+    UPDATE whiteboard_notes note
+       SET data=jsonb_set(note.data,'{projectId}','""'::jsonb,true), updated_at=now()
+     WHERE coalesce(note.data->>'projectId','')<>''
+       AND NOT EXISTS (
+         SELECT 1 FROM projects project
+          WHERE project.id=note.data->>'projectId'
+            AND project.organization_id=note.organization_id
+       )
+  `);
+  await pool.query(`
+    UPDATE whiteboard_notes note
+       SET data=jsonb_set(
+         note.data,
+         '{sharedWith}',
+         coalesce((
+           SELECT jsonb_agg(shared.user_id)
+             FROM jsonb_array_elements_text(coalesce(note.data->'sharedWith','[]'::jsonb)) shared(user_id)
+             JOIN users target ON target.id=shared.user_id AND target.organization_id=note.organization_id
+         ), '[]'::jsonb),
+         true
+       ), updated_at=now()
+     WHERE jsonb_typeof(coalesce(note.data->'sharedWith','[]'::jsonb))='array'
+  `);
+  // Integridad relacional por tenant. Los IDs globales por sí solos no bastan: estas claves
+  // compuestas impiden asociar una tarea, OC, nota, movimiento o archivo a datos de otra empresa.
+  for (const table of ["users", "clients", "projects", "budgets", "suppliers", "parts"]) {
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${table}_organization_id_unique ON ${table}(organization_id,id)`);
+  }
+  await pool.query(`
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'project','')) STORED;
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_id text GENERATED ALWAYS AS (NULLIF(data->>'supplierId','')) STORED;
+    ALTER TABLE whiteboard_notes ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE whiteboard_notes ADD COLUMN IF NOT EXISTS created_by text GENERATED ALWAYS AS (NULLIF(data->>'createdBy','')) STORED;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='tasks_project_tenant_fk') THEN ALTER TABLE tasks ADD CONSTRAINT tasks_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='purchase_orders_project_tenant_fk') THEN ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='purchase_orders_supplier_tenant_fk') THEN ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_supplier_tenant_fk FOREIGN KEY(organization_id,supplier_id) REFERENCES suppliers(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='whiteboard_project_tenant_fk') THEN ALTER TABLE whiteboard_notes ADD CONSTRAINT whiteboard_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='whiteboard_author_tenant_fk') THEN ALTER TABLE whiteboard_notes ADD CONSTRAINT whiteboard_author_tenant_fk FOREIGN KEY(organization_id,created_by) REFERENCES users(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='notifications_user_tenant_fk') THEN ALTER TABLE notifications ADD CONSTRAINT notifications_user_tenant_fk FOREIGN KEY(organization_id,user_id) REFERENCES users(organization_id,id) ON DELETE CASCADE NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='stock_movements_part_tenant_fk') THEN ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_part_tenant_fk FOREIGN KEY(organization_id,part_id) REFERENCES parts(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='gantt_tasks_project_tenant_fk') THEN ALTER TABLE gantt_tasks ADD CONSTRAINT gantt_tasks_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE CASCADE NOT VALID; END IF;
+    END $$;
+  `);
+  await pool.query(`
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE material_lists ADD COLUMN IF NOT EXISTS client_id text GENERATED ALWAYS AS (NULLIF(data->>'clientId','')) STORED;
+    ALTER TABLE material_lists ADD COLUMN IF NOT EXISTS project_id text GENERATED ALWAYS AS (NULLIF(data->>'projectId','')) STORED;
+    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS budget_owner_id text GENERATED ALWAYS AS (NULLIF(data->>'ownerId','')) STORED;
+    ALTER TABLE financial_movements ADD COLUMN IF NOT EXISTS budget_id text GENERATED ALWAYS AS (NULLIF(coalesce(data->>'budgetId',data->>'sourceBudgetId'),'')) STORED;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS budget_id text GENERATED ALWAYS AS (NULLIF(data->>'budgetId','')) STORED;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS tech_id text GENERATED ALWAYS AS (NULLIF(data->>'techId','')) STORED;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_id text GENERATED ALWAYS AS (NULLIF(data->>'assignee','')) STORED;
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS budget_id text GENERATED ALWAYS AS (NULLIF(data->>'budgetId','')) STORED;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='projects_client_tenant_fk') THEN ALTER TABLE projects ADD CONSTRAINT projects_client_tenant_fk FOREIGN KEY(organization_id,client_id) REFERENCES clients(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_client_tenant_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_client_tenant_fk FOREIGN KEY(organization_id,client_id) REFERENCES clients(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_project_tenant_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='budgets_owner_tenant_fk') THEN ALTER TABLE budgets ADD CONSTRAINT budgets_owner_tenant_fk FOREIGN KEY(organization_id,budget_owner_id) REFERENCES users(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_client_tenant_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_client_tenant_fk FOREIGN KEY(organization_id,client_id) REFERENCES clients(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_project_tenant_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='finances_budget_tenant_fk') THEN ALTER TABLE financial_movements ADD CONSTRAINT finances_budget_tenant_fk FOREIGN KEY(organization_id,budget_id) REFERENCES budgets(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_client_tenant_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_client_tenant_fk FOREIGN KEY(organization_id,client_id) REFERENCES clients(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_project_tenant_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_budget_tenant_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_budget_tenant_fk FOREIGN KEY(organization_id,budget_id) REFERENCES budgets(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='orders_tech_tenant_fk') THEN ALTER TABLE orders ADD CONSTRAINT orders_tech_tenant_fk FOREIGN KEY(organization_id,tech_id) REFERENCES users(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='tasks_assignee_tenant_fk') THEN ALTER TABLE tasks ADD CONSTRAINT tasks_assignee_tenant_fk FOREIGN KEY(organization_id,assignee_id) REFERENCES users(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='purchase_orders_budget_tenant_fk') THEN ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_budget_tenant_fk FOREIGN KEY(organization_id,budget_id) REFERENCES budgets(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='material_lists_client_tenant_fk') THEN ALTER TABLE material_lists ADD CONSTRAINT material_lists_client_tenant_fk FOREIGN KEY(organization_id,client_id) REFERENCES clients(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='material_lists_project_tenant_fk') THEN ALTER TABLE material_lists ADD CONSTRAINT material_lists_project_tenant_fk FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id) ON DELETE RESTRICT NOT VALID; END IF;
+    END $$;
+  `);
   // Las organizaciones creadas por versiones anteriores quedaban con profile={} y al leerlas
   // heredaban las tarifas/perfiles predeterminados de AUTOMATICA. Se inicializan con valores
   // neutros sin tocar empresas que ya hayan configurado su perfil.
@@ -1067,7 +1199,7 @@ async function hydrateOrderAssignments(order, db = pool) {
   return order;
 }
 app.get("/api/files/:id", auth, async (req, res) => {
-  const asset = (await pool.query("SELECT * FROM file_assets WHERE id=$1", [req.params.id])).rows[0];
+  const asset = (await pool.query("SELECT * FROM file_assets WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId])).rows[0];
   if (!asset) return res.status(404).json({ error: "El archivo no existe" });
   let allowed = ["admin", "gerente"].includes(req.user.role);
   if (!allowed && asset.entity_type === "order" && req.user.role === "tecnico") {
@@ -1217,23 +1349,24 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const tec = isTec(req.user.role);
+  const organizationId = req.user.organizationId;
   const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, wb] = await Promise.all([
-    pool.query("SELECT * FROM users WHERE id=$1", [req.user.id]),
-    pool.query("SELECT * FROM users ORDER BY created_at"),
-    pool.query("SELECT data FROM clients"),
-    pool.query("SELECT data FROM projects"),
-    pool.query("SELECT data, updated_at FROM budgets ORDER BY updated_at DESC"),
-    pool.query("SELECT data, updated_at FROM financial_movements ORDER BY updated_at DESC"),
-    pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC"),
-    pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC"),
-    pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]),
-    pool.query("SELECT data FROM parts ORDER BY data->>'name'"),
+    pool.query("SELECT * FROM users WHERE id=$1 AND organization_id=$2", [req.user.id, organizationId]),
+    pool.query("SELECT * FROM users WHERE organization_id=$1 ORDER BY created_at", [organizationId]),
+    pool.query("SELECT data FROM clients WHERE organization_id=$1", [organizationId]),
+    pool.query("SELECT data FROM projects WHERE organization_id=$1", [organizationId]),
+    pool.query("SELECT data, updated_at FROM budgets WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM financial_movements WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM orders WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM tasks WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT * FROM notifications WHERE user_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 50", [req.user.id, organizationId]),
+    pool.query("SELECT data FROM parts WHERE organization_id=$1 ORDER BY data->>'name'", [organizationId]),
     loadBranding(),
-    loadCompanyProfile(req.user.organizationId),
-    pool.query("SELECT data FROM suppliers ORDER BY data->>'name'"),
-    pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC"),
-    pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC"),
-    pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC"),
+    loadCompanyProfile(organizationId),
+    pool.query("SELECT data FROM suppliers WHERE organization_id=$1 ORDER BY data->>'name'", [organizationId]),
+    pool.query("SELECT data, updated_at FROM purchase_orders WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM material_lists WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM whiteboard_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
   ]);
   // Aviso de tareas por vencer (próximos 2 días): se genera una sola vez por tarea (id determinístico)
   // y queda en la bandeja de notificaciones —visible en la campana de cualquier pantalla— hasta que
@@ -1250,7 +1383,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     } catch {}
   }
   const notifRows = dueSoonTasks.length
-    ? (await pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id])).rows
+    ? (await pool.query("SELECT * FROM notifications WHERE user_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 50", [req.user.id, organizationId])).rows
     : no.rows;
   const partOut = (p) => tec ? { id: p.id, name: p.name, unit: p.unit } : p;
   const allProjects = pr.rows.map((r) => r.data);
@@ -1322,20 +1455,20 @@ app.put("/api/settings/company-profile", auth, requireRole("admin"), async (req,
 
 /* ------------------------------------------------ Notificaciones ------------------------------------------------ */
 app.get("/api/notifications", auth, async (req, res) => {
-  const { rows } = await pool.query("SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [req.user.id]);
+  const { rows } = await pool.query("SELECT * FROM notifications WHERE user_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 50", [req.user.id, req.user.organizationId]);
   res.json(rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })));
 });
 app.post("/api/notifications/:id/read", auth, async (req, res) => {
-  await pool.query("UPDATE notifications SET read=true WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+  await pool.query("UPDATE notifications SET read=true WHERE id=$1 AND user_id=$2 AND organization_id=$3", [req.params.id, req.user.id, req.user.organizationId]);
   res.status(204).end();
 });
 app.post("/api/notifications/read-all", auth, async (req, res) => {
-  await pool.query("UPDATE notifications SET read=true WHERE user_id=$1", [req.user.id]);
+  await pool.query("UPDATE notifications SET read=true WHERE user_id=$1 AND organization_id=$2", [req.user.id, req.user.organizationId]);
   res.status(204).end();
 });
 
-app.get("/api/parts/:id/movements", auth, requireRole("admin", "gerente"), async (req, res) => { const rows = (await pool.query("SELECT * FROM stock_movements WHERE part_id=$1 ORDER BY created_at DESC LIMIT 200", [req.params.id])).rows; res.json(rows.map((row) => ({ id: row.id, partId: row.part_id, quantity: Number(row.quantity), balance: Number(row.balance), type: row.movement_type, sourceType: row.source_type, sourceId: row.source_id, note: row.note, at: row.created_at }))); });
-app.get("/api/audit-log", auth, requireRole("admin"), async (req, res) => { const rows = (await pool.query("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 300")).rows; res.json(rows); });
+app.get("/api/parts/:id/movements", auth, requireRole("admin", "gerente"), async (req, res) => { const rows = (await pool.query("SELECT * FROM stock_movements WHERE part_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 200", [req.params.id, req.user.organizationId])).rows; res.json(rows.map((row) => ({ id: row.id, partId: row.part_id, quantity: Number(row.quantity), balance: Number(row.balance), type: row.movement_type, sourceType: row.source_type, sourceId: row.source_id, note: row.note, at: row.created_at }))); });
+app.get("/api/audit-log", auth, requireRole("admin"), async (req, res) => { const rows = (await pool.query("SELECT * FROM audit_log WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 300", [req.user.organizationId])).rows; res.json(rows); });
 
 /* ------------------------------------------------ Clientes ------------------------------------------------ */
 app.post("/api/clients", auth, requireProjectWrite, async (req, res) => {
@@ -1724,7 +1857,7 @@ async function upsertPurchaseOrderPayable(po, user, db = pool) {
 }
 
 app.get("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const { rows } = await pool.query("SELECT data FROM suppliers ORDER BY data->>'name'");
+  const { rows } = await pool.query("SELECT data FROM suppliers WHERE organization_id=$1 ORDER BY data->>'name'", [req.user.organizationId]);
   res.json(rows.map((r) => r.data));
 });
 app.post("/api/suppliers", auth, requireRole("admin", "gerente"), async (req, res) => {
@@ -1793,7 +1926,7 @@ app.delete("/api/suppliers/:id", auth, requireRole("admin", "gerente"), async (r
 });
 
 app.get("/api/purchase-orders", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const { rows } = await pool.query("SELECT data, updated_at FROM purchase_orders ORDER BY updated_at DESC");
+  const { rows } = await pool.query("SELECT data, updated_at FROM purchase_orders WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   res.json(rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
 app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateLimit(60), async (req, res) => {
@@ -1968,7 +2101,7 @@ function normalizeMaterialList(input, previous = {}) {
   return ml;
 }
 app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
-  const { rows } = await pool.query("SELECT data, updated_at FROM material_lists ORDER BY updated_at DESC");
+  const { rows } = await pool.query("SELECT data, updated_at FROM material_lists WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   const materialLists = rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at }));
   // Un técnico de campo solo debe ver los listados de los proyectos que tiene habilitados (o los
   // de uso interno sin proyecto asociado); admin y gerente ven todos.
@@ -2059,7 +2192,7 @@ function whiteboardNoteVisible(user, note) {
   return note.createdBy === user.id || (Array.isArray(note.sharedWith) && note.sharedWith.includes(user.id));
 }
 app.get("/api/whiteboard-notes", auth, async (req, res) => {
-  const { rows } = await pool.query("SELECT data, updated_at FROM whiteboard_notes ORDER BY updated_at DESC");
+  const { rows } = await pool.query("SELECT data, updated_at FROM whiteboard_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   res.json(rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
 app.post("/api/whiteboard-notes", auth, requireProjectWrite, async (req, res) => {
@@ -2067,15 +2200,16 @@ app.post("/api/whiteboard-notes", auth, requireProjectWrite, async (req, res) =>
   if (n.type === "text" && !n.title && !n.content) return res.status(400).json({ error: "La nota necesita un título o contenido." });
   if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
   if (!n.id) n.id = "wbn" + Date.now();
+  if (n.projectId && !(await pool.query("SELECT 1 FROM projects WHERE id=$1 AND organization_id=$2", [n.projectId, req.user.organizationId])).rowCount) return res.status(400).json({ error: "El proyecto no pertenece a esta empresa." });
   n.createdAt = new Date().toISOString();
   n.createdBy = req.user.id; n.createdByName = req.user.name;
   n.sharedWith = []; // una nota nueva siempre arranca privada; compartir es un paso aparte y explícito
-  try { await pool.query("INSERT INTO whiteboard_notes(id,data) VALUES($1,$2)", [n.id, n]); await auditChange({ entityType: "whiteboard_note", entityId: n.id, action: "create", user: req.user, afterData: { type: n.type, projectId: n.projectId || "" } }); }
+  try { await pool.query("INSERT INTO whiteboard_notes(id,data,organization_id) VALUES($1,$2,$3)", [n.id, n, req.user.organizationId]); await auditChange({ entityType: "whiteboard_note", entityId: n.id, action: "create", user: req.user, afterData: { type: n.type, projectId: n.projectId || "" } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe una nota con ese identificador" }); throw error; }
   res.json(n);
 });
 app.patch("/api/whiteboard-notes/:id", auth, requireProjectWrite, async (req, res) => {
-  const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
+  const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   const isOwner = current.createdBy === req.user.id;
   // Ver todo (Administrador) no implica poder editar: solo el dueño o alguien con quien se compartió explícitamente puede modificar la nota.
@@ -2087,16 +2221,21 @@ app.patch("/api/whiteboard-notes/:id", auth, requireProjectWrite, async (req, re
   n.id = req.params.id;
   if (n.type === "text" && !n.title && !n.content) return res.status(400).json({ error: "La nota necesita un título o contenido." });
   if (n.type === "drawing" && !n.imageDataUrl) return res.status(400).json({ error: "El dibujo está vacío." });
+  if (n.projectId && !(await pool.query("SELECT 1 FROM projects WHERE id=$1 AND organization_id=$2", [n.projectId, req.user.organizationId])).rowCount) return res.status(400).json({ error: "El proyecto no pertenece a esta empresa." });
+  if (n.sharedWith.length) {
+    const validUsers = (await pool.query("SELECT id FROM users WHERE id=ANY($1::text[]) AND organization_id=$2", [n.sharedWith, req.user.organizationId])).rows.map((row) => row.id);
+    if (validUsers.length !== n.sharedWith.length) return res.status(400).json({ error: "Una persona seleccionada no pertenece a esta empresa." });
+  }
   n.createdBy = current.createdBy; n.createdByName = current.createdByName; n.createdAt = current.createdAt;
-  await pool.query("UPDATE whiteboard_notes SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, n]);
+  await pool.query("UPDATE whiteboard_notes SET data=$2, updated_at=now() WHERE id=$1 AND organization_id=$3", [req.params.id, n, req.user.organizationId]);
   await auditChange({ entityType: "whiteboard_note", entityId: req.params.id, action: "update", user: req.user, beforeData: { type: current.type, projectId: current.projectId || "" }, afterData: { type: n.type, projectId: n.projectId || "" } });
   res.json(n);
 });
 app.delete("/api/whiteboard-notes/:id", auth, requireProjectWrite, async (req, res) => {
-  const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1", [req.params.id])).rows[0]?.data;
+  const current = (await pool.query("SELECT data FROM whiteboard_notes WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId])).rows[0]?.data;
   if (!current) return res.status(404).json({ error: "No existe" });
   if (current.createdBy !== req.user.id && req.user.role !== "admin") return res.status(403).json({ error: "Solo quien creó la nota (o un administrador) puede eliminarla" });
-  await pool.query("DELETE FROM whiteboard_notes WHERE id=$1", [req.params.id]);
+  await pool.query("DELETE FROM whiteboard_notes WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId]);
   await auditChange({ entityType: "whiteboard_note", entityId: req.params.id, action: "delete", user: req.user, beforeData: { type: current.type, projectId: current.projectId || "" } });
   res.status(204).end();
 });
@@ -2560,7 +2699,7 @@ app.post("/api/finances", auth, requireRole("admin", "gerente"), async (req, res
 });
 
 app.get("/api/finances/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
-  const movement = (await pool.query("SELECT data FROM financial_movements WHERE id=$1", [req.params.id])).rows[0]?.data;
+  const movement = (await pool.query("SELECT data FROM financial_movements WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId])).rows[0]?.data;
   if (!movement) return res.status(404).json({ error: "No existe" });
   res.json(movement);
 });
@@ -2753,8 +2892,8 @@ app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
   const since = req.query.updated_since ? new Date(String(req.query.updated_since)) : null;
   if (since && !Number.isFinite(since.getTime())) return res.status(400).json({ error: "updated_since inválido" });
   const { rows } = since
-    ? await pool.query("SELECT data, updated_at FROM orders WHERE updated_at>$1 ORDER BY updated_at", [since.toISOString()])
-    : await pool.query("SELECT data, updated_at FROM orders ORDER BY updated_at DESC");
+    ? await pool.query("SELECT data, updated_at FROM orders WHERE updated_at>$1 AND organization_id=$2 ORDER BY updated_at", [since.toISOString(), req.user.organizationId])
+    : await pool.query("SELECT data, updated_at FROM orders WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   const tec = isTec(req.user.role);
   res.json(rows.filter((row) => !row.data.archivedAt && orderVisibleToUser(req.user, row.data)).map((row) => ({ ...(tec ? stripMoney(row.data) : row.data), _updatedAt: row.updated_at })));
 });
@@ -2976,8 +3115,8 @@ app.get("/api/tasks", auth, async (req, res) => {
   const since = req.query.updated_since ? new Date(String(req.query.updated_since)) : null;
   if (since && !Number.isFinite(since.getTime())) return res.status(400).json({ error: "updated_since inválido" });
   const { rows } = since
-    ? await pool.query("SELECT data, updated_at FROM tasks WHERE updated_at>$1 ORDER BY updated_at", [since.toISOString()])
-    : await pool.query("SELECT data, updated_at FROM tasks ORDER BY updated_at DESC");
+    ? await pool.query("SELECT data, updated_at FROM tasks WHERE updated_at>$1 AND organization_id=$2 ORDER BY updated_at", [since.toISOString(), req.user.organizationId])
+    : await pool.query("SELECT data, updated_at FROM tasks WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   const tasks = rows.map((row) => ({ ...row.data, _updatedAt: row.updated_at }));
   // Igual que en /api/bootstrap: técnicos (campo u oficina) y monitores solo ven tareas de los
   // proyectos que el administrador les habilitó explícitamente (allowedUsers).

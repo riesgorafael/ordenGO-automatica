@@ -42,7 +42,8 @@ const allowedModulesForRole = (role, profile = DEFAULT_COMPANY_PROFILE) => {
   const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
   return byRole.filter((moduleId) => !MODULE_FEATURE[moduleId] || profile.features?.[MODULE_FEATURE[moduleId]] !== false);
 };
-const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: "", theme: "industrial", primaryColor: "#0EA5C5", headerColor: "#0B315F", logoDataUrl: "", hideAdminModules: false, companyCuit: "", companyLegalName: "", companyIvaCondition: "", companyAddress: "", companyPhone: "", companyEmail: "", companyWebsite: "" };
+const ORDENGO_THEME = Object.freeze({ id: "ordengo", name: "OrdenGO", primaryColor: "#0EA5C5", headerColor: "#0B315F" });
+const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: "", theme: ORDENGO_THEME.id, primaryColor: ORDENGO_THEME.primaryColor, headerColor: ORDENGO_THEME.headerColor, logoDataUrl: "", hideAdminModules: false, companyCuit: "", companyLegalName: "", companyIvaCondition: "", companyAddress: "", companyPhone: "", companyEmail: "", companyWebsite: "" };
 function CompanyLogo({ branding = DEFAULT_BRANDING, dark = false, className = "", alt }) {
   const isAutomatica = branding.builtInCompanyLogo === "automatica";
   const source = branding.logoDataUrl || (isAutomatica ? (dark ? LOGO_LIGHT : LOGO) : "");
@@ -53,6 +54,7 @@ function CompanyLogo({ branding = DEFAULT_BRANDING, dark = false, className = ""
 const cuitDigits = (value) => String(value || "").replace(/\D/g, "");
 const formatCuit = (value) => { const digits = cuitDigits(value); return digits.length === 11 ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}` : digits; };
 const BRAND_THEMES = [
+  ORDENGO_THEME,
   { id: "automatica", name: "Naranja", primaryColor: "#F18700", headerColor: "#2E2E2D" },
   { id: "industrial", name: "Industrial", primaryColor: "#2563EB", headerColor: "#172033" },
   { id: "energia", name: "Energía", primaryColor: "#059669", headerColor: "#16312A" },
@@ -430,6 +432,7 @@ const STALE_DAYS = 4; // días sin cambios para marcar "estancada"
 const WIP_LIMITS = { "En progreso": 5, "En revisión": 3 }; // límites de trabajo en curso por columna
 const isStale = (t) => t.status !== "Hecho" && daysSince(t._updatedAt) >= STALE_DAYS;
 const readPreference = (key, fallback) => { try { return { ...fallback, ...JSON.parse(localStorage.getItem(key) || "{}") }; } catch { return fallback; } };
+const tenantPreferenceKey = (base, user) => `${base}:${user?.organizationId || "unknown"}:${user?.id || "anonymous"}`;
 const deviceLabel = () => {
   if (typeof navigator === "undefined") return "esta computadora";
   if (typeof navigator.userAgentData?.mobile === "boolean") return navigator.userAgentData.mobile ? "este teléfono" : "esta computadora";
@@ -579,8 +582,8 @@ const HealthBar = ({ v, color }) => (<div className="motion-progress h-2 w-full 
 
 /* ===================================== APP ===================================== */
 export default function App() {
-  const savedOrderFilters = useMemo(() => readPreference("ordengo_order_filters", { q: "", status: "Todas", billable: false }), []);
-  const savedProjectFilters = useMemo(() => readPreference("ordengo_project_filters", { project: "all", q: "", mine: false, stale: false }), []);
+  const savedOrderFilters = useMemo(() => ({ q: "", status: "Todas", billable: false }), []);
+  const savedProjectFilters = useMemo(() => ({ project: "all", q: "", mine: false, stale: false }), []);
   const [booting, setBooting] = useState(true);
   const [me, setMe] = useState(null);
   const [users, setUsers] = useState([]);
@@ -612,7 +615,7 @@ export default function App() {
   const [oQ, setOQ] = useState(savedOrderFilters.q); const [oStatus, setOStatus] = useState(savedOrderFilters.status); const [oBillable, setOBillable] = useState(savedOrderFilters.billable);
   const [oTab, setOTab] = useState("list");
   const [pTab, setPTab] = useState("board");
-  const [techTaskView, setTechTaskView] = useState(() => { try { return localStorage.getItem("ordengo_tech_task_view") || "work"; } catch { return "work"; } });
+  const [techTaskView, setTechTaskView] = useState("work");
   const [pProj, setPProj] = useState(savedProjectFilters.project); const [pQ, setPQ] = useState(savedProjectFilters.q); const [pMine, setPMine] = useState(savedProjectFilters.mine);
   const [finishedMenuOpen, setFinishedMenuOpen] = useState(false);
   const finishedMenuRef = useRef(null);
@@ -767,6 +770,13 @@ export default function App() {
     setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setWhiteboardNotes(d.whiteboardNotes || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
+      const savedOrder = readPreference(tenantPreferenceKey("ordengo_order_filters", d.me), savedOrderFilters);
+      const savedProject = readPreference(tenantPreferenceKey("ordengo_project_filters", d.me), savedProjectFilters);
+      setOQ(savedOrder.q); setOStatus(savedOrder.status); setOBillable(!!savedOrder.billable);
+      setPProj(savedProject.project === "all" || (d.projects || []).some((project) => project.id === savedProject.project) ? savedProject.project : "all");
+      setPQ(savedProject.q); setPMine(!!savedProject.mine); setPStale(!!savedProject.stale);
+      const savedTaskView = localStorage.getItem(tenantPreferenceKey("ordengo_tech_task_view", d.me));
+      setTechTaskView(["work", "board", "calendar", "reports"].includes(savedTaskView) ? savedTaskView : "work");
       const savedNavigation = JSON.parse(localStorage.getItem(`ordengo_navigation_${d.me.id}`) || "{}");
       const allowed = allowedModulesForRole(d.me.role, d.companyProfile || DEFAULT_COMPANY_PROFILE);
       if (allowed.includes(savedNavigation.module)) setModule(savedNavigation.module);
@@ -780,6 +790,9 @@ export default function App() {
     setBooting(false);
   })(); }, []);
   useEffect(() => { applyBrandingTheme(branding); }, [branding]);
+  // El generador se carga en segundo plano después de autenticar. En una empresa nueva el primer
+  // reporte no debe depender de que el chunk de PDF termine de descargarse durante el mismo clic.
+  useEffect(() => { if (me?.organizationId && companyProfile.features?.reports !== false) void pdfModule().catch(() => {}); }, [me?.organizationId, companyProfile.features?.reports]);
   useEffect(() => {
     if (!me?.id) return;
     try { setAppearanceMode(localStorage.getItem(`ordengo_appearance_${me.id}`) || "auto"); } catch { setAppearanceMode("auto"); }
@@ -796,9 +809,9 @@ export default function App() {
     if (me?.id) { try { localStorage.setItem(`ordengo_appearance_${me.id}`, appearanceMode); } catch {} }
     return () => media.removeEventListener?.("change", apply);
   }, [appearanceMode, me?.id]);
-  useEffect(() => { try { localStorage.setItem("ordengo_order_filters", JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} }, [oQ, oStatus, oBillable]);
-  useEffect(() => { try { localStorage.setItem("ordengo_project_filters", JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} }, [pProj, pQ, pMine, pStale]);
-  useEffect(() => { try { localStorage.setItem("ordengo_tech_task_view", techTaskView); } catch {} }, [techTaskView]);
+  useEffect(() => { if (me) { try { localStorage.setItem(tenantPreferenceKey("ordengo_order_filters", me), JSON.stringify({ q: oQ, status: oStatus, billable: oBillable })); } catch {} } }, [me, oQ, oStatus, oBillable]);
+  useEffect(() => { if (me) { try { localStorage.setItem(tenantPreferenceKey("ordengo_project_filters", me), JSON.stringify({ project: pProj, q: pQ, mine: pMine, stale: pStale })); } catch {} } }, [me, pProj, pQ, pMine, pStale]);
+  useEffect(() => { if (me) { try { localStorage.setItem(tenantPreferenceKey("ordengo_tech_task_view", me), techTaskView); } catch {} } }, [me, techTaskView]);
   useEffect(() => {
     if (!me) return;
     const allowed = allowedModulesForRole(me.role, companyProfile);
@@ -907,7 +920,20 @@ export default function App() {
     return () => { cancelled = true; document.removeEventListener("visibilitychange", onVisibility); wakeLock?.release().catch(() => {}); };
   }, [me?.role, tvSettings.tvModeEnabled]);
 
-  const logout = () => { if (me?.id) clearOfflineUserData(me.id); api.logout().catch(() => {}); setToken(null); setMe(null); setOfflineCount(0); setModule("orders"); setOView("list"); };
+  const logout = () => {
+    if (me?.id) clearOfflineUserData(me.id);
+    try {
+      // Elimina preferencias históricas sin tenant y el correo recordado en equipos compartidos.
+      ["ordengo_order_filters", "ordengo_project_filters", "ordengo_tech_task_view", "og_last_email"].forEach((key) => localStorage.removeItem(key));
+    } catch {}
+    api.logout().catch(() => {}); setToken(null); setOfflineUser("anonymous"); setMe(null); setOfflineCount(0);
+    // No conservar en memoria ni mostrar en el próximo login ningún dato del tenant anterior.
+    setUsers([]); setClients([]); setProjects([]); setBudgets([]); setFinances([]); setOrders([]); setTasks([]);
+    setNotifs([]); setParts([]); setSuppliers([]); setPurchaseOrders([]); setMaterialLists([]); setWhiteboardNotes([]);
+    setBranding(DEFAULT_BRANDING); setCompanyProfile(DEFAULT_COMPANY_PROFILE); ACTIVE_COMPANY_PROFILE = DEFAULT_COMPANY_PROFILE; DEFAULT_RATE = 0;
+    setOQ(""); setOStatus("Todas"); setOBillable(false); setPProj("all"); setPQ(""); setPMine(false); setPStale(false); setTechTaskView("work");
+    orderSyncCursor.current = ""; taskSyncCursor.current = ""; setModule("orders"); setOView("list");
+  };
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
   if (booting) return <div className="grid min-h-screen place-items-center bg-ink-900 text-slate-300"><div className="motion-page flex flex-col items-center gap-3" role="status" aria-label="Cargando OrdenGO"><div className="skeleton h-9 w-36 rounded-lg" /><Loader2 className="h-5 w-5 animate-spin" /></div></div>;
@@ -1416,7 +1442,7 @@ export default function App() {
               </div>
             )}
             {(!isMgr || oTab === "list")
-              ? <OrdersHome {...{ orders, ger: isMgr, projects, branding, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen: setODetail }} />
+              ? <OrdersHome {...{ orders, ger: isMgr, projects, branding, onErr: err, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen: setODetail }} />
               : <MonthlyReport orders={orders} branding={branding} />}
           </>
         )}
@@ -1503,7 +1529,7 @@ export default function App() {
         </div>
       </main>
 
-      {oDetail && <OrderDetail ger={isMgr} users={users} projects={projects} branding={branding} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
+      {oDetail && <OrderDetail ger={isMgr} users={users} projects={projects} branding={branding} onErr={err} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
       {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} onDuplicate={duplicateTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
@@ -3848,6 +3874,7 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
       ? `Importes convertidos a pesos con el tipo de cambio mayorista BCRA A 3500: USD 1 = ${ars(rate)}${wholesaleUpdatedAt ? ` (actualizado ${wholesaleUpdatedAt})` : ""}. Los movimientos se registran en USD; esta conversión es de referencia a la fecha de emisión, no la cotización de cada operación.`
       : "Los movimientos se registran y se informan en USD. Los cargados en otra moneda se convirtieron con el tipo de cambio de su propia fecha.";
     financeReportPDF({
+      branding,
       period,
       periodLabel: new Date(`${period}-01T12:00:00`).toLocaleDateString("es-AR", { month: "long", year: "numeric" }),
       generatedBy: me?.name || "",
@@ -5324,13 +5351,13 @@ function MaterialListEditor({ materialList, projects, clients, onClose, onSave, 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         {projects.length === 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Todavía no hay proyectos cargados. Creá uno en la pestaña “Proyectos” antes de emitir el listado.</div>}
         <Section title="Encabezado">
-          <L label="Uso del reporte" help="Define qué logo se imprime en el PDF: el de Automática (uso interno) o el del cliente elegido abajo."><div className="flex gap-2"><Toggle active={form.audience !== "interno"} onClick={() => set("audience", "cliente")}>Para el cliente</Toggle><Toggle active={form.audience === "interno"} onClick={() => set("audience", "interno")}>Uso interno (Automática)</Toggle></div></L>
+          <L label="Uso del reporte" help="Define qué identidad se imprime en el PDF: la de tu empresa (uso interno) o la del cliente elegido abajo."><div className="flex gap-2"><Toggle active={form.audience !== "interno"} onClick={() => set("audience", "cliente")}>Para el cliente</Toggle><Toggle active={form.audience === "interno"} onClick={() => set("audience", "interno")}>Uso interno ({branding.companyName || "empresa"})</Toggle></div></L>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <L label={form.audience === "interno" ? "Proyecto (opcional)" : "Proyecto *"}><select value={form.projectId} onChange={(event) => selectProject(event.target.value)} className="u-input"><option value="">{form.audience === "interno" ? "Sin vincular" : "Seleccionar proyecto"}</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select></L>
           <L label="Disciplina"><select value={form.discipline} onChange={(event) => set("discipline", event.target.value)} className="u-input">{MATERIAL_LIST_DISCIPLINES.map((discipline) => <option key={discipline}>{discipline}</option>)}</select></L>
           <L label="Estado" help="Seguimiento después de generado: si el cliente ya lo cotizó, si ya se compró o recibió el material."><select value={form.stage || "Borrador"} onChange={(event) => set("stage", event.target.value)} className="u-input">{MATERIAL_LIST_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></L>
           <L label="Cliente / Empresa"><select value={form.clientId || ""} onChange={(event) => selectClient(event.target.value)} className="u-input"><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L>
-          <L label="Planta">{clientSites(clients.find((c) => c.id === form.clientId)).length > 0 ? (<select value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input"><option value="">Seleccionar planta</option>{clientSites(clients.find((c) => c.id === form.clientId)).map((s) => <option key={s.code || s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select>) : (<input value={form.site || ""} onChange={(event) => set("site", event.target.value)} placeholder="Ej. Venado Tuerto" className="u-input" />)}</L>
+          <L label="Planta">{clientSites(clients.find((c) => c.id === form.clientId)).length > 0 ? (<select value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input"><option value="">Seleccionar planta</option>{clientSites(clients.find((c) => c.id === form.clientId)).map((s) => <option key={s.code || s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select>) : (<input value={form.site || ""} onChange={(event) => set("site", event.target.value)} placeholder="Ej. Planta central" className="u-input" />)}</L>
           <L label="Versión"><input value={form.version || ""} onChange={(event) => set("version", event.target.value)} placeholder="1.0" className="u-input" /></L>
         </div></Section>
 
@@ -5406,7 +5433,7 @@ const PIE_COLORS = ["#F18700", "#0ea5e9", "#10b981", "#8b5cf6", "#ef4444", "#f59
 const monthKey = (d) => (d || "").slice(0, 7);
 const monthLabelShort = (ym) => { const [y, m] = ym.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("es-MX", { month: "short" }).replace(".", ""); };
 
-function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) {
+function Dashboard({ orders, users, tasks, parts, budgets = [], branding = DEFAULT_BRANDING, onOpen, onGo }) {
   const [period, setPeriod] = useState("mes"); // mes | trim | anio
   const now = new Date();
   const startOf = { mes: new Date(now.getFullYear(), now.getMonth(), 1), trim: new Date(now.getFullYear(), now.getMonth() - 2, 1), anio: new Date(now.getFullYear(), 0, 1) }[period];
@@ -5534,7 +5561,7 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], onOpen, onGo }) 
       { label: "Margen del período", value: marginPct != null ? `${marginPct}% · ${money(marginAmount)}` : "Sin datos" },
       { label: "Días promedio para facturar", value: avgToBill != null ? `${avgToBill} días` : "Sin datos" },
     ];
-    dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, aging);
+    dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, aging, branding);
   };
   return (
     <div className="space-y-5">
@@ -5926,19 +5953,19 @@ const ORDER_REPORTS = [
   { audience: "valued", label: "Constancia valorizada", ger: true },
   { audience: "internal", label: "Reporte interno", ger: true },
 ];
-function downloadOrderReport(order, projects, audience) {
+async function downloadOrderReport(order, projects, audience, branding = {}) {
   const errors = timelineErrors(order.technical, order.technical?.completedAt ? new Date(order.technical.completedAt).getTime() : Date.now());
-  if (errors.length) { alert(`No se puede generar un reporte con una cronología inconsistente:\n\n${errors.join("\n")}`); return; }
+  if (errors.length) throw new Error(`No se puede generar un reporte con una cronología inconsistente:\n\n${errors.join("\n")}`);
   const project = projects.find((item) => item.id === order.projectId) || null;
-  if (audience === "internal") internalOrderReportPDF(order, project);
-  else if (audience === "valued") valuedClientReportPDF(order, project);
-  else clientOrderReportPDF(order, project);
+  if (audience === "internal") return internalOrderReportPDF(order, project, branding);
+  if (audience === "valued") return valuedClientReportPDF(order, project, branding);
+  return clientOrderReportPDF(order, project, branding);
 }
 
 // Descarga rápida desde la tarjeta, sin abrir la orden. Se despliega para elegir el destinatario:
 // mandarle al cliente una constancia valorizada por error es un problema comercial, así que el
 // tipo de reporte se elige explícitamente en vez de asumir uno.
-function OrderReportMenu({ order, projects, ger }) {
+function OrderReportMenu({ order, projects, ger, branding = DEFAULT_BRANDING, onErr }) {
   const [rect, setRect] = useState(null); // posición del disparador; null = cerrado
   const triggerRef = useRef(null);
   // El menú se dibuja en un portal sobre <body>, no dentro de la tarjeta. La tarjeta entera es un
@@ -5957,7 +5984,13 @@ function OrderReportMenu({ order, projects, ger }) {
     return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); document.removeEventListener("mousedown", close); };
   }, [rect]);
   const options = ORDER_REPORTS.filter((report) => ger || !report.ger);
-  const pick = (audience) => { setRect(null); downloadOrderReport(order, projects, audience); };
+  const pick = async (audience) => {
+    setRect(null);
+    try {
+      const warnings = await downloadOrderReport(order, projects, audience, branding);
+      if (warnings?.length) { const message = `El PDF fue generado, pero se omitieron archivos no disponibles:\n${warnings.join("\n")}`; if (onErr) onErr(new Error(message)); else alert(message); }
+    } catch (error) { if (onErr) onErr(error); else alert(error?.message || "No se pudo generar el reporte."); }
+  };
   return (
     <span onClick={(event) => { event.stopPropagation(); event.preventDefault(); }}>
       <span ref={triggerRef} role="button" tabIndex={0}
@@ -5979,7 +6012,7 @@ function OrderReportMenu({ order, projects, ger }) {
   );
 }
 
-function OrderRow({ order: o, ger, projects = [], onOpen }) {
+function OrderRow({ order: o, ger, projects = [], branding = DEFAULT_BRANDING, onErr, onOpen }) {
   const t = orderTotals(o);
   return (
     <button onClick={() => onOpen(o)} className="block w-full text-left">
@@ -5994,7 +6027,7 @@ function OrderRow({ order: o, ger, projects = [], onOpen }) {
           {(o.quoteNumber || o.budgetNumber) && <Chip title="Presupuesto vinculado" className="bg-sky-50 text-sky-700 ring-sky-600/20"><FileText className="h-3 w-3" />{o.quoteNumber || o.budgetNumber}</Chip>}
           <span className="ml-auto flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-900">{ger ? money(t.total) : <span className="text-slate-400">{compactDuration((Number(o.laborHours) || 0) * 3600000)}</span>}</span>
-            <OrderReportMenu order={o} projects={projects} ger={ger} />
+            <OrderReportMenu order={o} projects={projects} ger={ger} branding={branding} onErr={onErr} />
           </span>
         </div>
         <div className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-800"><Building2 className="h-3.5 w-3.5 text-slate-400" />{o.client}</div>
@@ -6005,7 +6038,7 @@ function OrderRow({ order: o, ger, projects = [], onOpen }) {
   );
 }
 /* ===================================== ÓRDENES: HOME ===================================== */
-function OrdersHome({ orders, ger, projects = [], oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
+function OrdersHome({ orders, ger, projects = [], branding = DEFAULT_BRANDING, onErr, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
   const [oUrgent, setOUrgent] = useState(false);
   const [view, setView] = useState("lista"); // "lista" | "estado"
   const pendingBill = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada");
@@ -6058,7 +6091,7 @@ function OrdersHome({ orders, ger, projects = [], oQ, setOQ, oStatus, setOStatus
               <div className="flex items-center justify-between px-3 py-2"><h3 className="text-sm font-semibold text-slate-700">{status}</h3><span className="rounded-full bg-white px-2 text-xs font-medium text-slate-500 ring-1 ring-slate-200">{items.length}</span></div>
               <div className="space-y-2 px-2 pb-3">
                 {items.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 bg-white py-8 text-center text-xs text-slate-400">Sin órdenes</div>}
-                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} onOpen={onOpen} />)}
+                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} branding={branding} onErr={onErr} onOpen={onOpen} />)}
               </div>
             </section>
           ); })}
@@ -6066,7 +6099,7 @@ function OrdersHome({ orders, ger, projects = [], oQ, setOQ, oStatus, setOStatus
       ) : (
         <div className="space-y-3">
           {filtered.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No hay órdenes que coincidan.</div>}
-          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} onOpen={onOpen} />)}
+          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} branding={branding} onErr={onErr} onOpen={onOpen} />)}
         </div>
       )}
     </div>
@@ -6074,7 +6107,7 @@ function OrdersHome({ orders, ger, projects = [], oQ, setOQ, oStatus, setOStatus
 }
 
 /* ===================================== ÓRDENES: REPORTE MENSUAL ===================================== */
-function MonthlyReport({ orders }) {
+function MonthlyReport({ orders, branding = DEFAULT_BRANDING }) {
   const [mode, setMode] = useState("mes"); // "mes" | "anio"
   const [month, setMonth] = useState(localMonthKey());
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -6137,7 +6170,7 @@ function MonthlyReport({ orders }) {
         <span className="text-sm font-medium capitalize text-slate-600">{monthLabel}</span>
         <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
           <button onClick={exportCSV} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
-          <button onClick={() => monthlyReportPDF(period, monthLabel, rows, sum)} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><FileText className="h-4 w-4" /> PDF</button>
+          <button onClick={() => monthlyReportPDF(period, monthLabel, rows, sum, branding)} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"><FileText className="h-4 w-4" /> PDF</button>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -6210,7 +6243,7 @@ function MonthlyReport({ orders }) {
 }
 
 /* ===================================== ÓRDENES: DETALLE ===================================== */
-function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, onContinue, onEdit, me }) {
+function OrderDetail({ ger, order, users = [], projects = [], branding = DEFAULT_BRANDING, onErr, onClose, onUpdate, onAdvance, onExport, onDelete, onComment, onDuplicate, onCreateTask, onContinue, onEdit, me }) {
   useDialogOpenClass(onClose);
   const idx = O_STATUS.indexOf(order.status);
   const next = idx >= 0 && idx < O_STATUS.length - 1 ? O_STATUS[idx + 1] : null;
@@ -6267,7 +6300,16 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
   const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || (order.laborCost || 0) !== Number(laborCost) || JSON.stringify(mats) !== JSON.stringify(order.materials));
   const savePrices = () => onUpdate(order.id, { rate: normalizedRate(rate), laborCost: wholeMoney(laborCost), materials: mats.map((m) => ({ ...m, price: wholeMoney(m.price), cost: wholeMoney(m.cost), qty: Number(m.qty) || 0 })), laborBillable });
   const shareOrder = async () => { const text = `${order.id} · ${order.client}\n${order.site || ""}\n${order.service} · ${order.status}`; if (navigator.share) { try { await navigator.share({ title: `Orden ${order.id}`, text }); } catch {} } else { try { await navigator.clipboard.writeText(text); } catch {} } };
-  const downloadReport = (audience) => downloadOrderReport(order, projects, audience);
+  const [reportBusy, setReportBusy] = useState("");
+  const downloadReport = async (audience) => {
+    if (reportBusy) return;
+    setReportBusy(audience);
+    try {
+      const warnings = await downloadOrderReport(order, projects, audience, branding);
+      if (warnings?.length) { const message = `El PDF fue generado, pero se omitieron archivos no disponibles:\n${warnings.join("\n")}`; if (onErr) onErr(new Error(message)); else alert(message); }
+    } catch (error) { if (onErr) onErr(error); else alert(error?.message || "No se pudo generar el reporte."); }
+    finally { setReportBusy(""); }
+  };
   const [zoom, setZoom] = useState(null);
   const mouseDownOnBackdrop = useRef(false);
   return (
@@ -6322,9 +6364,9 @@ function OrderDetail({ ger, order, users = [], projects = [], onClose, onUpdate,
             {/* Reportes y documentos descargables */}
             {reportReady && (
               <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                <button title="Documento técnico para entregar al cliente, sin costos internos ni cronología administrativa." onClick={() => downloadReport("client")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> Reporte para cliente</button>
-                {ger && <button title="Constancia para el cliente que incorpora los importes facturables, sin revelar costos internos ni margen." onClick={() => downloadReport("valued")} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"><DollarSign className="h-4 w-4" /> Constancia valorizada</button>}
-                {ger && <button title="Informe administrativo completo con cronología, costos internos, márgenes y datos de gestión." onClick={() => downloadReport("internal")} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"><FileText className="h-4 w-4" /> Informe interno</button>}
+                <button disabled={!!reportBusy} title="Documento técnico para entregar al cliente, sin costos internos ni cronología administrativa." onClick={() => downloadReport("client")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">{reportBusy === "client" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} Reporte para cliente</button>
+                {ger && <button disabled={!!reportBusy} title="Constancia para el cliente que incorpora los importes facturables, sin revelar costos internos ni margen." onClick={() => downloadReport("valued")} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">{reportBusy === "valued" ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />} Constancia valorizada</button>}
+                {ger && <button disabled={!!reportBusy} title="Informe administrativo completo con cronología, costos internos, márgenes y datos de gestión." onClick={() => downloadReport("internal")} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">{reportBusy === "internal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} Informe interno</button>}
               </div>
             )}
 
@@ -7261,6 +7303,7 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
         : { level: "verde", title: "En curso sin desvíos", text: `Sin tareas vencidas ni vencimientos inminentes. Avance ${pctComplete}% (${done}/${tasks.length}).` };
 
     projectStatusReportPDF({
+      branding,
       projectLabel: projectLabelText,
       generatedBy: me?.name || "",
       verdict,
@@ -7658,7 +7701,7 @@ function Clients({ clients, orders, onAdd, onPatch, onRemove, onErr }) {
           <L label="Apellido y Nombre / Razón Social"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value, code: nf.code || suggest(e.target.value) })} placeholder="Razón social" className="u-input" /></L>
           <L label="CUIT"><input value={nf.cuit} onChange={(e) => setNf({ ...nf, cuit: e.target.value })} placeholder="20-12345678-9" className="u-input" /></L>
           <L label="Atención (contacto)"><input value={nf.contactName} onChange={(e) => setNf({ ...nf, contactName: e.target.value })} placeholder="Nombre de la persona de contacto" className="u-input" /></L>
-          <L label="Primera planta" help="Podés agregar más plantas después, al editar el cliente."><input value={nf.site} onChange={(e) => setNf({ ...nf, site: e.target.value })} placeholder="Ej. Venado Tuerto" className="u-input" /></L>
+          <L label="Primera planta" help="Podés agregar más plantas después, al editar el cliente."><input value={nf.site} onChange={(e) => setNf({ ...nf, site: e.target.value })} placeholder="Ej. Planta central" className="u-input" /></L>
           <L label="Código (para el N° de OT)"><input value={nf.code} onChange={(e) => setNf({ ...nf, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} placeholder="Ej. LDV" className="u-input font-mono" /></L>
           <button onClick={add} disabled={!nf.name.trim()} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><Plus className="h-4 w-4" /> Agregar cliente</button>
           <p className="text-[11px] text-slate-400">El código identifica al cliente en el número de orden (ej. <span className="font-mono">OT-LDV-2026-001</span>). Si lo dejas vacío, se genera automáticamente. Los nombres duplicados se unifican. Condición frente al IVA, domicilio comercial y condición de venta se completan al editar el cliente.</p>
@@ -8384,6 +8427,7 @@ function CompanyProfileSettings({ value, onSave }) {
 function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompanyProfile, appearanceMode = "auto", onAppearanceModeChange }) {
   const [form, setForm] = useState({ ...DEFAULT_BRANDING, ...branding });
   const [saving, setSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState("");
   const [logoError, setLogoError] = useState("");
   useEffect(() => { setForm({ ...DEFAULT_BRANDING, ...branding }); }, [branding]);
   const set = (field, value) => setForm((current) => ({ ...current, [field]: value }));
@@ -8406,7 +8450,25 @@ function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompan
     image.onerror = () => { URL.revokeObjectURL(objectUrl); setLogoError("La imagen no es válida o está dañada."); };
     image.src = objectUrl;
   };
-  const save = async () => { setSaving(true); await onSaveBranding(form); setSaving(false); };
+  const save = async () => {
+    setSaving(true);
+    setSavingAction("save");
+    try { await onSaveBranding(form); } finally { setSaving(false); setSavingAction(""); }
+  };
+  const restoreOrdenGoAppearance = async () => {
+    if (saving) return;
+    // La restauración es exclusivamente visual: preserva logo, razón social y datos fiscales.
+    const restored = {
+      ...form,
+      theme: ORDENGO_THEME.id,
+      primaryColor: ORDENGO_THEME.primaryColor,
+      headerColor: ORDENGO_THEME.headerColor,
+    };
+    setForm(restored);
+    setSaving(true);
+    setSavingAction("restore");
+    try { await onSaveBranding(restored); } finally { setSaving(false); setSavingAction(""); }
+  };
   return <div className="space-y-5">
     <div><h2 className="text-lg font-semibold text-slate-900">Configuración</h2><p className="text-xs text-slate-500">Identidad, estructura de costos y modelo operativo de esta empresa.</p></div>
     <CompanyProfileSettings value={companyProfile} onSave={onSaveCompanyProfile} />
@@ -8440,7 +8502,7 @@ function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompan
     <Box className="overflow-hidden">
       <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2"><Maximize2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Pantallas de oficina · TV</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Cada televisor tiene su propia cuenta con rol <b>Monitor de oficina</b> y su propia configuración (nombre de pantalla, modo TV y rotación) — así podés tener varias pantallas en distintas ubicaciones, cada una mostrando lo que corresponda. Configurala desde <b>Equipo</b>, en la cuenta de cada pantalla.</p></div></div><span className="w-fit rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">Sólo administradores</span></div>
     </Box>
-    <div className="flex flex-col-reverse gap-2 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm((current) => ({ ...current, theme: DEFAULT_BRANDING.theme, primaryColor: DEFAULT_BRANDING.primaryColor, headerColor: DEFAULT_BRANDING.headerColor }))} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restablecer apariencia OrdenGO</button><button disabled={saving || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar configuración</button></div>
+    <div className="flex flex-col-reverse gap-2 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:justify-end"><button type="button" disabled={saving} onClick={restoreOrdenGoAppearance} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 disabled:opacity-40">{savingAction === "restore" && <Loader2 className="h-4 w-4 animate-spin" />} Restaurar valores originales</button><button disabled={saving || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingAction === "save" && <Loader2 className="h-4 w-4 animate-spin" />} Guardar configuración</button></div>
   </div>;
 }
 

@@ -34,13 +34,26 @@ try {
     [organizationId, {
       appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: name, companyLegalName: name,
       companyCuit: "", companyIvaCondition: "", companyAddress: "", companyPhone: "", companyEmail: "", companyWebsite: "",
-      theme: "industrial", primaryColor: "#0EA5C5", headerColor: "#0B315F", logoDataUrl: "",
+      theme: "ordengo", primaryColor: "#0EA5C5", headerColor: "#0B315F", logoDataUrl: "",
     }],
   );
   await db.query(
     "INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword,organization_id) VALUES($1,$2,$3,$4,'admin','#0ea5e9',true,true,$5)",
     [`u-${crypto.randomUUID()}`, adminName, email, bcrypt.hashSync(password, 10), organizationId],
   );
+  // Una empresa nueva debe nacer sin información operativa. Esta comprobación evita confirmar
+  // el alta si una migración, trigger o valor por defecto llegara a copiar datos de otro tenant.
+  const emptyBusinessTables = [
+    "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications",
+    "parts", "suppliers", "purchase_orders", "material_lists", "whiteboard_notes", "stock_movements",
+    "audit_log", "file_assets", "gantt_tasks",
+  ];
+  for (const table of emptyBusinessTables) {
+    const { rows: [{ count }] } = await db.query(`SELECT count(*)::int AS count FROM ${table} WHERE organization_id=$1`, [organizationId]);
+    if (count !== 0) throw new Error(`Alta multiempresa inválida: ${table} contiene ${count} registro(s)`);
+  }
+  const { rows: [{ users: adminCount }] } = await db.query("SELECT count(*)::int AS users FROM users WHERE organization_id=$1", [organizationId]);
+  if (adminCount !== 1) throw new Error(`Alta multiempresa inválida: se esperaban 1 administrador y se encontraron ${adminCount}`);
   await db.query("COMMIT");
   console.log(`Organización creada: ${name} (${slug}). El administrador deberá cambiar su contraseña al ingresar.`);
 } catch (error) {
