@@ -3324,7 +3324,14 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   const sets = [], vals = []; let i = 1;
   if (role !== undefined) { sets.push(`role=$${i++}`); vals.push(role); }
   if (active !== undefined) { sets.push(`active=$${i++}`); vals.push(active); }
-  if (name !== undefined) { sets.push(`name=$${i++}`); vals.push(name); }
+  // El nombre pasó a ser editable desde el directorio de empleados, así que se valida acá: es el
+  // rótulo con el que la persona aparece en órdenes, tareas y reportes, y en blanco dejaría filas
+  // anónimas imposibles de atribuir.
+  if (name !== undefined) {
+    const cleanName = String(name).trim().slice(0, 80);
+    if (!cleanName) return res.status(400).json({ error: "El nombre no puede quedar vacío" });
+    sets.push(`name=$${i++}`); vals.push(cleanName);
+  }
   if (color !== undefined) { sets.push(`color=$${i++}`); vals.push(color); }
   const mergedSettings = buildSettingsPatch(req.body || {}, target.settings || {});
   if (mergedSettings) { sets.push(`settings=$${i++}`); vals.push(mergedSettings); }

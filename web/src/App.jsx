@@ -6663,7 +6663,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [contact, setContact] = useState(initial.contact || ""); const [tech, setTech] = useState(initial.tech || me.name);
   const [assignedTechs, setAssignedTechs] = useState(initial.assignedTechs || (me.role === "tecnico" ? [me.name] : []));
   const [assignedTechPick, setAssignedTechPick] = useState("");
-  const addAssignedTech = (name) => { const value = (name || "").trim(); if (!value || assignedTechs.some((t) => t.toLowerCase() === value.toLowerCase())) return; setAssignedTechs((current) => [...current, value]); setAssignedTechPick(""); };
+  // El campo es texto libre: ocultar al responsable del datalist no basta, porque igual se puede
+  // tipear su nombre. Se rechaza acá, que es por donde pasan tanto el botón como el Enter.
+  const addAssignedTech = (name) => { const value = (name || "").trim(); if (!value || value.toLowerCase() === tech.trim().toLowerCase() || assignedTechs.some((t) => t.toLowerCase() === value.toLowerCase())) return; setAssignedTechs((current) => [...current, value]); setAssignedTechPick(""); };
   const removeAssignedTech = (name) => setAssignedTechs((current) => current.filter((t) => t !== name));
   const [quoteNumber, setQuoteNumber] = useState(initial.quoteNumber || ""); const [customerPO, setCustomerPO] = useState(initial.customerPO || "");
   const [service, setService] = useState(initial.service || "Mantenimiento preventivo");
@@ -6844,7 +6846,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
               <input list="new-order-mate-techs" value={assignedTechPick} onChange={(e) => setAssignedTechPick(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addAssignedTech(assignedTechPick); } }} placeholder="Buscar técnico para sumar" className="u-input flex-1" />
               <button type="button" onClick={() => addAssignedTech(assignedTechPick)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Agregar</button>
             </div>
-            <datalist id="new-order-mate-techs">{fieldTechs.filter((u) => !assignedTechs.some((name) => name.toLowerCase() === u.name.toLowerCase())).map((u) => <option key={u.id} value={u.name} />)}</datalist>
+            {/* Se excluye también al técnico responsable: acompañarse a sí mismo lo contaría dos
+                veces en la dotación y en las métricas de carga. */}
+            <datalist id="new-order-mate-techs">{fieldTechs.filter((u) => u.name.toLowerCase() !== tech.trim().toLowerCase() && !assignedTechs.some((name) => name.toLowerCase() === u.name.toLowerCase())).map((u) => <option key={u.id} value={u.name} />)}</datalist>
           </div>
           {ger && <div className="mt-2 grid grid-cols-2 gap-2"><L label="N° de presupuesto"><input value={quoteNumber} onChange={(e) => setQuoteNumber(e.target.value)} placeholder="Opcional" className="u-input" /></L><L label="Orden de compra del cliente"><input value={customerPO} onChange={(e) => setCustomerPO(e.target.value)} placeholder="Opcional" className="u-input" /></L></div>}
           <div className="mt-2 flex flex-wrap items-center gap-2">{!location && <button onClick={captureLocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><MapPin className="h-3.5 w-3.5" /> Vincular GPS manualmente</button>}{location && <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">GPS vinculado a “{siteLabel || location.label || "Sitio de intervención"}”</span>}{geoMsg && <span className="text-xs text-slate-500">{geoMsg}</span>}</div>
@@ -7188,9 +7192,18 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
   const dueSoonCount = tasks.filter(isDueSoon).length;
   const byStatus = T_STATUS.map((s) => ({ name: s, value: tasks.filter((t) => t.status === s).length, fill: T_STYLE[s].bar }));
   const activeUsers = users.filter((u) => u.active && u.role !== "monitor_oficina");
+  // El gráfico se limita a la gente del proyecto en lugar de recorrer toda la nómina, que llenaba el
+  // eje de columnas en cero de personas ajenas y achicaba las barras que importan. La lista de
+  // compartidos es project.allowedUsers, la que se marca en "Accesos del proyecto", pero sola no
+  // alcanza: ahí sólo entran técnicos y monitores, mientras que gerencia ve todo sin figurar y
+  // también puede tener tareas. Por eso se suma a quien tenga tareas a cargo en el alcance. Con
+  // "Todos los proyectos" no hay lista de accesos que aplicar y queda sólo ese segundo criterio.
+  const scopedProject = proj === "all" ? null : projects.find((p) => p.id === proj);
+  const sharedIds = new Set(scopedProject?.allowedUsers || []);
+  const assigneeUsers = activeUsers.filter((u) => sharedIds.has(u.id) || tasks.some((t) => t.assignee === u.id));
   // Si dos personas comparten primer nombre, se distinguen con la inicial del apellido para no confundirlas en el gráfico.
-  const firstNameCounts = activeUsers.reduce((acc, u) => { const first = u.name.split(" ")[0]; acc[first] = (acc[first] || 0) + 1; return acc; }, {});
-  const byAssignee = activeUsers.map((u) => { const parts = u.name.split(" "); const first = parts[0]; const label = firstNameCounts[first] > 1 && parts[1] ? `${first} ${parts[1][0]}.` : first; return { name: label, value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }; });
+  const firstNameCounts = assigneeUsers.reduce((acc, u) => { const first = u.name.split(" ")[0]; acc[first] = (acc[first] || 0) + 1; return acc; }, {});
+  const byAssignee = assigneeUsers.map((u) => { const parts = u.name.split(" "); const first = parts[0]; const label = firstNameCounts[first] > 1 && parts[1] ? `${first} ${parts[1][0]}.` : first; return { name: label, value: tasks.filter((t) => t.assignee === u.id).length, fill: u.color }; });
   const projectLabel = (id) => { const p = projects.find((item) => item.id === id); return p ? `${p.key} · ${p.name}` : "Sin proyecto"; };
   const nameOf = (id) => users.find((u) => u.id === id)?.name || "Sin asignar";
   // Sin el filtro de búsqueda de personal: el reporte en PDF siempre refleja a todo el equipo,
@@ -7369,7 +7382,7 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tareas</h3>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric label="Tareas" value={tasks.length} icon={LayoutGrid} tint="text-brand-600" /><Metric label="Completadas" value={done} icon={CheckCircle2} tint="text-emerald-600" /><Metric label="En curso" value={wip} icon={Clock} tint="text-violet-600" /><Metric label="Vencidas" value={overdue} icon={AlertTriangle} tint="text-rose-600" /></div>
       </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Tareas por estado"><ChartBox data={byStatus} /></Panel><Panel title="Carga por responsable"><ChartBox data={byAssignee} /></Panel></div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Panel title="Tareas por estado"><ChartBox data={byStatus} /></Panel><Panel title="Carga por responsable">{byAssignee.length ? <ChartBox data={byAssignee} /> : <Empty text="Nadie tiene tareas a cargo en este alcance." />}</Panel></div>
       <Panel title="Carga de trabajo por persona">
         <div className="relative mb-3"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={staffQuery} onChange={(e) => setStaffQuery(e.target.value)} placeholder="Buscar persona…" className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
         {staffWorkload.length === 0 ? <Empty text="Nadie tiene tareas asignadas con este filtro." /> : (
@@ -8443,7 +8456,10 @@ function CompanyProfileSettings({ value, onSave }) {
         <L label="Idioma"><select value={form.locale} onChange={(e) => setForm((current) => ({ ...current, locale: e.target.value }))} className="u-input"><option value="es-AR">Español · Argentina</option><option value="es-UY">Español · Uruguay</option><option value="es-CL">Español · Chile</option><option value="es-MX">Español · México</option><option value="en-US">English · US</option></select></L>
         <div className="sm:col-span-2"><L label="Zona horaria"><input value={form.timezone || ""} onChange={(e) => setForm((current) => ({ ...current, timezone: e.target.value }))} placeholder="America/Buenos_Aires" className="u-input" /></L></div>
       </div></section>
-      <section><div className="mb-2 flex items-center justify-between"><div><h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Perfiles de mano de obra</h4><p className="mt-1 text-[11px] text-slate-500">El costo se propone automáticamente al estimar un presupuesto y puede ajustarse en cada línea.</p></div><button type="button" onClick={() => setForm((current) => ({ ...current, laborRoles: [...(current.laborRoles || []), { name: "Nuevo perfil", cost: 0 }] }))} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar</button></div><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{(form.laborRoles || []).map((role, index) => <div key={`${index}-${role.name}`} className="grid grid-cols-[minmax(0,1fr)_6rem_2.5rem] gap-2 rounded-lg border border-slate-200 p-2"><input value={role.name} onChange={(e) => updateRole(index, { name: e.target.value })} aria-label="Nombre del perfil" className="u-input" /><input type="number" min="0" step="1" value={role.cost} onChange={(e) => updateRole(index, { cost: e.target.value })} aria-label={`Costo de ${role.name}`} className="u-input" /><button type="button" onClick={() => removeRole(index)} aria-label={`Eliminar ${role.name}`} className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>)}</div></section>
+      <section><div className="mb-2 flex items-center justify-between"><div><h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Perfiles de mano de obra</h4><p className="mt-1 text-[11px] text-slate-500">El costo se propone automáticamente al estimar un presupuesto y puede ajustarse en cada línea.</p></div><button type="button" onClick={() => setForm((current) => ({ ...current, laborRoles: [...(current.laborRoles || []), { name: "Nuevo perfil", cost: 0 }] }))} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs text-slate-600"><Plus className="h-3.5 w-3.5" /> Agregar</button></div><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{/* La key va sólo por posición: si incluyera role.name cambiaría con cada tecla, React
+          descartaría el input y el foco se perdería letra por letra. Las filas se identifican por
+          índice en updateRole y removeRole, así que la posición es el identificador correcto. */}
+        {(form.laborRoles || []).map((role, index) => <div key={index} className="grid grid-cols-[minmax(0,1fr)_6rem_2.5rem] gap-2 rounded-lg border border-slate-200 p-2"><input value={role.name} onChange={(e) => updateRole(index, { name: e.target.value })} aria-label="Nombre del perfil" className="u-input" /><input type="number" min="0" step="1" value={role.cost} onChange={(e) => updateRole(index, { cost: e.target.value })} aria-label={`Costo de ${role.name}`} className="u-input" /><button type="button" onClick={() => removeRole(index)} aria-label={`Eliminar ${role.name}`} className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>)}</div></section>
       <section><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Módulos habilitados</h4><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(featureLabels).map(([key, label]) => <label key={key} className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700"><input type="checkbox" checked={form.features?.[key] !== false} onChange={(e) => setFeature(key, e.target.checked)} />{label}</label>)}</div><p className="mt-2 text-[11px] text-slate-500">La configuración restringe la navegación de la empresa; los permisos por rol siguen aplicándose dentro de cada módulo.</p></section>
       <div className="flex justify-end"><button disabled={saving || !(form.laborRoles || []).length} onClick={save} className="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar perfil operativo</button></div>
     </div>
@@ -8532,6 +8548,30 @@ function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompan
   </div>;
 }
 
+/* Nombre editable en el propio directorio. El borrador vive en estado local y sólo se confirma al
+   salir del campo o con Enter: guardar en cada tecla dispararía una petición por letra y la lista
+   se reacomodaría mientras se escribe. Escape descarta, y se marca con un ref porque setDraft no
+   llega a aplicarse antes de que el blur lea el valor. */
+function EditableName({ user, onRename }) {
+  const [draft, setDraft] = useState(user.name);
+  const [editing, setEditing] = useState(false);
+  const cancelled = useRef(false);
+  // Si el nombre cambia en el servidor mientras no se está editando, el campo acompaña.
+  useEffect(() => { if (!editing) setDraft(user.name); }, [user.name, editing]);
+  const finish = () => {
+    setEditing(false);
+    if (cancelled.current) { cancelled.current = false; setDraft(user.name); return; }
+    const clean = draft.trim();
+    // Vacío no es un nombre: se vuelve al anterior en lugar de dejar la fila sin rótulo.
+    if (!clean) { setDraft(user.name); return; }
+    if (clean !== user.name) onRename(clean);
+  };
+  return <input value={draft} onChange={(e) => setDraft(e.target.value)} onFocus={() => setEditing(true)} onBlur={finish}
+    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancelled.current = true; e.currentTarget.blur(); } }}
+    aria-label={`Nombre de ${user.name}`} title="Editar nombre"
+    className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-slate-800 hover:border-slate-200 focus:border-brand-500 focus:bg-white focus:outline-none" />;
+}
+
 function Team({ users, tasks, orders, projects = [], me, onAdd, onPatch, onRemove, onSaveUserProjects, onErr }) {
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "", screenName: "" });
   const [passwordUser, setPasswordUser] = useState(null);
@@ -8546,7 +8586,7 @@ function Team({ users, tasks, orders, projects = [], me, onAdd, onPatch, onRemov
         <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-slate-800">{u.name}{u.id === me.id && <span className="ml-1 text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}{u.role === "tecnico_oficina" && ` · ${projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)`}</div></div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}{u.role === "tecnico_oficina" && ` · ${projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)`}</div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select title="Define los módulos, datos y acciones que puede utilizar este usuario." value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
