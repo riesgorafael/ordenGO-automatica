@@ -248,14 +248,19 @@ async function initDb() {
   `);
   // Migración multiempresa. Los datos existentes pasan a la organización Automática sin alterar
   // IDs ni relaciones. RLS aplica el tenant de la sesión a lecturas, escrituras y eliminaciones.
+  // node-postgres usa el protocolo extendido cuando hay parámetros ($1). PostgreSQL no
+  // admite más de una sentencia en ese modo, por eso CREATE + INSERT en una misma llamada
+  // impedía iniciar el servidor con "cannot insert multiple commands into a prepared statement".
   await pool.query(`
     CREATE TABLE IF NOT EXISTS organizations(
       id text PRIMARY KEY, slug text UNIQUE NOT NULL, name text NOT NULL,
       active boolean NOT NULL DEFAULT true, plan text NOT NULL DEFAULT 'professional',
-      profile jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
+      profile jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())
+  `);
+  await pool.query(`
     INSERT INTO organizations(id,slug,name,profile)
       VALUES('org-automatica','automatica','AUTOMATICA ARG',$1)
-      ON CONFLICT(id) DO NOTHING;
+      ON CONFLICT(id) DO NOTHING
   `, [DEFAULT_COMPANY_PROFILE]);
   const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
   for (const table of tenantTables) {
