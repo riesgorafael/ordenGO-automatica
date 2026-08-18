@@ -1736,7 +1736,9 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
   const bullets = [
     { text: "Órdenes, proyectos y finanzas en un único flujo", icon: ClipboardList },
     { text: "Seguimiento en tiempo real con trazabilidad completa", icon: Activity },
-    { text: "Acceso seguro según empresa, proyecto y rol", icon: KeyRound },
+    // Sin icono a propósito. El componente omite el recuadro cuando no hay uno, así la viñeta no
+    // queda con un hueco donde antes iba la llave.
+    { text: "Acceso seguro según empresa, proyecto y rol" },
   ];
   return (
     <div className="grid min-h-screen grid-cols-1 bg-gradient-to-br from-slate-50 via-white to-cyan-50 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -1755,7 +1757,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
           <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">Software de gestión para empresas de servicios técnicos.</p>
           <div className="mt-8 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">Una sola plataforma para</div>
           <ul className="mt-3 space-y-2.5">
-            {bullets.map(({ text, icon: Icon }) => (<li key={text} className="flex items-center gap-3 rounded-xl border border-cyan-200/10 bg-white/[0.035] px-3 py-2.5 text-sm text-slate-100"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><Icon className="h-4 w-4" /></span><span className="leading-snug">{text}</span></li>))}
+            {bullets.map(({ text, icon: Icon }) => (<li key={text} className="flex items-center gap-3 rounded-xl border border-cyan-200/10 bg-white/[0.035] px-3 py-2.5 text-sm text-slate-100">{Icon && <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><Icon className="h-4 w-4" /></span>}<span className="leading-snug">{text}</span></li>))}
           </ul>
         </div>
       </div>
@@ -3975,13 +3977,16 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
   // El BCRA no publica los fines de semana. La antigüedad debe medirse en días hábiles posteriores
   // a la cotización; de otro modo, el lunes una referencia del viernes aparece erróneamente como
   // atrasada tres días. Se avisa recién al acumular dos jornadas hábiles sin una nueva publicación.
+  // Días hábiles CERRADOS desde la última publicación. El día de hoy no se cuenta: el BCRA publica
+  // el A 3500 al cierre, así que hasta que el día no termina la fuente no está atrasada, está
+  // trabajando. Antes se contaba hoy y el aviso saltaba cada tarde antes de la publicación.
   const businessDaysSince = (value) => {
     const published = new Date(value);
     if (Number.isNaN(published.getTime())) return null;
     const cursor = new Date(published.getFullYear(), published.getMonth(), published.getDate() + 1, 12);
     const today = new Date(); today.setHours(12, 0, 0, 0);
     let count = 0;
-    while (cursor <= today) {
+    while (cursor < today) {
       const day = cursor.getDay();
       if (day !== 0 && day !== 6) count += 1;
       cursor.setDate(cursor.getDate() + 1);
@@ -3989,7 +3994,12 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     return count;
   };
   const wholesaleQuoteAgeBusinessDays = wholesaleQuote?.updatedAt ? businessDaysSince(wholesaleQuote.updatedAt) : null;
-  const wholesaleSourceStale = wholesaleQuoteAgeBusinessDays != null && wholesaleQuoteAgeBusinessDays >= 2;
+  // Umbral de 3 en lugar de 2, a propósito y sin tabla de feriados. No hay calendario de feriados
+  // argentinos en el cliente, así que un fin de semana largo se contaba como días de atraso y el
+  // aviso aparecía sin que la fuente tuviera problema alguno. Un feriado o un puente aportan como
+  // mucho dos días hábiles seguidos; con 3 el aviso sólo salta ante una interrupción real, y no
+  // hay que mantener al día una lista que se desactualiza en silencio cada año.
+  const wholesaleSourceStale = wholesaleQuoteAgeBusinessDays != null && wholesaleQuoteAgeBusinessDays >= 3;
   const exportPdf = () => {
     // Si el tablero se está viendo en pesos, el PDF sale en pesos y deja asentada la cotización
     // aplicada: sin ese dato el importe no sería reproducible más adelante.
