@@ -784,11 +784,26 @@ export default function App() {
       if (["board", "calendar", "reports"].includes(savedNavigation.projectTab)) setPTab(savedNavigation.projectTab);
     } catch {}
   };
-  useEffect(() => { (async () => {
-    try { setBranding(await api.getBranding()); } catch {}
-    if (getToken()) { try { await boot(); } catch { setToken(null); } }
+  // Con sesión activa, la identidad de la empresa la trae /api/bootstrap: /api/branding devuelve
+  // siempre el default (el servidor no expone la ficha de una empresa sin autenticar, a propósito).
+  // Pedirlo igual pisaba el nombre real con uno vacío y el encabezado caía al literal "Empresa".
+  // Solo se consulta cuando NO hay sesión, que es el único caso donde hace falta: la pantalla
+  // de login.
+  //
+  // Y si el bootstrap falla no se entra a la app: antes se renderizaba igual, con la empresa por
+  // defecto y todos los listados vacíos, indistinguible de haber perdido los datos.
+  const [bootError, setBootError] = useState("");
+  const runBoot = async () => {
+    setBootError("");
+    if (!getToken()) { try { setBranding(await api.getBranding()); } catch {} setBooting(false); return; }
+    try { await boot(); }
+    catch (error) {
+      if (error?.status === 401) setToken(null); // sesión vencida: cae a la pantalla de login
+      else setBootError(error?.message || "No se pudieron cargar los datos.");
+    }
     setBooting(false);
-  })(); }, []);
+  };
+  useEffect(() => { void runBoot(); }, []);
   useEffect(() => { applyBrandingTheme(branding); }, [branding]);
   // El generador se carga en segundo plano después de autenticar. En una empresa nueva el primer
   // reporte no debe depender de que el chunk de PDF termine de descargarse durante el mismo clic.
@@ -937,6 +952,17 @@ export default function App() {
   const err = (e) => toast(e?.message || "Ocurrió un error", "error");
 
   if (booting) return <div className="grid min-h-screen place-items-center bg-ink-900 text-slate-300"><div className="motion-page flex flex-col items-center gap-3" role="status" aria-label="Cargando OrdenGO"><div className="skeleton h-9 w-36 rounded-lg" /><Loader2 className="h-5 w-5 animate-spin" /></div></div>;
+  // Falló la carga con sesión válida. Se muestra el error en vez de una app vacía: un catálogo
+  // en cero por un fallo de red es indistinguible de un catálogo realmente borrado.
+  if (bootError && !me) return <div className="grid min-h-screen place-items-center bg-ink-900 p-6 text-slate-300">
+    <div className="motion-page w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-800/60 p-6 text-center">
+      <AlertTriangle className="mx-auto h-8 w-8 text-amber-400" />
+      <h1 className="mt-3 text-base font-semibold text-white">No se pudieron cargar los datos</h1>
+      <p className="mt-1 text-xs leading-relaxed text-slate-400">{bootError}</p>
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Tu información no se perdió: el servidor no respondió a tiempo. Reintentá en unos segundos.</p>
+      <button onClick={() => { setBooting(true); void runBoot(); }} className="mt-4 w-full rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400">Reintentar</button>
+    </div>
+  </div>;
   if (!me) return <Login branding={branding} onLogin={async (email, password) => { await api.login(email, password); setToken(true); await boot(); }} />;
 
   const isMgr = me.role === "admin" || me.role === "gerente";
