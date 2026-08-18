@@ -1748,7 +1748,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
         <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 bg-cyan-400/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
           <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
-          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Gestión conectada, de punta a punta</h1>
+          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Vos dirigís. Nosotros ordenamos.</h1>
           {/* Definición fija, no branding.subtitle: ese campo alimenta el título de la pestaña, donde
               una línea larga no entra. Tampoco repite lo de los bullets de abajo (órdenes, proyectos,
               trazabilidad, acceso seguro): antes los adelantaba y el bloque entero sonaba a relleno. */}
