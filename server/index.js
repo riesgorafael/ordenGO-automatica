@@ -19,7 +19,21 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 if (IS_PRODUCTION && String(process.env.JWT_SECRET || "").length < 32) throw new Error("JWT_SECRET seguro (mínimo 32 caracteres) es obligatorio en producción");
 if (IS_PRODUCTION && !process.env.DATABASE_URL) throw new Error("DATABASE_URL es obligatorio en producción");
 const JWT_SECRET = process.env.JWT_SECRET || "cambia-esto-en-produccion";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// El default de pg son 10 conexiones, y /api/bootstrap dispara 16 consultas en paralelo: una sola
+// carga de página ya no entraba en el pool, y al refrescar seguido se apilaban varios bootstraps.
+// Además cada conexión paga cuatro viajes extra por el aislamiento multiempresa (set_config y SET
+// ROLE al tomarla, los RESET al devolverla), así que permanece ocupada bastante más que el tiempo
+// de la consulta en sí. El máximo queda por encima de ese abanico para que un request no pueda
+// agotar el pool por sí solo.
+// connectionTimeoutMillis es clave: el default es 0, o sea esperar para siempre. Con el pool
+// saturado las peticiones quedaban colgadas en lugar de fallar, que es exactamente el síntoma de
+// "se cargó a medias". Con un tope, satura ruidosamente y el cliente muestra el error de arranque.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: Number(process.env.PGPOOL_MAX) || 24,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+});
 const TENANT_DB_ROLE = "ordengo_tenant";
 // Cada request autenticado conserva su organización en AsyncLocalStorage. Al tomar una conexión
 // del pool se fija ese contexto en PostgreSQL; las políticas RLS hacen el aislamiento efectivo
