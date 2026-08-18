@@ -31,7 +31,11 @@ try {
   await db.query("INSERT INTO organizations(id,slug,name,profile) VALUES($1,$2,$3,$4)", [organizationId, slug, name, emptyCompanyProfile]);
   await db.query(
     "INSERT INTO app_settings(organization_id,key,value) VALUES($1,'branding_v1',$2)",
-    [organizationId, { appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: name, companyLegalName: name, theme: "industrial", primaryColor: "#2563EB", headerColor: "#172033", logoDataUrl: "" }],
+    [organizationId, {
+      appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: name, companyLegalName: name,
+      companyCuit: "", companyIvaCondition: "", companyAddress: "", companyPhone: "", companyEmail: "", companyWebsite: "",
+      theme: "industrial", primaryColor: "#0EA5C5", headerColor: "#0B315F", logoDataUrl: "",
+    }],
   );
   await db.query(
     "INSERT INTO users(id,name,email,password_hash,role,color,active,mustchangepassword,organization_id) VALUES($1,$2,$3,$4,'admin','#0ea5e9',true,true,$5)",

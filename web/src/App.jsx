@@ -36,15 +36,15 @@ import { clearOfflineUserData, clearOrderDraft, flushOfflineQueue, loadOrderDraf
 const CUR = "USD ";
 let DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
-const DEFAULT_COMPANY_PROFILE = { locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD", pricing: { defaultHourlyRate: 50, defaultInternalHourlyCost: 0, minimumBillableHours: 2, targetMargin: 35, vatRate: 21 }, laborRoles: [], features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true } };
+const DEFAULT_COMPANY_PROFILE = { locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD", pricing: { defaultHourlyRate: 0, defaultInternalHourlyCost: 0, minimumBillableHours: 0, targetMargin: 0, vatRate: 0 }, laborRoles: [{ name: "Técnico", cost: 0 }], features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true } };
 const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", team: "team" };
 const allowedModulesForRole = (role, profile = DEFAULT_COMPANY_PROFILE) => {
   const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
   return byRole.filter((moduleId) => !MODULE_FEATURE[moduleId] || profile.features?.[MODULE_FEATURE[moduleId]] !== false);
 };
-const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Campo + Proyectos", companyName: "AUTOMATICA ARG", theme: "automatica", primaryColor: "#F18700", headerColor: "#2E2E2D", logoDataUrl: "", hideAdminModules: false, companyCuit: "20351960206", companyLegalName: "AUTOMATICA ARG", companyIvaCondition: "IVA Responsable Inscripto", companyAddress: "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", companyPhone: "+54 3462 596041", companyEmail: "", companyWebsite: "www.automatica-arg.com.ar" };
+const DEFAULT_BRANDING = { appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: "", theme: "industrial", primaryColor: "#0EA5C5", headerColor: "#0B315F", logoDataUrl: "", hideAdminModules: false, companyCuit: "", companyLegalName: "", companyIvaCondition: "", companyAddress: "", companyPhone: "", companyEmail: "", companyWebsite: "" };
 function CompanyLogo({ branding = DEFAULT_BRANDING, dark = false, className = "", alt }) {
-  const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+  const isAutomatica = branding.builtInCompanyLogo === "automatica";
   const source = branding.logoDataUrl || (isAutomatica ? (dark ? LOGO_LIGHT : LOGO) : "");
   if (source) return <img src={source} alt={alt || `Logo de ${branding.companyName || "empresa"}`} className={className} />;
   const initials = String(branding.companyName || "Empresa").split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
@@ -53,7 +53,7 @@ function CompanyLogo({ branding = DEFAULT_BRANDING, dark = false, className = ""
 const cuitDigits = (value) => String(value || "").replace(/\D/g, "");
 const formatCuit = (value) => { const digits = cuitDigits(value); return digits.length === 11 ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}` : digits; };
 const BRAND_THEMES = [
-  { id: "automatica", name: "Automática", primaryColor: "#F18700", headerColor: "#2E2E2D" },
+  { id: "automatica", name: "Naranja", primaryColor: "#F18700", headerColor: "#2E2E2D" },
   { id: "industrial", name: "Industrial", primaryColor: "#2563EB", headerColor: "#172033" },
   { id: "energia", name: "Energía", primaryColor: "#059669", headerColor: "#16312A" },
   { id: "control", name: "Control", primaryColor: "#7C3AED", headerColor: "#261B36" },
@@ -600,7 +600,7 @@ export default function App() {
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
   const [companyProfile, setCompanyProfile] = useState(DEFAULT_COMPANY_PROFILE);
   ACTIVE_COMPANY_PROFILE = companyProfile;
-  DEFAULT_RATE = Number(companyProfile.pricing?.defaultHourlyRate) || 50;
+  DEFAULT_RATE = Number(companyProfile.pricing?.defaultHourlyRate) || 0;
   if (companyProfile.laborRoles?.length) LABOR_ROLES = companyProfile.laborRoles;
   REPORT_BRANDING = branding;
   const [appearanceMode, setAppearanceMode] = useState("auto");
@@ -4087,16 +4087,12 @@ const budgetPaymentSummary = (budget, finances = []) => {
   return { billedNet, billedGross, cash, settled, settlementDifference, fullyPaid, progress: billedGross > 0 ? Math.min(100, Math.round((settled / billedGross) * 100)) : 0 };
 };
 const budgetDate = (value) => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("es-AR") : "—";
-// Mismo criterio que ya usa la creación de OT: por defecto el cliente/planta más frecuente
-// (Corteva · Venado Tuerto), buscado por coincidencia parcial de nombre en vez de exacto porque
-// el directorio puede tener variantes (ej. "[VTU] Corteva Seeds Argentina").
-const defaultBudgetClient = (clients) =>
-  clients.find((c) => /corteva/i.test(c.name || "") && clientSites(c).some((s) => /venado tuerto/i.test(s.name || "")))
-  || clients.find((c) => /corteva/i.test(c.name || ""))
-  || clients[0];
+// La selección inicial sólo usa datos disponibles en el tenant actual; el producto no contiene
+// nombres de clientes ni plantas de la empresa que originó la aplicación.
+const defaultBudgetClient = (clients) => clients[0];
 const emptyBudget = (me, clients) => {
   const client = defaultBudgetClient(clients);
-  const site = clientSites(client).find((s) => /venado tuerto/i.test(s.name || "")) || clientSites(client)[0];
+  const site = clientSites(client)[0];
   const role = LABOR_ROLES.find((item) => item.name === "Ingeniero") || LABOR_ROLES[0] || { name: "Ingeniero", cost: 0 };
   const margin = Number(ACTIVE_COMPANY_PROFILE.pricing?.targetMargin) || 0;
   const suggested = margin >= 100 ? role.cost : Math.round((role.cost / (1 - margin / 100)) * 100) / 100;
@@ -6591,14 +6587,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [stepAttempted, setStepAttempted] = useState(false);
   useEffect(() => { setStepAttempted(false); }, [step]);
   const [clientMode, setClientMode] = useState(initial.clientMode || "existing");
-  // Cliente principal: Corteva Seeds Argentina, planta Venado Tuerto. Se busca por coincidencia
-  // en vez de nombre exacto porque el directorio puede tener el cliente cargado con variantes
-  // del nombre (p. ej. "[VTU] Corteva Seeds Argentina").
-  const defaultClient = clients.find((c) => /corteva/i.test(c.name || "") && clientSites(c).some((s) => /venado tuerto/i.test(s.name || "")))
-    || clients.find((c) => /corteva/i.test(c.name || ""))
-    || clients[0];
+  const defaultClient = clients[0];
   const defaultClientId = defaultClient?.id || "";
-  const defaultSite = clientSites(defaultClient).find((s) => /venado tuerto/i.test(s.name || "")) || clientSites(defaultClient)[0];
+  const defaultSite = clientSites(defaultClient)[0];
   const [clientId, setClientId] = useState(initial.clientId || defaultClientId);
   const [newClient, setNewClient] = useState(initial.newClient || { name: "", site: "" });
   const [contact, setContact] = useState(initial.contact || ""); const [tech, setTech] = useState(initial.tech || me.name);
@@ -8423,7 +8414,7 @@ function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompan
       <div className="border-b border-slate-100 bg-brand-50/40 p-4"><div className="flex items-center gap-2"><Building2 className="h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Datos de la empresa</h3><p className="text-[11px] text-slate-500">Nombre, subtítulo y datos fiscales — se usan en toda la app y en la validación de comprobantes.</p></div></div></div>
       <div className="space-y-5 p-4">
         <section><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Empresa" required><input value={form.companyName} maxLength={80} onChange={(event) => set("companyName", event.target.value)} className="u-input" /></L><L label="Descripción del entorno"><input value={form.subtitle} maxLength={80} onChange={(event) => set("subtitle", event.target.value)} className="u-input" /></L></div><p className="mt-2 text-[11px] text-slate-500">La aplicación se identifica siempre como <b>OrdenGO</b>; aquí sólo se personaliza la empresa asociada.</p></section>
-        <section className="rounded-xl border border-slate-200 bg-slate-50 p-3"><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Datos institucionales y fiscales</h4><p className="mb-3 text-[11px] text-slate-500">Se muestran en los encabezados de los reportes y también se utilizan para validar comprobantes y futuras integraciones con ARCA.</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Razón social" help="Nombre legal que se imprimirá en los documentos."><input value={form.companyLegalName} maxLength={120} placeholder="Ej. AUTOMATICA ARG S.R.L." onChange={(event) => set("companyLegalName", event.target.value)} className="u-input bg-white" /></L><L label="CUIT de la empresa" help="Se compara contra el CUIT del receptor detectado en el comprobante escaneado."><input value={formatCuit(form.companyCuit)} maxLength={13} inputMode="numeric" placeholder="Ej. 20-35196020-6" onChange={(event) => set("companyCuit", cuitDigits(event.target.value))} className="u-input bg-white" /></L><L label="Condición frente al IVA" help="Determina el tipo de factura (A/B/C) a emitir en la futura integración con ARCA."><select value={form.companyIvaCondition} onChange={(event) => set("companyIvaCondition", event.target.value)} className="u-input bg-white">{IVA_CONDITIONS.map((condition) => <option key={condition}>{condition}</option>)}</select></L><L label="Teléfono"><input type="tel" value={form.companyPhone || ""} maxLength={40} placeholder="Ej. +54 3462 596041" onChange={(event) => set("companyPhone", event.target.value)} className="u-input bg-white" /></L><div className="sm:col-span-2"><L label="Domicilio comercial" help="Dirección completa que aparecerá en los reportes."><input value={form.companyAddress} maxLength={160} placeholder="Ej. Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)" onChange={(event) => set("companyAddress", event.target.value)} className="u-input bg-white" /></L></div><L label="Correo institucional"><input type="email" value={form.companyEmail || ""} maxLength={120} placeholder="Ej. info@empresa.com" onChange={(event) => set("companyEmail", event.target.value)} className="u-input bg-white" /></L><L label="Sitio web"><input value={form.companyWebsite || ""} maxLength={160} placeholder="Ej. www.empresa.com.ar" onChange={(event) => set("companyWebsite", event.target.value)} className="u-input bg-white" /></L></div></section>
+        <section className="rounded-xl border border-slate-200 bg-slate-50 p-3"><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Datos institucionales y fiscales</h4><p className="mb-3 text-[11px] text-slate-500">Se muestran en los encabezados de los reportes y también se utilizan para validar comprobantes y futuras integraciones con ARCA.</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><L label="Razón social" help="Nombre legal que se imprimirá en los documentos."><input value={form.companyLegalName} maxLength={120} placeholder="Ej. Empresa de Servicios S.R.L." onChange={(event) => set("companyLegalName", event.target.value)} className="u-input bg-white" /></L><L label="CUIT de la empresa" help="Se compara contra el CUIT del receptor detectado en el comprobante escaneado."><input value={formatCuit(form.companyCuit)} maxLength={13} inputMode="numeric" placeholder="Ej. 30-12345678-9" onChange={(event) => set("companyCuit", cuitDigits(event.target.value))} className="u-input bg-white" /></L><L label="Condición frente al IVA" help="Determina el tipo de factura (A/B/C) a emitir en la futura integración con ARCA."><select value={form.companyIvaCondition} onChange={(event) => set("companyIvaCondition", event.target.value)} className="u-input bg-white"><option value="">Sin definir</option>{IVA_CONDITIONS.map((condition) => <option key={condition}>{condition}</option>)}</select></L><L label="Teléfono"><input type="tel" value={form.companyPhone || ""} maxLength={40} placeholder="Ej. +54 11 5555-0000" onChange={(event) => set("companyPhone", event.target.value)} className="u-input bg-white" /></L><div className="sm:col-span-2"><L label="Domicilio comercial" help="Dirección completa que aparecerá en los reportes."><input value={form.companyAddress} maxLength={160} placeholder="Calle, número, ciudad y provincia" onChange={(event) => set("companyAddress", event.target.value)} className="u-input bg-white" /></L></div><L label="Correo institucional"><input type="email" value={form.companyEmail || ""} maxLength={120} placeholder="Ej. info@empresa.com" onChange={(event) => set("companyEmail", event.target.value)} className="u-input bg-white" /></L><L label="Sitio web"><input value={form.companyWebsite || ""} maxLength={160} placeholder="Ej. www.empresa.com" onChange={(event) => set("companyWebsite", event.target.value)} className="u-input bg-white" /></L></div></section>
       </div>
     </Box>
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
@@ -8449,7 +8440,7 @@ function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompan
     <Box className="overflow-hidden">
       <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2"><Maximize2 className="mt-0.5 h-5 w-5 text-brand-600" /><div><h3 className="text-sm font-semibold text-slate-900">Pantallas de oficina · TV</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Cada televisor tiene su propia cuenta con rol <b>Monitor de oficina</b> y su propia configuración (nombre de pantalla, modo TV y rotación) — así podés tener varias pantallas en distintas ubicaciones, cada una mostrando lo que corresponda. Configurala desde <b>Equipo</b>, en la cuenta de cada pantalla.</p></div></div><span className="w-fit rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">Sólo administradores</span></div>
     </Box>
-    <div className="flex flex-col-reverse gap-2 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm(DEFAULT_BRANDING)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restaurar valores originales</button><button disabled={saving || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar configuración</button></div>
+    <div className="flex flex-col-reverse gap-2 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:justify-end"><button onClick={() => setForm((current) => ({ ...current, theme: DEFAULT_BRANDING.theme, primaryColor: DEFAULT_BRANDING.primaryColor, headerColor: DEFAULT_BRANDING.headerColor }))} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600">Restablecer apariencia OrdenGO</button><button disabled={saving || !form.companyName.trim()} onClick={save} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar configuración</button></div>
   </div>;
 }
 

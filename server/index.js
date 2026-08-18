@@ -116,22 +116,38 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
 const DEFAULT_BRANDING = {
   appName: "OrdenGO",
-  subtitle: "Campo + Proyectos",
-  companyName: "AUTOMATICA ARG",
-  theme: "automatica",
-  primaryColor: "#F18700",
-  headerColor: "#2E2E2D",
+  subtitle: "Gestión de servicios",
+  companyName: "",
+  theme: "industrial",
+  primaryColor: "#0EA5C5",
+  headerColor: "#0B315F",
   logoDataUrl: "",
   tvModeEnabled: false,
   tvCycleEnabled: false,
   tvCycleSeconds: 30,
   hideAdminModules: false,
+  companyCuit: "",
+  companyLegalName: "",
+  companyIvaCondition: "",
+  companyAddress: "",
+  companyPhone: "",
+  companyEmail: "",
+  companyWebsite: "",
+};
+// AUTOMATICA es un tenant, no el valor predeterminado del producto. Mantener sus datos en un
+// objeto separado evita que otra empresa los herede cuando aún no completó su configuración.
+const AUTOMATICA_BRANDING = {
+  ...DEFAULT_BRANDING,
+  subtitle: "Campo + Proyectos",
+  companyName: "AUTOMATICA ARG",
+  theme: "automatica",
+  primaryColor: "#F18700",
+  headerColor: "#2E2E2D",
   companyCuit: "20351960206",
   companyLegalName: "AUTOMATICA ARG",
   companyIvaCondition: "IVA Responsable Inscripto",
   companyAddress: "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)",
   companyPhone: "+54 3462 596041",
-  companyEmail: "",
   companyWebsite: "www.automatica-arg.com.ar",
 };
 const DEFAULT_ORGANIZATION_ID = "org-automatica";
@@ -154,19 +170,19 @@ const EMPTY_ORGANIZATION_PROFILE = {
 const boundedNumber = (value, fallback, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(value)) ? Number(value) : fallback));
 const normalizeCompanyProfile = (value = {}) => {
   const pricing = value.pricing || {};
-  const roles = Array.isArray(value.laborRoles) ? value.laborRoles.map((role) => ({ name: String(role?.name || "").trim().slice(0, 60), cost: boundedNumber(role?.cost, 0, 0, 100000) })).filter((role) => role.name).slice(0, 30) : DEFAULT_COMPANY_PROFILE.laborRoles;
+  const roles = Array.isArray(value.laborRoles) ? value.laborRoles.map((role) => ({ name: String(role?.name || "").trim().slice(0, 60), cost: boundedNumber(role?.cost, 0, 0, 100000) })).filter((role) => role.name).slice(0, 30) : EMPTY_ORGANIZATION_PROFILE.laborRoles;
   return {
-    locale: ["es-AR", "es-UY", "es-CL", "es-MX", "en-US"].includes(value.locale) ? value.locale : DEFAULT_COMPANY_PROFILE.locale,
-    timezone: String(value.timezone || DEFAULT_COMPANY_PROFILE.timezone).trim().slice(0, 80),
-    baseCurrency: ["USD", "ARS", "EUR"].includes(value.baseCurrency) ? value.baseCurrency : DEFAULT_COMPANY_PROFILE.baseCurrency,
+    locale: ["es-AR", "es-UY", "es-CL", "es-MX", "en-US"].includes(value.locale) ? value.locale : EMPTY_ORGANIZATION_PROFILE.locale,
+    timezone: String(value.timezone || EMPTY_ORGANIZATION_PROFILE.timezone).trim().slice(0, 80),
+    baseCurrency: ["USD", "ARS", "EUR"].includes(value.baseCurrency) ? value.baseCurrency : EMPTY_ORGANIZATION_PROFILE.baseCurrency,
     pricing: {
-      defaultHourlyRate: boundedNumber(pricing.defaultHourlyRate, 50, 0, 100000),
+      defaultHourlyRate: boundedNumber(pricing.defaultHourlyRate, 0, 0, 100000),
       defaultInternalHourlyCost: boundedNumber(pricing.defaultInternalHourlyCost, 0, 0, 100000),
-      minimumBillableHours: boundedNumber(pricing.minimumBillableHours, 2, 0, 24),
-      targetMargin: boundedNumber(pricing.targetMargin, 35, 0, 95),
-      vatRate: boundedNumber(pricing.vatRate, 21, 0, 100),
+      minimumBillableHours: boundedNumber(pricing.minimumBillableHours, 0, 0, 24),
+      targetMargin: boundedNumber(pricing.targetMargin, 0, 0, 95),
+      vatRate: boundedNumber(pricing.vatRate, 0, 0, 100),
     },
-    laborRoles: roles.length ? roles : DEFAULT_COMPANY_PROFILE.laborRoles,
+    laborRoles: roles.length ? roles : EMPTY_ORGANIZATION_PROFILE.laborRoles,
     features: Object.fromEntries(Object.keys(DEFAULT_COMPANY_PROFILE.features).map((key) => [key, value.features?.[key] !== false])),
   };
 };
@@ -178,14 +194,14 @@ const normalizeBranding = (value = {}) => ({
   // pero no puede renombrar la aplicación desde la interfaz ni mediante la API.
   appName: DEFAULT_BRANDING.appName,
   subtitle: String(value.subtitle || DEFAULT_BRANDING.subtitle).trim().slice(0, 80),
-  companyName: String(value.companyName || DEFAULT_BRANDING.companyName).trim().slice(0, 80),
+  companyName: String(value.companyName || "").trim().slice(0, 80),
   companyCuit: digitsOnly(value.companyCuit).slice(0, 11),
   companyLegalName: String(value.companyLegalName || "").trim().slice(0, 120),
-  companyIvaCondition: IVA_CONDITIONS.includes(value.companyIvaCondition) ? value.companyIvaCondition : DEFAULT_BRANDING.companyIvaCondition,
+  companyIvaCondition: IVA_CONDITIONS.includes(value.companyIvaCondition) ? value.companyIvaCondition : "",
   companyAddress: String(value.companyAddress || "").trim().slice(0, 160),
-  companyPhone: String(value.companyPhone ?? DEFAULT_BRANDING.companyPhone).trim().slice(0, 40),
-  companyEmail: String(value.companyEmail ?? DEFAULT_BRANDING.companyEmail).trim().slice(0, 120),
-  companyWebsite: String(value.companyWebsite ?? DEFAULT_BRANDING.companyWebsite).trim().slice(0, 160),
+  companyPhone: String(value.companyPhone || "").trim().slice(0, 40),
+  companyEmail: String(value.companyEmail || "").trim().slice(0, 120),
+  companyWebsite: String(value.companyWebsite || "").trim().slice(0, 160),
   theme: String(value.theme || DEFAULT_BRANDING.theme).trim().slice(0, 30),
   primaryColor: validHexColor(value.primaryColor) ? value.primaryColor.toUpperCase() : DEFAULT_BRANDING.primaryColor,
   headerColor: validHexColor(value.headerColor) ? value.headerColor.toUpperCase() : DEFAULT_BRANDING.headerColor,
@@ -196,11 +212,23 @@ const normalizeBranding = (value = {}) => ({
   hideAdminModules: value.hideAdminModules === true,
 });
 async function loadBranding(organizationId = tenantContext.getStore()?.organizationId) {
-  const query = organizationId
-    ? pool.query("SELECT value FROM app_settings WHERE organization_id=$1 AND key='branding_v1'", [organizationId])
-    : pool.query("SELECT value FROM app_settings WHERE key='branding_v1' ORDER BY updated_at DESC LIMIT 1");
-  const row = (await query).rows[0];
-  return normalizeBranding(row?.value || {});
+  // Sin tenant explícito no se elige una configuración "reciente": eso podría exponer la marca
+  // de otra empresa en una pantalla pública o en un proceso fuera del contexto autenticado.
+  if (!organizationId) return normalizeBranding({});
+  const row = (await pool.query(`
+    SELECT organization.name, settings.value
+      FROM organizations organization
+      LEFT JOIN app_settings settings
+        ON settings.organization_id=organization.id AND settings.key='branding_v1'
+     WHERE organization.id=$1
+  `, [organizationId])).rows[0];
+  const value = row?.value || {};
+  const normalized = normalizeBranding({
+    ...value,
+    companyName: value.companyName || row?.name || "",
+    companyLegalName: value.companyLegalName || value.companyName || row?.name || "",
+  });
+  return { ...normalized, builtInCompanyLogo: organizationId === DEFAULT_ORGANIZATION_ID ? "automatica" : "" };
 }
 async function loadCompanyProfile(organizationId) {
   const row = (await pool.query("SELECT profile FROM organizations WHERE id=$1", [organizationId || tenantContext.getStore()?.organizationId || DEFAULT_ORGANIZATION_ID])).rows[0];
@@ -308,6 +336,29 @@ async function initDb() {
   }
   // Cada empresa puede tener las mismas claves de configuración (branding, cierres, cotización).
   await pool.query(`DO $$ DECLARE definition text; BEGIN SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint WHERE conname='app_settings_pkey' AND conrelid='app_settings'::regclass; IF definition IS NULL OR position('organization_id' in definition)=0 THEN ALTER TABLE app_settings DROP CONSTRAINT IF EXISTS app_settings_pkey; ALTER TABLE app_settings ADD CONSTRAINT app_settings_pkey PRIMARY KEY(organization_id,key); END IF; END $$;`);
+  // Sólo el tenant histórico de AUTOMATICA recibe sus datos corporativos. Los demás tenants
+  // parten de valores neutros y nunca usan a AUTOMATICA como fallback de una OC o reporte.
+  await pool.query(
+    "INSERT INTO app_settings(organization_id,key,value) VALUES($1,'branding_v1',$2) ON CONFLICT(organization_id,key) DO NOTHING",
+    [DEFAULT_ORGANIZATION_ID, AUTOMATICA_BRANDING],
+  );
+  // Versiones anteriores normalizaban campos vacíos con datos de AUTOMATICA. Se sanea únicamente
+  // la coincidencia exacta en tenants ajenos, preservando cualquier dato corporativo real.
+  await pool.query(`
+    UPDATE app_settings settings
+       SET value = coalesce(settings.value,'{}'::jsonb) || jsonb_build_object(
+         'companyName', CASE WHEN upper(trim(coalesce(settings.value->>'companyName',''))) IN ('','AUTOMATICA ARG') THEN organization.name ELSE settings.value->>'companyName' END,
+         'companyLegalName', CASE WHEN upper(trim(coalesce(settings.value->>'companyLegalName',''))) IN ('','AUTOMATICA ARG') THEN organization.name ELSE settings.value->>'companyLegalName' END,
+         'companyCuit', CASE WHEN regexp_replace(coalesce(settings.value->>'companyCuit',''),'[^0-9]','','g')='20351960206' THEN '' ELSE coalesce(settings.value->>'companyCuit','') END,
+         'companyAddress', CASE WHEN trim(coalesce(settings.value->>'companyAddress',''))='Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)' THEN '' ELSE coalesce(settings.value->>'companyAddress','') END,
+         'companyPhone', CASE WHEN regexp_replace(coalesce(settings.value->>'companyPhone',''),'[^0-9]','','g') IN ('543462596041','3462596041') THEN '' ELSE coalesce(settings.value->>'companyPhone','') END,
+         'companyWebsite', CASE WHEN lower(regexp_replace(coalesce(settings.value->>'companyWebsite',''),'^https?://(www\\.)?','','i')) IN ('automatica-arg.com.ar','www.automatica-arg.com.ar') THEN '' ELSE coalesce(settings.value->>'companyWebsite','') END
+       ), updated_at=now()
+      FROM organizations organization
+     WHERE settings.organization_id=organization.id
+       AND settings.organization_id<>$1
+       AND settings.key='branding_v1'
+  `, [DEFAULT_ORGANIZATION_ID]);
   await pool.query(`
     CREATE OR REPLACE FUNCTION ordengo_apply_organization() RETURNS trigger AS $$
     DECLARE active_org text;
@@ -1126,16 +1177,10 @@ async function ensureProjectAccess(userId, projectId) {
 }
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
-app.get("/api/branding", async (req, res) => {
-  try {
-    const requested = String(req.query.organization || req.headers["x-organization"] || "").trim().toLowerCase();
-    const hostname = String(req.hostname || "").split(".")[0].toLowerCase();
-    const slug = requested || (hostname && !["www", "orden-go-app", "localhost"].includes(hostname) ? hostname : "automatica");
-    const organization = (await pool.query("SELECT id FROM organizations WHERE slug=$1 AND active=true", [slug])).rows[0]
-      || (await pool.query("SELECT id FROM organizations WHERE id=$1", [DEFAULT_ORGANIZATION_ID])).rows[0];
-    res.json(await loadBranding(organization?.id || DEFAULT_ORGANIZATION_ID));
-  } catch { res.json(DEFAULT_BRANDING); }
-});
+// El login es siempre OrdenGO. La identidad corporativa sólo se entrega dentro de /api/bootstrap,
+// después de autenticar al usuario y aplicar el RLS de su organización. Así no se puede consultar
+// la ficha de otra empresa cambiando un slug o un parámetro de la URL.
+app.get("/api/branding", (_req, res) => res.json(DEFAULT_BRANDING));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ordengo", at: new Date().toISOString() }));
 app.get("/api/ready", async (_req, res) => { try { await pool.query("SELECT 1"); res.json({ status: "ready" }); } catch { res.status(503).json({ status: "unavailable" }); } });
 
@@ -1261,7 +1306,7 @@ app.put("/api/settings/branding", auth, requireRole("admin"), async (req, res) =
   const branding = normalizeBranding(input);
   await pool.query("INSERT INTO app_settings(key,value,updated_at) VALUES('branding_v1',$1,now()) ON CONFLICT(organization_id,key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [branding]);
   await auditChange({ entityType: "settings", entityId: "branding_v1", action: "update", user: req.user, beforeData: { appName: previousBranding.appName, theme: previousBranding.theme, primaryColor: previousBranding.primaryColor }, afterData: { appName: branding.appName, theme: branding.theme, primaryColor: branding.primaryColor } });
-  res.json(branding);
+  res.json({ ...branding, builtInCompanyLogo: req.user.organizationId === DEFAULT_ORGANIZATION_ID ? "automatica" : "" });
 });
 
 app.get("/api/settings/company-profile", auth, requireRole("admin", "gerente"), async (req, res) => {

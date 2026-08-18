@@ -124,7 +124,7 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, br
 
   const drawHeader = (pageIndex) => {
     let logoW = 0;
-    const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+    const isAutomatica = branding.builtInCompanyLogo === "automatica";
     const companyLogo = branding.logoDataUrl || (isAutomatica ? LOGO : "");
     try { if (companyLogo) { const properties = doc.getImageProperties(companyLogo); const ratio = properties.height / properties.width || LOGO_RATIO; const h = 6.5; doc.addImage(companyLogo, undefined, MARGIN, 5.5, h / ratio, h); logoW = h / ratio + 3; } } catch {} // cabe entre el borde y HEADER_TOP sin pisar la franja gris
     doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 23, 42);

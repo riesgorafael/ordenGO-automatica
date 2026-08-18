@@ -2,6 +2,7 @@ import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo.js";
 import PRODUCT_MARK_DATA_URL from "./assets/ordengo-mark-192.png?inline";
 import { billableHoursValue } from "../../shared/domainRules.js";
+import { reportCompanyLines, reportCompanyProfile } from "../../shared/brandingRules.js";
 
 // Ancho del logo en el PDF (mm)
 const LOGO_W = 42;
@@ -46,25 +47,8 @@ function costs(o) {
   const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
-const DEFAULT_COMPANY = {
-  name: "AUTOMATICA ARG",
-  cuit: "20-35196020-6",
-  address: "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)",
-  phone: "+54 3462 596041",
-  website: "www.automatica-arg.com.ar",
-};
-const companyProfile = (branding = {}) => ({
-  name: branding.companyLegalName || branding.companyName || DEFAULT_COMPANY.name,
-  cuit: branding.companyCuit ? String(branding.companyCuit).replace(/\D/g, "").replace(/^(\d{2})(\d{8})(\d)$/, "$1-$2-$3") : DEFAULT_COMPANY.cuit,
-  address: branding.companyAddress || DEFAULT_COMPANY.address,
-  phone: branding.companyPhone || DEFAULT_COMPANY.phone,
-  email: branding.companyEmail || "",
-  website: branding.companyWebsite || DEFAULT_COMPANY.website,
-});
-const companyLines = (branding) => {
-  const company = companyProfile(branding);
-  return [`CUIT: ${company.cuit}`, company.address, company.phone ? `Tel.: ${company.phone}` : "", company.email, company.website].filter(Boolean);
-};
+const companyProfile = reportCompanyProfile;
+const companyLines = reportCompanyLines;
 const imageFormat = (source) => {
   const mime = String(source || "").match(/^data:image\/(png|jpe?g|webp)/i)?.[1]?.toUpperCase();
   return mime === "JPG" ? "JPEG" : mime || "PNG";
@@ -72,7 +56,7 @@ const imageFormat = (source) => {
 // Dibuja el logo configurado preservando su proporción. Si la imagen personalizada no puede
 // procesarse, conserva el logo incorporado para que ningún reporte quede sin identificación.
 function drawLogo(doc, M, y, branding = {}) {
-  const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+  const isAutomatica = branding.builtInCompanyLogo === "automatica";
   const source = branding.logoDataUrl || (isAutomatica ? LOGO : "");
   if (!source) return 0;
   let ratio = LOGO_RATIO;
@@ -80,7 +64,7 @@ function drawLogo(doc, M, y, branding = {}) {
   let w = LOGO_W, h = w * ratio;
   if (h > 16) { h = 16; w = h / ratio; }
   try { doc.addImage(source, imageFormat(source), M, y, w, h); }
-  catch { try { doc.addImage(LOGO, "PNG", M, y, LOGO_W, LOGO_W * LOGO_RATIO); } catch {} }
+  catch { if (isAutomatica) { try { doc.addImage(LOGO, "PNG", M, y, LOGO_W, LOGO_W * LOGO_RATIO); } catch {} } }
   return h;
 }
 function stampProductBranding(doc) {
@@ -616,7 +600,7 @@ export function materialListReportPDF(ml, project, client, branding = {}) {
   line(M + logoColW, y + headH / 2, M + logoColW + midColW);
 
   const audience = ml.audience === "interno" ? "interno" : "cliente";
-  const isAutomatica = /automatica/i.test(branding.companyName || branding.companyLegalName || "");
+  const isAutomatica = branding.builtInCompanyLogo === "automatica";
   const logoSource = audience === "interno" ? (branding.logoDataUrl || (isAutomatica ? LOGO : "")) : client?.logoDataUrl;
   if (logoSource) drawFitImage(logoSource, M + 1.5, y + 1.5, logoColW - 3, headH - 3);
 
