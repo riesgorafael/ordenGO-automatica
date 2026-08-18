@@ -203,4 +203,4 @@ $env:ORG_ADMIN_PASSWORD="contraseña-temporal-segura"
 node server/createOrganization.js --slug=empresa --name="Empresa de Servicios SRL" --admin-email=admin@empresa.com --admin-name="Administrador"
 ```
 
-El administrador creado debe cambiar la contraseña temporal en el primer ingreso. Luego configura identidad, costos y módulos desde **Configuración → Perfil operativo de la empresa**.
+La organización se crea sin clientes, proyectos, órdenes, presupuestos, movimientos, inventario ni datos operativos heredados. El administrador debe cambiar la contraseña temporal en el primer ingreso y luego configurar identidad, tarifas, costos, impuestos y módulos desde **Configuración → Perfil operativo de la empresa**.

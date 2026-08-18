@@ -20,6 +20,7 @@ if (IS_PRODUCTION && String(process.env.JWT_SECRET || "").length < 32) throw new
 if (IS_PRODUCTION && !process.env.DATABASE_URL) throw new Error("DATABASE_URL es obligatorio en producción");
 const JWT_SECRET = process.env.JWT_SECRET || "cambia-esto-en-produccion";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const TENANT_DB_ROLE = "ordengo_tenant";
 // Cada request autenticado conserva su organización en AsyncLocalStorage. Al tomar una conexión
 // del pool se fija ese contexto en PostgreSQL; las políticas RLS hacen el aislamiento efectivo
 // incluso si una ruta olvida agregar un WHERE organization_id.
@@ -31,6 +32,10 @@ const configureTenantClient = async (client) => {
   const rawRelease = client.release.bind(client);
   try {
     await client.query("SELECT set_config('app.organization_id',$1,false)", [organizationId]);
+    // La conexión de despliegue suele ser propietaria o superusuario y, por diseño de
+    // PostgreSQL, puede omitir RLS. SET ROLE hace que cada consulta de la aplicación se
+    // ejecute con un rol sin privilegios de bypass y las políticas sean obligatorias.
+    await client.query(`SET ROLE ${TENANT_DB_ROLE}`);
   } catch (error) {
     rawRelease(error); // descarta la conexión si no pudo fijarse el tenant
     throw error;
@@ -40,6 +45,7 @@ const configureTenantClient = async (client) => {
     if (released) return;
     released = true;
     client.query("RESET app.organization_id")
+      .then(() => client.query("RESET ROLE"))
       .then(() => rawRelease(...releaseArgs))
       .catch((error) => rawRelease(error)); // nunca reutilizar una conexión con contexto residual
   };
@@ -138,6 +144,12 @@ const DEFAULT_COMPANY_PROFILE = {
     { name: "Administrativo", cost: 6 }, { name: "Ayudante", cost: 5 }, { name: "Programador Aprendiz", cost: 7 },
   ],
   features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true },
+};
+const EMPTY_ORGANIZATION_PROFILE = {
+  locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD",
+  pricing: { defaultHourlyRate: 0, defaultInternalHourlyCost: 0, minimumBillableHours: 0, targetMargin: 0, vatRate: 0 },
+  laborRoles: [{ name: "Técnico", cost: 0 }],
+  features: { ...DEFAULT_COMPANY_PROFILE.features },
 };
 const boundedNumber = (value, fallback, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(value)) ? Number(value) : fallback));
 const normalizeCompanyProfile = (value = {}) => {
@@ -308,9 +320,20 @@ async function initDb() {
   `);
   for (const table of tenantTables) {
     await pool.query(`DROP TRIGGER IF EXISTS ${table}_organization_trigger ON ${table}; CREATE TRIGGER ${table}_organization_trigger BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION ordengo_apply_organization();`);
-    await pool.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${table} FORCE ROW LEVEL SECURITY; DROP POLICY IF EXISTS ${table}_tenant_policy ON ${table}; CREATE POLICY ${table}_tenant_policy ON ${table} USING (NULLIF(current_setting('app.organization_id',true),'') IS NULL OR organization_id=NULLIF(current_setting('app.organization_id',true),'')) WITH CHECK (NULLIF(current_setting('app.organization_id',true),'') IS NULL OR organization_id=NULLIF(current_setting('app.organization_id',true),''));`);
+    await pool.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${table} FORCE ROW LEVEL SECURITY; DROP POLICY IF EXISTS ${table}_tenant_policy ON ${table}; CREATE POLICY ${table}_tenant_policy ON ${table} USING ((current_user <> '${TENANT_DB_ROLE}' AND NULLIF(current_setting('app.organization_id',true),'') IS NULL) OR organization_id=NULLIF(current_setting('app.organization_id',true),'')) WITH CHECK ((current_user <> '${TENANT_DB_ROLE}' AND NULLIF(current_setting('app.organization_id',true),'') IS NULL) OR organization_id=NULLIF(current_setting('app.organization_id',true),''));`);
     await pool.query(`CREATE INDEX IF NOT EXISTS ${table}_organization_idx ON ${table}(organization_id);`);
   }
+  // Rol de ejecución sin BYPASSRLS. Se crea durante la migración con la conexión propietaria
+  // y recibe sólo los permisos CRUD necesarios; el aislamiento real lo determinan las políticas.
+  await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${TENANT_DB_ROLE}') THEN CREATE ROLE ${TENANT_DB_ROLE} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT; END IF; END $$;`);
+  await pool.query(`GRANT ${TENANT_DB_ROLE} TO CURRENT_USER`);
+  await pool.query(`GRANT USAGE ON SCHEMA public TO ${TENANT_DB_ROLE}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${TENANT_DB_ROLE}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${TENANT_DB_ROLE};`);
+  await pool.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${TENANT_DB_ROLE}; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE,SELECT ON SEQUENCES TO ${TENANT_DB_ROLE};`);
+  await pool.query(`ALTER TABLE organizations ENABLE ROW LEVEL SECURITY; ALTER TABLE organizations FORCE ROW LEVEL SECURITY; DROP POLICY IF EXISTS organizations_tenant_policy ON organizations; CREATE POLICY organizations_tenant_policy ON organizations USING ((current_user <> '${TENANT_DB_ROLE}' AND NULLIF(current_setting('app.organization_id',true),'') IS NULL) OR id=NULLIF(current_setting('app.organization_id',true),'')) WITH CHECK ((current_user <> '${TENANT_DB_ROLE}' AND NULLIF(current_setting('app.organization_id',true),'') IS NULL) OR id=NULLIF(current_setting('app.organization_id',true),''));`);
+  // Las organizaciones creadas por versiones anteriores quedaban con profile={} y al leerlas
+  // heredaban las tarifas/perfiles predeterminados de AUTOMATICA. Se inicializan con valores
+  // neutros sin tocar empresas que ya hayan configurado su perfil.
+  await pool.query("UPDATE organizations SET profile=$2,updated_at=now() WHERE id<>$1 AND profile='{}'::jsonb", [DEFAULT_ORGANIZATION_ID, EMPTY_ORGANIZATION_PROFILE]);
   await pool.query("CREATE INDEX IF NOT EXISTS gantt_tasks_project_idx ON gantt_tasks (project_id);");
   // Baja definitiva del módulo de gestión industrial (activos, contratos/SLA y documentación
   // técnica). Se eliminan las tablas y sus datos por pedido expreso. Las órdenes conservan los

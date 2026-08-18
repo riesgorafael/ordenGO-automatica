@@ -67,6 +67,41 @@ html[data-appearance="dark"] .shadow-2xl { --tw-shadow-color: rgb(0 0 0 / 0.45);
 html[data-appearance="dark"] .recharts-cartesian-grid line { stroke: #334155; }
 html[data-appearance="dark"] .recharts-text { fill: #a8b5c7; }
 
+/* El acceso tiene identidad propia de OrdenGO y no hereda superficies genéricas del tema. */
+.login-card {
+  border: 1px solid #cffafe;
+  background: rgb(255 255 255 / 0.96);
+  backdrop-filter: blur(16px);
+}
+.login-field {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+.login-field:focus {
+  border-color: #06b6d4;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgb(6 182 212 / 0.16);
+}
+.login-help { border-color: #e2e8f0; }
+html[data-appearance="dark"] .login-card {
+  border-color: #29405f;
+  background: rgb(13 28 49 / 0.97);
+}
+html[data-appearance="dark"] .login-field {
+  border-color: #3b506d;
+  background: #14243c;
+  color: #f8fafc;
+}
+html[data-appearance="dark"] .login-field:focus {
+  border-color: #22d3ee;
+  background: #172a46;
+  box-shadow: 0 0 0 3px rgb(34 211 238 / 0.16);
+}
+html[data-appearance="dark"] .login-help { border-color: #263b58; }
+
 @media (forced-colors: active) {
   button, input, select, textarea { forced-color-adjust: auto; }
 }

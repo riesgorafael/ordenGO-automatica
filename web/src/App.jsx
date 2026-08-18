@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
-  WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2,
+  WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2, Mail,
   ShoppingCart, Truck, ChevronDown, Eraser, Minimize2, Package, Share2, StickyNote, PenLine,
   Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity, Sun, Moon, Monitor,
 } from "lucide-react";
@@ -1594,7 +1594,11 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
     try { await onLogin(email.trim(), pass); localStorage.setItem(LAST_EMAIL_KEY, email.trim()); }
     catch (e) { setErr({ message: e?.message || "No se pudo iniciar sesión", locked: e?.status === 429 }); setBusy(false); }
   };
-  const bullets = ["Permisos por proyecto y por rol", "Trazabilidad de cada operación", "Información centralizada en tiempo real"];
+  const bullets = [
+    { text: "Órdenes, proyectos y finanzas en un único flujo", icon: ClipboardList },
+    { text: "Seguimiento en tiempo real con trazabilidad completa", icon: Activity },
+    { text: "Acceso seguro según empresa, proyecto y rol", icon: KeyRound },
+  ];
   return (
     <div className="grid min-h-screen grid-cols-1 bg-gradient-to-br from-slate-50 via-white to-cyan-50 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
       {/* Panel de marca */}
@@ -1607,8 +1611,9 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
           <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
           <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Gestión conectada, de punta a punta</h1>
           <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
-          <ul className="mt-8 space-y-3">
-            {bullets.map((b) => (<li key={b} className="flex items-center gap-3 text-sm text-slate-100"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><CheckCircle2 className="h-3.5 w-3.5" /></span>{b}</li>))}
+          <div className="mt-8 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">Una sola plataforma para</div>
+          <ul className="mt-3 space-y-2.5">
+            {bullets.map(({ text, icon: Icon }) => (<li key={text} className="flex items-center gap-3 rounded-xl border border-cyan-200/10 bg-white/[0.035] px-3 py-2.5 text-sm text-slate-100"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><Icon className="h-4 w-4" /></span><span className="leading-snug">{text}</span></li>))}
           </ul>
         </div>
       </div>
@@ -1617,19 +1622,17 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
       <div className="flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-sm">
           <div className="mb-6 lg:hidden"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-auto w-56 max-w-full object-contain" /></div>
-          <div className="overflow-hidden rounded-2xl border border-cyan-100 bg-white shadow-xl shadow-[#0B315F]/10">
+          <div className="login-card overflow-hidden rounded-3xl shadow-2xl shadow-[#0B315F]/15">
             <div className="h-1 bg-gradient-to-r from-[#0B315F] via-[#0EA5C5] to-[#20C4DE]" />
-            <div className="p-6 sm:p-7">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-cyan-700">Acceso seguro</div>
-              <h2 className="text-2xl font-bold text-slate-900">Iniciar sesión</h2>
-              <p className="mt-1 text-sm text-slate-500">Ingresá con tu cuenta empresarial.</p>
-              <div className="mt-5 space-y-4">
+            <div className="p-6 sm:p-8">
+              <div className="mb-5 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100"><KeyRound className="h-5 w-5" /></span><div><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-600">Acceso seguro</div><h2 className="text-2xl font-bold leading-tight text-slate-900">Iniciar sesión</h2><p className="mt-1 text-sm text-slate-500">Accedé a tu espacio de trabajo.</p></div></div>
+              <div className="space-y-4">
                 <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">Correo electrónico</span>
-                  <input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type="email" autoFocus placeholder="correo@empresa.com" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" /></label>
+                  <div className="relative"><Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type="email" autoFocus autoComplete="email" placeholder="correo@empresa.com" className="login-field w-full rounded-xl py-3 pl-10 pr-3 text-sm text-slate-900 outline-none" /></div></label>
                 <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">Contraseña</span>
                   <div className="relative">
-                    <input value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type={show ? "text" : "password"} placeholder="••••••••••" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-16 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" />
-                    <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">{show ? "Ocultar" : "Mostrar"}</button>
+                    <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type={show ? "text" : "password"} autoComplete="current-password" placeholder="••••••••••" className="login-field w-full rounded-xl py-3 pl-10 pr-20 text-sm text-slate-900 outline-none" />
+                    <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">{show ? "Ocultar" : "Mostrar"}</button>
                   </div>
                 </label>
                 {err && (err.locked ? (
@@ -1643,10 +1646,10 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
                 ) : (
                   <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{err.message}</div>
                 ))}
-                <button onClick={submit} disabled={busy || !email || !pass} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#0B315F] px-3 py-3 text-sm font-semibold text-white shadow-sm shadow-cyan-950/15 transition hover:bg-[#0E4A79] focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Ingresar</button>
+                <button onClick={submit} disabled={busy || !email || !pass} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B315F] to-[#087FA5] px-3 py-3.5 text-sm font-semibold text-white shadow-lg shadow-cyan-950/15 transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Ingresar</button>
               </div>
-              <div className="mt-5 border-t border-slate-100 pt-4">
-                <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-400"><KeyRound className="mt-0.5 h-3 w-3 shrink-0" /> La sesión se protege con un token seguro. ¿Olvidaste tu contraseña? Contactá al administrador.</p>
+              <div className="login-help mt-6 border-t pt-4">
+                <p className="text-center text-[11px] leading-relaxed text-slate-400">¿Olvidaste tu contraseña? Contactá al administrador de tu empresa.</p>
               </div>
             </div>
           </div>

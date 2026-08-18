@@ -12,6 +12,12 @@ const name = String(args.name || "").trim().slice(0, 120);
 const email = String(args["admin-email"] || "").trim().toLowerCase();
 const adminName = String(args["admin-name"] || "Administrador").trim().slice(0, 100);
 const password = String(process.env.ORG_ADMIN_PASSWORD || "");
+const emptyCompanyProfile = {
+  locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD",
+  pricing: { defaultHourlyRate: 0, defaultInternalHourlyCost: 0, minimumBillableHours: 0, targetMargin: 0, vatRate: 0 },
+  laborRoles: [{ name: "Técnico", cost: 0 }],
+  features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true },
+};
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL es obligatorio");
 if (!slug || !name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Uso: --slug=empresa --name=\"Empresa SRL\" --admin-email=admin@empresa.com --admin-name=\"Nombre\"");
@@ -22,7 +28,7 @@ const db = await pool.connect();
 try {
   await db.query("BEGIN");
   const organizationId = `org-${slug}`;
-  await db.query("INSERT INTO organizations(id,slug,name,profile) VALUES($1,$2,$3,'{}'::jsonb)", [organizationId, slug, name]);
+  await db.query("INSERT INTO organizations(id,slug,name,profile) VALUES($1,$2,$3,$4)", [organizationId, slug, name, emptyCompanyProfile]);
   await db.query(
     "INSERT INTO app_settings(organization_id,key,value) VALUES($1,'branding_v1',$2)",
     [organizationId, { appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: name, companyLegalName: name, theme: "industrial", primaryColor: "#2563EB", headerColor: "#172033", logoDataUrl: "" }],
