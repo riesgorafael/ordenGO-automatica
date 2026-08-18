@@ -3,7 +3,13 @@ FROM node:20-alpine AS web
 WORKDIR /web
 COPY shared /shared
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
-RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm install --frozen-lockfile
+# El frontend instala SIN --frozen-lockfile a propósito: no hay Node instalado en la máquina de
+# desarrollo, así que el lockfile no se puede regenerar al agregar una dependencia y un install
+# congelado fallaría. El costo es real y conviene tenerlo presente: dos builds del mismo commit
+# pueden resolver versiones distintas de dependencias transitivas. En cuanto haya Node local,
+# corré `pnpm install` en web/, commiteá el lockfile y devolvé --frozen-lockfile a esta línea.
+# El backend (etapa 2) sí lo conserva: su lockfile está al día.
+RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm install --no-frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 

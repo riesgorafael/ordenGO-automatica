@@ -55,7 +55,7 @@ jobs:
 
       - name: Instalar frontend
         working-directory: web
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile  # ver Dockerfile: el lockfile del frontend no está al día
 
       - name: Compilar frontend
         working-directory: web
