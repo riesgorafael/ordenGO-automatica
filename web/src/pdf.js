@@ -1695,8 +1695,8 @@ export async function credentialPDF(user, branding = {}) {
     // verticales, y forzar un alto fijo deformaría los que no coincidan.
     let ratio = LOGO_RATIO;
     try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
-    let lw = 26, lh = lw * ratio;
-    if (lh > 12) { lh = 12; lw = lh / ratio; }
+    let lw = 21, lh = lw * ratio;
+    if (lh > 9) { lh = 9; lw = lh / ratio; }
     try { doc.addImage(logoSource, "PNG", M, 5, lw, lh, undefined, "FAST"); headerBottom = Math.max(headerBottom, 5 + lh); } catch {}
   } else {
     // Sin logo cargado, el nombre ocupa su lugar. Con logo no se imprime: la marca ya lo dice y
@@ -1708,15 +1708,15 @@ export async function credentialPDF(user, branding = {}) {
   // Ficha de la empresa a la derecha, en tres líneas. Sale de la misma configuración que encabeza
   // los reportes, así que un cambio de CUIT o de web se refleja en los dos lados a la vez. Cada
   // línea ausente colapsa hacia arriba en lugar de dejar un hueco.
-  const infoX = W / 2 + 2;
+  const infoX = M + 23;
   let iy = 7.5;
-  const infoLine = (text, bold = false, size = 4.6) => {
+  const infoLine = (text, bold = false, size = 4.2) => {
     if (!text) return;
     doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(size);
     doc.setTextColor(...(bold ? ink : [91, 100, 114]));
     doc.text(clip(text, W - infoX - M), infoX, iy); iy += 3.4;
   };
-  infoLine(company.name, true, 5);
+  infoLine(company.name, true, 4.6);
   if (company.cuit) infoLine(`CUIT ${company.cuit}`);
   infoLine(company.website);
   headerBottom = Math.max(headerBottom, iy - 2);
@@ -1724,8 +1724,8 @@ export async function credentialPDF(user, branding = {}) {
   doc.setDrawColor(...accent); doc.setLineWidth(0.7); doc.line(M, headerBottom + 2.5, W - M, headerBottom + 2.5);
   doc.setLineWidth(0.2);
   let y = headerBottom + 8;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(...accent);
-  doc.text("CREDENCIAL DE ACCESO", W / 2, y, { align: "center", charSpace: 0.35 });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(5.6); doc.setTextColor(...accent);
+  doc.text("CREDENCIAL DE ACCESO", W / 2, y, { align: "center", charSpace: 0.25 });
 
   /* ---------- Foto y QR ---------- */
   y += 4;
@@ -1766,7 +1766,7 @@ export async function credentialPDF(user, branding = {}) {
   // El nombre baja de cuerpo por pasos hasta entrar en dos líneas: la nómina tiene nombres cortos y
   // otros de tres palabras, y un tamaño fijo obligaría a cortar los largos.
   const fullName = String(user?.name || "").toUpperCase();
-  let nameSize = 12, nameLines = [];
+  let nameSize = 10, nameLines = [];
   for (; nameSize >= 7.5; nameSize -= 0.5) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
     nameLines = doc.splitTextToSize(fullName, W - M * 2);
