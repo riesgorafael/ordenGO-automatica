@@ -1605,7 +1605,6 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
         <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 bg-cyan-400/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
           <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
-          <div className="mb-4 flex items-center gap-3"><CompanyLogo branding={branding} dark className="h-9 max-w-36 object-contain text-white" /><div className="border-l border-cyan-200/20 pl-3 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">Entorno de<br /><span className="text-slate-100">{branding.companyName || "Empresa"}</span></div></div>
           <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Gestión conectada, de punta a punta</h1>
           <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
           <ul className="mt-8 space-y-3">
@@ -1617,7 +1616,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
       {/* Tarjeta de acceso */}
       <div className="flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-sm">
-          <div className="mb-6 lg:hidden"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-auto w-56 max-w-full object-contain" /><div className="mt-3 flex items-center gap-2 border-t border-slate-200 pt-3"><CompanyLogo branding={branding} className="h-8 max-w-28 object-contain text-slate-700" /><div><b className="block text-xs text-slate-800">{branding.companyName || "Empresa"}</b><span className="text-[11px] text-slate-500">{branding.subtitle}</span></div></div></div>
+          <div className="mb-6 lg:hidden"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-auto w-56 max-w-full object-contain" /></div>
           <div className="overflow-hidden rounded-2xl border border-cyan-100 bg-white shadow-xl shadow-[#0B315F]/10">
             <div className="h-1 bg-gradient-to-r from-[#0B315F] via-[#0EA5C5] to-[#20C4DE]" />
             <div className="p-6 sm:p-7">
