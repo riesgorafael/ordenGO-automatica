@@ -1596,19 +1596,20 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
   };
   const bullets = ["Permisos por proyecto y por rol", "Trazabilidad de cada operación", "Información centralizada en tiempo real"];
   return (
-    <div className="grid min-h-screen grid-cols-1 bg-slate-100 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
+    <div className="grid min-h-screen grid-cols-1 bg-gradient-to-br from-slate-50 via-white to-cyan-50 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
       {/* Panel de marca */}
-      <div className="relative hidden overflow-hidden bg-ink-900 lg:block">
-        <div className="pointer-events-none absolute -right-24 top-1/2 h-[42rem] w-[42rem] -translate-y-1/2 rounded-full border border-white/5" />
-        <div className="pointer-events-none absolute -right-10 top-1/2 h-[30rem] w-[30rem] -translate-y-1/2 rounded-full border border-white/5" />
-        <div className="pointer-events-none absolute left-0 top-0 h-64 w-64 bg-brand-500/10 blur-3xl" />
+      <div className="relative hidden overflow-hidden bg-[#07182E] lg:block">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(14,165,197,0.18),transparent_32%),linear-gradient(145deg,#07182E_0%,#0B315F_58%,#07182E_100%)]" />
+        <div className="pointer-events-none absolute -right-24 top-1/2 h-[42rem] w-[42rem] -translate-y-1/2 rounded-full border border-cyan-300/10" />
+        <div className="pointer-events-none absolute -right-10 top-1/2 h-[30rem] w-[30rem] -translate-y-1/2 rounded-full border border-cyan-300/10" />
+        <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 bg-cyan-400/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
-          <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-black/10"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
-          <div className="mb-4 flex items-center gap-3"><CompanyLogo branding={branding} dark className="h-9 max-w-36 object-contain text-white" /><div className="border-l border-white/15 pl-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-400">Entorno de<br /><span className="text-slate-200">{branding.companyName || "Empresa"}</span></div></div>
+          <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
+          <div className="mb-4 flex items-center gap-3"><CompanyLogo branding={branding} dark className="h-9 max-w-36 object-contain text-white" /><div className="border-l border-cyan-200/20 pl-3 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">Entorno de<br /><span className="text-slate-100">{branding.companyName || "Empresa"}</span></div></div>
           <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Gestión conectada, de punta a punta</h1>
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-400">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
           <ul className="mt-8 space-y-3">
-            {bullets.map((b) => (<li key={b} className="flex items-center gap-3 text-sm text-slate-200"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-brand-500/20 text-brand-400"><CheckCircle2 className="h-3.5 w-3.5" /></span>{b}</li>))}
+            {bullets.map((b) => (<li key={b} className="flex items-center gap-3 text-sm text-slate-100"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><CheckCircle2 className="h-3.5 w-3.5" /></span>{b}</li>))}
           </ul>
         </div>
       </div>
@@ -1617,19 +1618,19 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
       <div className="flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-sm">
           <div className="mb-6 lg:hidden"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-auto w-56 max-w-full object-contain" /><div className="mt-3 flex items-center gap-2 border-t border-slate-200 pt-3"><CompanyLogo branding={branding} className="h-8 max-w-28 object-contain text-slate-700" /><div><b className="block text-xs text-slate-800">{branding.companyName || "Empresa"}</b><span className="text-[11px] text-slate-500">{branding.subtitle}</span></div></div></div>
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
-            <div className="h-1 bg-brand-500" />
+          <div className="overflow-hidden rounded-2xl border border-cyan-100 bg-white shadow-xl shadow-[#0B315F]/10">
+            <div className="h-1 bg-gradient-to-r from-[#0B315F] via-[#0EA5C5] to-[#20C4DE]" />
             <div className="p-6 sm:p-7">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-brand-600">Acceso seguro</div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-cyan-700">Acceso seguro</div>
               <h2 className="text-2xl font-bold text-slate-900">Iniciar sesión</h2>
               <p className="mt-1 text-sm text-slate-500">Ingresá con tu cuenta empresarial.</p>
               <div className="mt-5 space-y-4">
                 <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">Correo electrónico</span>
-                  <input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type="email" autoFocus placeholder="correo@empresa.com" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" /></label>
+                  <input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type="email" autoFocus placeholder="correo@empresa.com" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" /></label>
                 <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">Contraseña</span>
                   <div className="relative">
-                    <input value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type={show ? "text" : "password"} placeholder="••••••••••" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-16 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20" />
-                    <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-50">{show ? "Ocultar" : "Mostrar"}</button>
+                    <input value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type={show ? "text" : "password"} placeholder="••••••••••" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-16 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" />
+                    <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">{show ? "Ocultar" : "Mostrar"}</button>
                   </div>
                 </label>
                 {err && (err.locked ? (
@@ -1643,7 +1644,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
                 ) : (
                   <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{err.message}</div>
                 ))}
-                <button onClick={submit} disabled={busy || !email || !pass} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-400 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Ingresar</button>
+                <button onClick={submit} disabled={busy || !email || !pass} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#0B315F] px-3 py-3 text-sm font-semibold text-white shadow-sm shadow-cyan-950/15 transition hover:bg-[#0E4A79] focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Ingresar</button>
               </div>
               <div className="mt-5 border-t border-slate-100 pt-4">
                 <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-400"><KeyRound className="mt-0.5 h-3 w-3 shrink-0" /> La sesión se protege con un token seguro. ¿Olvidaste tu contraseña? Contactá al administrador.</p>
