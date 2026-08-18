@@ -3344,7 +3344,17 @@ app.post("/api/tasks/:id/comment", auth, requireProjectWrite, async (req, res) =
   if (merged.assignee && merged.assignee !== req.user.id) await notify(merged.assignee, `Nuevo comentario en ${merged.id}`, "task:" + merged.id);
   res.json(merged);
 });
-app.delete("/api/tasks/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+app.delete("/api/tasks/:id", auth, requireRole("admin", "gerente", "tecnico", "tecnico_oficina"), async (req, res) => {
+  // Un técnico borra sólo lo suyo: la tarea tiene que estar en un proyecto que tenga asignado y
+  // además estar a su cargo. Al crear, el alta le fija assignee = él mismo, así que esto cubre
+  // exactamente lo que puede generar, sin habilitarlo a borrar el trabajo de un compañero ni una
+  // tarea que le bajó gerencia. Los monitores no entran acá: son de sólo visualización.
+  if (isProjectScoped(req.user.role)) {
+    const existing = (await pool.query("SELECT data FROM tasks WHERE id=$1", [req.params.id])).rows[0]?.data;
+    if (!existing) return res.status(404).json({ error: "No existe" });
+    if (!(await tecCanProject(req.user, existing.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
+    if (existing.assignee !== req.user.id) return res.status(403).json({ error: "Sólo podés eliminar tareas que tengas a tu cargo" });
+  }
   const deleted = await pool.query("DELETE FROM tasks WHERE id=$1 RETURNING data", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
   await auditChange({ entityType: "task", entityId: req.params.id, action: "delete", user: req.user, beforeData: { project: deleted.rows[0].data.project, status: deleted.rows[0].data.status, assignee: deleted.rows[0].data.assignee } });
