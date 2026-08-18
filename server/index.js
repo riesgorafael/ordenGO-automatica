@@ -1662,17 +1662,34 @@ async function resolveProjectParent(parentId, projectId) {
   return { value: id };
 }
 
-app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res) => {
+// Los técnicos entran acá además de admin y gerencia, pero con dos límites que se aplican abajo:
+// sólo pueden crear subproyectos, y sólo colgando de un proyecto que ya tengan asignado. Editar,
+// renombrar y eliminar proyectos sigue siendo exclusivo de admin y gerencia.
+app.post("/api/projects", auth, requireRole("admin", "gerente", "tecnico", "tecnico_oficina"), async (req, res) => {
   const p = { ...(req.body || {}) }; if (!p.id) p.id = `p-${crypto.randomUUID()}`;
   p.name = String(p.name || "").trim(); p.key = String(p.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
   if (!p.name) return res.status(400).json({ error: "El nombre del proyecto es obligatorio" });
   const newParent = await resolveProjectParent(p.parentId, p.id);
   if (newParent.error) return res.status(400).json({ error: newParent.error });
   if (!newParent.skip) p.parentId = newParent.value;
+  // Un técnico desglosa lo que tiene en la mano; no abre proyectos nuevos ni entra a los de otro
+  // equipo. Se valida contra el padre ya resuelto, así no alcanza con mandar un parentId inventado.
+  if (isProjectScoped(req.user.role)) {
+    if (!p.parentId) return res.status(403).json({ error: "Sólo podés crear subproyectos dentro de un proyecto asignado" });
+    if (!(await tecCanProject(req.user, p.parentId))) return res.status(403).json({ error: "No tenés acceso a ese proyecto" });
+  }
   if ((await pool.query("SELECT 1 FROM projects WHERE upper(data->>'key')=upper($1) LIMIT 1", [p.key])).rows[0]) return res.status(409).json({ error: "Ya existe un proyecto con esa clave" });
   if (!Array.isArray(p.allowedUsers)) {
-    const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
-    p.allowedUsers = monitors;
+    if (p.parentId) {
+      // Un subproyecto hereda los accesos de su general y suma a quien lo crea. Sin esto, un técnico
+      // crearía un subproyecto que él mismo no puede ver, y el equipo del general tampoco lo vería.
+      const parentRow = (await pool.query("SELECT data FROM projects WHERE id=$1", [p.parentId])).rows[0];
+      const inherited = Array.isArray(parentRow?.data?.allowedUsers) ? parentRow.data.allowedUsers : [];
+      p.allowedUsers = [...new Set([...inherited, ...(isProjectScoped(req.user.role) ? [req.user.id] : [])])];
+    } else {
+      const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
+      p.allowedUsers = monitors;
+    }
   }
   try { await pool.query("INSERT INTO projects(id,data,organization_id) VALUES($1,$2,$3)", [p.id, p, req.user.organizationId]); await auditChange({ entityType: "project", entityId: p.id, action: "create", user: req.user, afterData: { key: p.key, name: p.name, clientId: p.clientId || "" } }); }
   catch (error) { if (error.code === "23505") return res.status(409).json({ error: "Ya existe un proyecto con ese identificador" }); throw error; }

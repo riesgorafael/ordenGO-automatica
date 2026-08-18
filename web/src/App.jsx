@@ -710,6 +710,10 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [projectEditor, setProjectEditor] = useState(null);
   const [pStale, setPStale] = useState(savedProjectFilters.stale);
+  // Subproyecto abierto dentro de un general. Vacío significa "sólo las tareas propias del general",
+  // con sus subproyectos plegados en la tira de resumen. No se guarda en las preferencias: es una
+  // navegación del momento, no un filtro que convenga arrastrar entre sesiones.
+  const [pSub, setPSub] = useState("");
   const [prefill, setPrefill] = useState(null);
   const [orderPrefill, setOrderPrefill] = useState(null);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
@@ -1009,6 +1013,10 @@ export default function App() {
   const isMonitor = me.role === "monitor_oficina";
   const tvMode = isMonitor && tvSettings.tvModeEnabled;
   const isOffice = me.role === "tecnico_oficina" || isMonitor;
+  // Los técnicos pueden desglosar en subproyectos un proyecto que ya tengan asignado. No abarca a
+  // los monitores, que son de sólo visualización. El servidor aplica el mismo límite: acá se
+  // decide qué se muestra, allá qué se permite.
+  const canAddSubproject = isMgr || me.role === "tecnico" || me.role === "tecnico_oficina";
   const appearanceOption = APPEARANCE_OPTIONS.find((option) => option.id === appearanceMode) || APPEARANCE_OPTIONS[2];
   const AppearanceIcon = appearanceOption.icon;
   const cycleAppearance = () => setAppearanceMode((current) => current === "auto" ? "light" : current === "light" ? "dark" : "auto");
@@ -1127,10 +1135,27 @@ export default function App() {
   // Con parentId nace como subproyecto del general indicado y hereda su color, para que la rama se
   // lea junta en el tablero y el calendario. Ojo al invocarlo desde un onClick: hay que envolverlo
   // en una flecha, porque si se pasa la función pelada el primer argumento sería el evento del click.
-  const createProject = (parentId = null) => setProjectEditor({
-    mode: "create", name: "", key: "PRJ", parentId,
-    color: (parentId && projects.find((p) => p.id === parentId)?.color) || PALETTE[projects.length % PALETTE.length],
-  });
+  const createProject = (parentId = null) => {
+    const parent = parentId ? projects.find((p) => p.id === parentId) : null;
+    // Clave sugerida a partir del general (VTU → VTU2, VTU3…). Quien crea un subproyecto desde la
+    // obra no tiene por qué inventar un código único, y dejar "PRJ" chocaría con el primero que ya
+    // exista. La base se recorta a 4 para que con el número no pase de los 6 caracteres que admite
+    // el servidor. La lista local puede no traer los proyectos que el usuario no ve, así que si
+    // igual hay choque el alta responde 409 con el motivo.
+    const suggestedKey = () => {
+      if (!parent) return "PRJ";
+      const base = String(parent.key || "PRJ").slice(0, 4).toUpperCase();
+      for (let n = 2; n < 100; n += 1) {
+        const candidate = `${base}${n}`;
+        if (!projects.some((p) => String(p.key || "").toUpperCase() === candidate)) return candidate;
+      }
+      return base;
+    };
+    setProjectEditor({
+      mode: "create", name: "", key: suggestedKey(), parentId,
+      color: parent?.color || PALETTE[projects.length % PALETTE.length],
+    });
+  };
   const editProject = (id) => { const current = projects.find((p) => p.id === id); if (current) setProjectEditor({ mode: "edit", ...current }); };
   const saveProjectEditor = async (form) => { try { if (form.mode === "create") { const project = await api.createProject({ name: form.name, key: form.key, color: form.color, active: form.active !== false, parentId: form.parentId || null }); setProjects((items) => [...items, project]); } else { const project = await api.updateProject(form.id, { name: form.name, color: form.color, active: form.active !== false, parentId: form.parentId || null }); setProjects((items) => items.map((item) => item.id === form.id ? project : item)); setTasks((items) => items.map((task) => task.project === project.id ? { ...task, color: project.color } : task)); if (project.active === false && pProj === project.id) setPProj("all"); } setProjectEditor(null); toast("Proyecto guardado", "success"); } catch (e) { err(e); } };
   const deleteProject = async (id) => {
@@ -1574,7 +1599,7 @@ export default function App() {
                 {!isMonitor && (isMgr || activeProjectView === "board") && <button onClick={() => setPMine((v) => !v)} className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pMine ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600"}`}><Avatar user={me} size={18} /> Mis tareas</button>}
                 {activeProjectView === "board" && <button onClick={() => setPStale((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-medium ${pStale ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Clock className="h-4 w-4" /> Estancadas</button>}
                 {isMgr && activeProjectView === "board" && <button onClick={() => createProject()} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><Folder className="h-4 w-4" /> Proyecto</button>}
-                {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => createProject(pProj)} title={`Crear un subproyecto dentro de ${projects.find((p) => p.id === pProj)?.name || "este proyecto"}`} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><FolderTree className="h-4 w-4" /> Subproyecto</button>}
+                {canAddSubproject && activeProjectView === "board" && pProj !== "all" && <button onClick={() => createProject(pProj)} title={`Crear un subproyecto dentro de ${projects.find((p) => p.id === pProj)?.name || "este proyecto"}`} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:border-brand-400 hover:text-brand-600"><FolderTree className="h-4 w-4" /> Subproyecto</button>}
                 {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => setDupProj(projects.find((p) => p.id === pProj))} title="Duplicar proyecto con sus tareas" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplicar</button>}
                 {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => setAccessProj(projects.find((p) => p.id === pProj))} title="Gestionar accesos" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Users className="h-4 w-4" /> Accesos</button>}
                 {isMgr && activeProjectView === "board" && pProj !== "all" && <button onClick={() => editProject(pProj)} title="Renombrar proyecto" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>}
@@ -1583,17 +1608,26 @@ export default function App() {
             </div>}
             {(() => {
               const finishedProjectIds = new Set(projects.filter((p) => p.active === false).map((p) => p.id));
-              // Seleccionar un proyecto general incluye las tareas de sus subproyectos: es el
-              // sentido de la jerarquía, y sin esto el general se vería siempre vacío.
-              const scopeIds = pProj === "all" ? null : projectWithDescendants(projects, pProj);
+              // Con subproyectos, el general muestra por defecto sólo sus tareas propias y deja las
+              // ramas plegadas en la tira de resumen: volcarlas todas juntas saturaba el tablero y
+              // no dejaba ver a qué subproyecto pertenecía cada tarjeta. Al abrir una rama, el
+              // alcance pasa a ser esa rama completa (con sus propios subproyectos, si los tuviera).
+              // Un proyecto sin hijos se comporta como siempre.
+              const subChildren = pProj === "all" ? [] : projects.filter((p) => p.parentId === pProj && (p.active !== false || p.id === pSub));
+              const openSub = subChildren.some((p) => p.id === pSub) ? pSub : "";
+              const scopeIds = pProj === "all" ? null
+                : openSub ? projectWithDescendants(projects, openSub)
+                : subChildren.length ? new Set([pProj])
+                : projectWithDescendants(projects, pProj);
               const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : scopeIds.has(t.project)) &&(!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} me={me} branding={branding} whiteboardNotes={whiteboardNotes} reportSignal={projectReportSignal} onConsumeReport={() => setProjectReportSignal(0)} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} branding={branding} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
-              if (isMonitor) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} />;
-              if (isMgr) return <Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} />;
+              const strip = subChildren.length && activeProjectView === "board" ? <SubprojectStrip parent={projects.find((p) => p.id === pProj)} items={subChildren} projects={projects} tasks={tasks} active={openSub} onSelect={setPSub} /> : null;
+              if (isMonitor) return <>{strip}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} /></>;
+              if (isMgr) return <>{strip}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
-              return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} />;
+              return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <>{strip}<TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
             })()}
           </>
           ); })()}
@@ -1610,14 +1644,14 @@ export default function App() {
 
       {oDetail && <OrderDetail ger={isMgr} users={users} projects={projects} branding={branding} onErr={err} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
-      {editing !== undefined && <TaskModal task={editing} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} onDuplicate={duplicateTask} prefill={prefill} />}
+      {editing !== undefined && <TaskModal task={editing} defaultProjectId={pProj === "all" ? "" : pProj} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} onDuplicate={duplicateTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
       {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
-      {projectEditor && <ProjectEditor value={projectEditor} projects={projects} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
+      {projectEditor && <ProjectEditor value={projectEditor} projects={projects} requireParent={!isMgr} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
       {/* Menú secundario móvil */}
       {mobileMoreOpen && mobileExtraTabs.length > 0 && (
@@ -1809,7 +1843,10 @@ function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger, onC
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-2xl sm:pb-5" onClick={(e) => e.stopPropagation()}><div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl ${danger ? "bg-rose-50 text-rose-600" : "bg-brand-50 text-brand-600"}`}>{danger ? <Trash2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</div><h2 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-2 text-sm leading-relaxed text-slate-500">{message}</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={onConfirm} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-brand-500 hover:bg-brand-400"}`}>{confirmLabel}</button></div></div></div>;
 }
 
-function ProjectEditor({ value, projects = [], onClose, onSave }) {
+// requireParent deja el editor en modo "sólo subproyectos": es lo que ve un técnico, que puede
+// desglosar un proyecto asignado pero no abrir uno nuevo desde cero. Sin esto podría elegir
+// "Ninguno" y recibir un rechazo del servidor sin entender por qué.
+function ProjectEditor({ value, projects = [], requireParent = false, onClose, onSave }) {
   const [form, setForm] = useState(value);
   const set = (patch) => setForm((current) => ({ ...current, ...patch }));
   const mouseDownOnBackdrop = useRef(false);
@@ -1817,7 +1854,7 @@ function ProjectEditor({ value, projects = [], onClose, onSave }) {
   // hijo cerraría un ciclo. El servidor lo rechaza igual, pero conviene que la opción ni aparezca.
   const ownBranch = form.id ? projectWithDescendants(projects, form.id) : new Set();
   const parentOptions = projectTree(projects.filter((p) => !ownBranch.has(p.id)));
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? (form.parentId ? "Nuevo subproyecto" : "Nuevo proyecto") : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Proyecto general" help="Colgá este proyecto de otro para armar una jerarquía. Al seleccionar el general, el tablero, el calendario y los reportes incluyen también las tareas de sus subproyectos."><select value={form.parentId || ""} onChange={(e) => set({ parentId: e.target.value || null })} className="u-input"><option value="">Ninguno · es un proyecto general</option>{parentOptions.map(({ project: p, depth }) => <option key={p.id} value={p.id}>{depth > 0 ? `${" ".repeat(depth * 4)}└ ` : ""}{p.key} · {p.name}</option>)}</select></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? (form.parentId ? "Nuevo subproyecto" : "Nuevo proyecto") : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Proyecto general" help="Colgá este proyecto de otro para armar una jerarquía. Al seleccionar el general, el tablero, el calendario y los reportes incluyen también las tareas de sus subproyectos."><select value={form.parentId || ""} onChange={(e) => set({ parentId: e.target.value || null })} className="u-input">{!requireParent && <option value="">Ninguno · es un proyecto general</option>}{parentOptions.map(({ project: p, depth }) => <option key={p.id} value={p.id}>{depth > 0 ? `${" ".repeat(depth * 4)}└ ` : ""}{p.key} · {p.name}</option>)}</select></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim() || (requireParent && !form.parentId)} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
 function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
@@ -7086,6 +7123,49 @@ function TaskColumn({ status, tasks, projects = [], userById, onOpen, onMove, on
   </section>;
 }
 
+/* Tira de subproyectos de un proyecto general. Los deja plegados en una tarjeta compacta —nombre,
+   tareas hechas sobre el total y barra de avance— en lugar de volcar todas sus tareas al tablero
+   mezcladas con las del general. Al elegir uno, el tablero pasa a mostrar sólo esa rama.
+   El avance cuenta tareas en "Hecho" sobre el total de la rama, el mismo criterio que Reportes:
+   cuenta tareas, no pondera esfuerzo ni duración. */
+function SubprojectStrip({ parent, items, projects, tasks, active, onSelect }) {
+  const branchStats = (rootId) => {
+    const scope = projectWithDescendants(projects, rootId);
+    const own = tasks.filter((t) => scope.has(t.project));
+    const done = own.filter((t) => t.status === "Hecho").length;
+    return { total: own.length, done, pct: own.length ? Math.round((done / own.length) * 100) : 0 };
+  };
+  const ownCount = tasks.filter((t) => t.project === parent.id).length;
+  return (
+    <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400"><FolderTree className="h-3.5 w-3.5" /> Subproyectos de {parent.name}</div>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => onSelect("")} aria-pressed={!active} className={`rounded-lg border px-3 py-2 text-left text-xs font-medium ${!active ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+          Sólo {parent.key}<span className="ml-1.5 rounded-full bg-white px-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">{ownCount}</span>
+        </button>
+        {items.map((child) => {
+          const stats = branchStats(child.id);
+          const selected = active === child.id;
+          return (
+            <button key={child.id} onClick={() => onSelect(selected ? "" : child.id)} aria-pressed={selected}
+              title={`${child.key} · ${child.name} — ${stats.done} de ${stats.total} tarea(s) hechas`}
+              className={`min-w-[9rem] max-w-[14rem] rounded-lg border px-3 py-2 text-left ${selected ? "border-brand-400 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: child.color }} />
+                <span className="truncate text-xs font-semibold text-slate-800">{child.name}</span>
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${stats.pct}%` }} /></div>
+                <span className="shrink-0 text-[11px] font-medium text-slate-500">{stats.done}/{stats.total}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Board({ tasks, projects = [], userById, onOpen, onMove, onMoveToStatus, readOnly = false, tvMode = false }) {
   return <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 ${tvMode ? "tv-board" : ""}`}>{T_STATUS.map((status) => <TaskColumn key={status} status={status} tasks={tasks} projects={projects} userById={userById} onOpen={onOpen} onMove={onMove} onMoveToStatus={onMoveToStatus} readOnly={readOnly} tvMode={tvMode} />)}</div>;
 }
@@ -7175,10 +7255,18 @@ function ActivitySection({ entity, onSend, userById }) {
 }
 
 /* ===================================== PROYECTOS: MODAL TAREA ===================================== */
-function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, onDuplicate, prefill }) {
+function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly = false, nextId, onClose, onSave, onDelete, onComment, onDuplicate, prefill, defaultProjectId = "" }) {
   useDialogOpenClass(onClose);
   const editingExisting = !!task;
-  const [f, setF] = useState(() => task || { id: null, project: projects[0]?.id || "", title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}) });
+  // La tarea nueva nace en el proyecto que se está mirando. Antes tomaba projects[0], o sea el
+  // primero de la lista, y había que corregirlo a mano cada vez —o peor, se creaba en el proyecto
+  // equivocado sin que nadie lo notara—. Sólo se cae al primero cuando no hay uno seleccionado,
+  // que es el caso de "Todos los proyectos", y se comprueba que siga existiendo en la lista visible.
+  const [f, setF] = useState(() => task || {
+    id: null,
+    project: (defaultProjectId && projects.some((p) => p.id === defaultProjectId) ? defaultProjectId : projects[0]?.id) || "",
+    title: "", desc: "", assignee: me.id, status: "Por hacer", priority: "Media", type: "Tarea", due: "", ...(prefill || {}),
+  });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
   const [dupProjectId, setDupProjectId] = useState("");
   const [duplicating, setDuplicating] = useState(false);
