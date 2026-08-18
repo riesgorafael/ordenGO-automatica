@@ -75,10 +75,13 @@ const DEFAULT_BRANDING = {
   tvCycleEnabled: false,
   tvCycleSeconds: 30,
   hideAdminModules: false,
-  companyCuit: "",
-  companyLegalName: "",
+  companyCuit: "20351960206",
+  companyLegalName: "AUTOMATICA ARG",
   companyIvaCondition: "IVA Responsable Inscripto",
-  companyAddress: "",
+  companyAddress: "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)",
+  companyPhone: "+54 3462 596041",
+  companyEmail: "",
+  companyWebsite: "www.automatica-arg.com.ar",
 };
 const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
@@ -91,6 +94,9 @@ const normalizeBranding = (value = {}) => ({
   companyLegalName: String(value.companyLegalName || "").trim().slice(0, 120),
   companyIvaCondition: IVA_CONDITIONS.includes(value.companyIvaCondition) ? value.companyIvaCondition : DEFAULT_BRANDING.companyIvaCondition,
   companyAddress: String(value.companyAddress || "").trim().slice(0, 160),
+  companyPhone: String(value.companyPhone ?? DEFAULT_BRANDING.companyPhone).trim().slice(0, 40),
+  companyEmail: String(value.companyEmail ?? DEFAULT_BRANDING.companyEmail).trim().slice(0, 120),
+  companyWebsite: String(value.companyWebsite ?? DEFAULT_BRANDING.companyWebsite).trim().slice(0, 160),
   theme: String(value.theme || DEFAULT_BRANDING.theme).trim().slice(0, 30),
   primaryColor: validHexColor(value.primaryColor) ? value.primaryColor.toUpperCase() : DEFAULT_BRANDING.primaryColor,
   headerColor: validHexColor(value.headerColor) ? value.headerColor.toUpperCase() : DEFAULT_BRANDING.headerColor,

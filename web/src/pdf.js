@@ -45,18 +45,50 @@ function costs(o) {
   const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
   return { labor, mats, total: labor + mats };
 }
-// Dibuja el logo arriba a la izquierda; devuelve el alto ocupado
-function drawLogo(doc, M, y) {
-  const w = LOGO_W, h = w * LOGO_RATIO;
-  try { doc.addImage(LOGO, "PNG", M, y, w, h); } catch {}
+const DEFAULT_COMPANY = {
+  name: "AUTOMATICA ARG",
+  cuit: "20-35196020-6",
+  address: "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)",
+  phone: "+54 3462 596041",
+  website: "www.automatica-arg.com.ar",
+};
+const companyProfile = (branding = {}) => ({
+  name: branding.companyLegalName || branding.companyName || DEFAULT_COMPANY.name,
+  cuit: branding.companyCuit ? String(branding.companyCuit).replace(/\D/g, "").replace(/^(\d{2})(\d{8})(\d)$/, "$1-$2-$3") : DEFAULT_COMPANY.cuit,
+  address: branding.companyAddress || DEFAULT_COMPANY.address,
+  phone: branding.companyPhone || DEFAULT_COMPANY.phone,
+  email: branding.companyEmail || "",
+  website: branding.companyWebsite || DEFAULT_COMPANY.website,
+});
+const companyLines = (branding) => {
+  const company = companyProfile(branding);
+  return [`CUIT: ${company.cuit}`, company.address, company.phone ? `Tel.: ${company.phone}` : "", company.email, company.website].filter(Boolean);
+};
+const imageFormat = (source) => {
+  const mime = String(source || "").match(/^data:image\/(png|jpe?g|webp)/i)?.[1]?.toUpperCase();
+  return mime === "JPG" ? "JPEG" : mime || "PNG";
+};
+// Dibuja el logo configurado preservando su proporción. Si la imagen personalizada no puede
+// procesarse, conserva el logo incorporado para que ningún reporte quede sin identificación.
+function drawLogo(doc, M, y, branding = {}) {
+  const source = branding.logoDataUrl || LOGO;
+  let ratio = LOGO_RATIO;
+  try { const properties = doc.getImageProperties(source); if (properties?.width && properties?.height) ratio = properties.height / properties.width; } catch {}
+  let w = LOGO_W, h = w * ratio;
+  if (h > 16) { h = 16; w = h / ratio; }
+  try { doc.addImage(source, imageFormat(source), M, y, w, h); }
+  catch { try { doc.addImage(LOGO, "PNG", M, y, LOGO_W, LOGO_W * LOGO_RATIO); } catch {} }
   return h;
 }
-
-function drawServiceSummaryPage(doc, order, valued = false, project = null) {
-  const W = 210, M = 15, technical = order.technical || {}, t = totals(order);
-  drawLogo(doc, M, 12);
+function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30) {
+  drawLogo(doc, M, logoY, branding);
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
-  ["CUIT: 20-35196020-6", "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
+  companyLines(branding).slice(0, 5).forEach((line, index) => doc.text(line, M, linesY + index * 3.8));
+}
+
+function drawServiceSummaryPage(doc, order, valued = false, project = null, branding = {}) {
+  const W = 210, M = 15, technical = order.technical || {}, t = totals(order);
+  drawCompanyHeader(doc, branding, M);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text(valued ? "CONSTANCIA DE SERVICIO VALORIZADA" : "CONSTANCIA DE SERVICIO", W - M, 16, { align: "right" });
   doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
@@ -124,7 +156,7 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null) {
   if (order.technicianSignatureUrl) { try { doc.addImage(order.technicianSignatureUrl, "PNG", W - M - 58, signatureY - 23, 44, 20); } catch {} }
   doc.setDrawColor(100, 116, 139); doc.line(M, signatureY, M + 72, signatureY); doc.line(W - M - 72, signatureY, W - M, signatureY);
   doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(71, 85, 105);
-  doc.text("CONFORMIDAD DEL CLIENTE", M + 36, signatureY + 5, { align: "center" }); doc.text("RESPONSABLE AUTOMÁTICA ARG", W - M - 36, signatureY + 5, { align: "center" });
+  doc.text("CONFORMIDAD DEL CLIENTE", M + 36, signatureY + 5, { align: "center" }); doc.text(`RESPONSABLE ${companyProfile(branding).name.toUpperCase()}`, W - M - 36, signatureY + 5, { align: "center" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
   doc.text(order.signedBy || "Nombre y firma", M + 36, signatureY + 10, { align: "center" });
   doc.text([technical.signerRole, technical.signerCompany].filter(Boolean).join(" - ") || "Cargo / empresa", M + 36, signatureY + 14, { align: "center" });
@@ -133,7 +165,7 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null) {
   doc.text(`Firma: ${formatStamp(order.technicianSignedAt || technical.completedAt || order.createdAt)}`, W - M - 36, signatureY + 14, { align: "center" });
 }
 
-export function buildOrderReceiptPDF(order, audience = "client", project = null) {
+export function buildOrderReceiptPDF(order, audience = "client", project = null, branding = {}) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   const internal = audience === "internal";
@@ -142,11 +174,11 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
   const showSales = internal || valued;
   const technical = order.technical || {};
   let y = 16;
-  if (!internal) { drawServiceSummaryPage(doc, order, valued, project); doc.addPage(); }
+  if (!internal) { drawServiceSummaryPage(doc, order, valued, project, branding); doc.addPage(); }
   const brk = (need = 8) => { if (y + need > 282) { doc.addPage(); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(100, 116, 139); doc.text(`${order.id} - CONTINUACIÓN`, M, 14); doc.setDrawColor(226, 232, 240); doc.line(M, 17, W - M, 17); y = 24; } };
 
   /* Encabezado con logo */
-  const lh = drawLogo(doc, M, y - 4);
+  const lh = drawLogo(doc, M, y - 4, branding);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
   doc.text(internal ? "INFORME TÉCNICO INTERNO" : "ANEXO TÉCNICO DE SERVICIO", W - M, y, { align: "right" });
   y += 6;
@@ -386,11 +418,11 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null)
   return doc;
 }
 
-export async function clientOrderReportPDF(order, project = null) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "client", project).save(`${order.id}_cliente.pdf`); }
-export async function valuedClientReportPDF(order, project = null) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "valued", project).save(`${order.id}_cliente_valorizado.pdf`); }
-export async function internalOrderReportPDF(order, project = null) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "internal", project).save(`${order.id}_interno.pdf`); }
+export async function clientOrderReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "client", project, branding).save(`${order.id}_cliente.pdf`); }
+export async function valuedClientReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "valued", project, branding).save(`${order.id}_cliente_valorizado.pdf`); }
+export async function internalOrderReportPDF(order, project = null, branding = {}) { const printable = await orderWithEmbeddedAssets(order); buildOrderReceiptPDF(printable, "internal", project, branding).save(`${order.id}_interno.pdf`); }
 
-export function monthlyReportPDF(month, monthLabel, rows, sum) {
+export function monthlyReportPDF(month, monthLabel, rows, sum, branding = {}) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -398,7 +430,7 @@ export function monthlyReportPDF(month, monthLabel, rows, sum) {
   let drawHead = () => {};
   const brk = (need = 8) => { if (y + need > 285) { doc.addPage(); y = 20; drawHead(); } };
 
-  const lh = drawLogo(doc, M, y - 4);
+  const lh = drawLogo(doc, M, y - 4, branding);
   doc.setFontSize(11); doc.setTextColor(100, 116, 139);
   doc.text(String(month).length <= 4 ? "REPORTE ANUAL POR CLIENTE" : "REPORTE MENSUAL POR CLIENTE", W - M, y, { align: "right" });
   y += 6; doc.setFont("helvetica", "normal"); doc.setFontSize(9);
@@ -455,16 +487,14 @@ const nativeMoney = (amount, currency) => `${currency === "USD" ? "USD " : curre
 
 const CURRENCY_NAME = { USD: "DÓLARES", ARS: "PESOS ARGENTINOS", EUR: "EUROS" };
 
-export function purchaseOrderReportPDF(po, supplier, project) {
+export function purchaseOrderReportPDF(po, supplier, project, branding = {}) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   let y = 20;
   let drawHead = () => {};
   const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
 
-  drawLogo(doc, M, 12);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
-  ["CUIT: 20-35196020-6", "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
+  drawCompanyHeader(doc, branding, M);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text("ORDEN DE COMPRA", W - M, 16, { align: "right" });
   doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
@@ -540,7 +570,7 @@ export function purchaseOrderReportPDF(po, supplier, project) {
   doc.save(`${po.number || po.id}_orden_de_compra.pdf`);
 }
 
-export function materialListReportPDF(ml, project, client) {
+export function materialListReportPDF(ml, project, client, branding = {}) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 12;
   const CW = W - 2 * M;
@@ -569,12 +599,12 @@ export function materialListReportPDF(ml, project, client) {
   line(M + logoColW, y + headH / 2, M + logoColW + midColW);
 
   const audience = ml.audience === "interno" ? "interno" : "cliente";
-  const logoSource = audience === "interno" ? LOGO : client?.logoDataUrl;
+  const logoSource = audience === "interno" ? (branding.logoDataUrl || LOGO) : client?.logoDataUrl;
   if (logoSource) drawFitImage(logoSource, M + 1.5, y + 1.5, logoColW - 3, headH - 3);
 
   const midX = M + logoColW + midColW / 2;
   doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(15, 23, 42);
-  doc.text(String(audience === "interno" ? "AUTOMATICA ARG" : ml.client || "Cliente sin asignar").toUpperCase(), midX, y + headH / 2 - 3, { align: "center" });
+  doc.text(String(audience === "interno" ? companyProfile(branding).name : ml.client || "Cliente sin asignar").toUpperCase(), midX, y + headH / 2 - 3, { align: "center" });
   doc.setFontSize(9);
   doc.text("Listado de Materiales I&C", midX, y + headH / 2 + 5.5, { align: "center" });
 
@@ -706,7 +736,7 @@ export function materialListReportPDF(ml, project, client) {
 // Presupuesto en dos formatos: "cliente" (solo venta: cantidad, unidad, precio de venta, total —
 // costo interno y margen quedan afuera, son datos de uso exclusivo interno) e "interno" (agrega
 // costo, margen por línea y el resumen de margen bruto, para uso de administración/gerencia).
-export function budgetReportPDF(budget, client, audience = "cliente") {
+export function budgetReportPDF(budget, client, audience = "cliente", branding = {}) {
   const internal = audience === "interno";
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
@@ -714,9 +744,7 @@ export function budgetReportPDF(budget, client, audience = "cliente") {
   let drawHead = () => {};
   const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
 
-  drawLogo(doc, M, 12);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
-  ["CUIT: 20-35196020-6", "Bv. Ovidio Lagos 160 - Venado Tuerto (Santa Fe)", "Tel.: +54 3462 596041", "www.automatica-arg.com.ar"].forEach((line, index) => doc.text(line, M, 30 + index * 3.8));
+  drawCompanyHeader(doc, branding, M);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text(internal ? "PRESUPUESTO · USO INTERNO" : "PRESUPUESTO", W - M, 16, { align: "right" });
   doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
@@ -816,14 +844,14 @@ export function budgetReportPDF(budget, client, audience = "cliente") {
 // Resumen ejecutivo del Panel de dirección: los gráficos de Recharts son SVG/canvas en vivo, no
 // algo que jsPDF pueda incrustar directamente, así que el PDF reconstruye los mismos números como
 // tablas — el resumen que un gerente se llevaría de una reunión, no un calco pixel a pixel del panel.
-export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, aging) {
+export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, aging, branding = {}) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15;
   let y = 20;
   let drawHead = () => {};
   const brk = (need = 8) => { if (y + need > 275) { doc.addPage(); y = 20; drawHead(); } };
 
-  drawLogo(doc, M, 12);
+  drawLogo(doc, M, 12, branding);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text("PANEL DE DIRECCIÓN", W - M, 16, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
@@ -875,7 +903,7 @@ export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, agi
 export function financeReportPDF({
   period, periodLabel, generatedBy = "", currencyLabel = "USD", rateNote = "", fmt = money,
   headline = [], kpis = [], trend = [], costs = [], aging = [], openInvoices = [],
-  suppliers = [], insights = [], notes = [],
+  suppliers = [], insights = [], notes = [], branding = {},
 }) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15, CW = W - 2 * M;
@@ -951,7 +979,7 @@ export function financeReportPDF({
   };
 
   /* ---------- Portada ---------- */
-  drawLogo(doc, M, 12);
+  drawLogo(doc, M, 12, branding);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text("RESUMEN FINANCIERO", W - M, 16, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
@@ -1173,7 +1201,7 @@ export function projectStatusReportPDF({
   projectLabel, generatedBy = "", verdict, progress, kpis = [], byStatus = [], workload = [],
   schedule = [], scheduleNote = "", risks = [], riskNote = "", achievements = [], achievementsNote = "",
   timeline = [], upcoming = [], upcomingTotal = 0, overdueList = [], overdueTotal = 0,
-  completionTrend = [], trendCoverage = null, recommendations = [], notes = [],
+  completionTrend = [], trendCoverage = null, recommendations = [], notes = [], branding = {},
 }) {
   const doc = new jsPDF("p", "mm", "a4");
   const W = 210, M = 15, CW = W - 2 * M;
@@ -1252,7 +1280,7 @@ export function projectStatusReportPDF({
   };
 
   /* ---------- Portada ---------- */
-  drawLogo(doc, M, 12);
+  drawLogo(doc, M, 12, branding);
   doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
   doc.text("REPORTE DE ESTADO DE PROYECTO", W - M, 16, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
