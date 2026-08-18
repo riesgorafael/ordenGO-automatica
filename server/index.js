@@ -1437,7 +1437,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     pool.query("SELECT data, updated_at FROM tasks WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
     pool.query("SELECT * FROM notifications WHERE user_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 50", [req.user.id, organizationId]),
     pool.query("SELECT data FROM parts WHERE organization_id=$1 ORDER BY data->>'name'", [organizationId]),
-    loadBranding(),
+    loadBranding(organizationId),
     loadCompanyProfile(organizationId),
     pool.query("SELECT data FROM suppliers WHERE organization_id=$1 ORDER BY data->>'name'", [organizationId]),
     pool.query("SELECT data, updated_at FROM purchase_orders WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
@@ -1506,7 +1506,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
 
 /* ------------------------------------------------ Configuración de marca (solo Admin) ------------------------------------------------ */
 app.put("/api/settings/branding", auth, requireRole("admin"), async (req, res) => {
-  const previousBranding = await loadBranding();
+  const previousBranding = await loadBranding(req.user.organizationId);
   const input = req.body || {};
   const logo = String(input.logoDataUrl || "");
   if (logo && !/^data:image\/(png|jpeg|webp);base64,/i.test(logo)) return res.status(400).json({ error: "El logo debe ser una imagen PNG, JPG o WebP" });
