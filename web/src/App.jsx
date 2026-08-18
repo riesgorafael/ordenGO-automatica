@@ -7136,15 +7136,29 @@ function SubprojectStrip({ parent, items, projects, tasks, active, onSelect }) {
     const scope = projectWithDescendants(projects, rootId);
     const own = tasks.filter((t) => scope.has(t.project));
     const done = own.filter((t) => t.status === "Hecho").length;
-    return { total: own.length, done, pct: own.length ? Math.round((done / own.length) * 100) : 0 };
+    // Vencidas y estancadas son lo que hace falta ver sin abrir la rama: un 0/2 no distingue entre
+    // un subproyecto recién arrancado y uno frenado hace semanas.
+    return {
+      total: own.length, done,
+      pct: own.length ? Math.round((done / own.length) * 100) : 0,
+      overdue: own.filter(isOverdue).length,
+      stale: own.filter(isStale).length,
+    };
   };
   const ownCount = tasks.filter((t) => t.project === parent.id).length;
   return (
     <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
       <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400"><FolderTree className="h-3.5 w-3.5" /> Subproyectos de {parent.name}</div>
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => onSelect("")} aria-pressed={!active} className={`rounded-lg border px-3 py-2 text-left text-xs font-medium ${!active ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
-          Sólo {parent.key}<span className="ml-1.5 rounded-full bg-white px-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">{ownCount}</span>
+      {/* Scroll horizontal en vez de wrap: con varios subproyectos, envolver convertía la tira en un
+          bloque alto que empujaba el tablero fuera de la pantalla, justo lo que se quería evitar. */}
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {/* La tarjeta del general comparte alto y forma con las de sus subproyectos para que la fila
+            se lea como un conjunto; se distingue por el borde punteado, no por el tamaño. */}
+        <button onClick={() => onSelect("")} aria-pressed={!active}
+          title={`Ver sólo las tareas propias de ${parent.name}`}
+          className={`flex w-[11rem] shrink-0 flex-col justify-center rounded-xl border border-dashed p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${!active ? "border-brand-300 bg-brand-50/60 shadow-sm ring-1 ring-brand-200" : "border-slate-300 bg-white"}`}>
+          <div className="truncate text-sm font-semibold text-slate-800">Sólo {parent.key}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">{ownCount} tarea(s) propias</div>
         </button>
         {items.map((child) => {
           const stats = branchStats(child.id);
@@ -7152,14 +7166,19 @@ function SubprojectStrip({ parent, items, projects, tasks, active, onSelect }) {
           return (
             <button key={child.id} onClick={() => onSelect(selected ? "" : child.id)} aria-pressed={selected}
               title={`${child.key} · ${child.name} — ${stats.done} de ${stats.total} tarea(s) hechas`}
-              className={`min-w-[9rem] max-w-[14rem] rounded-lg border px-3 py-2 text-left ${selected ? "border-brand-400 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
-              <div className="flex items-center gap-1.5">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: child.color }} />
-                <span className="truncate text-xs font-semibold text-slate-800">{child.name}</span>
+              className={`w-[15rem] shrink-0 rounded-xl border border-l-4 p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${selected ? "border-brand-300 bg-brand-50/60 shadow-sm ring-1 ring-brand-200" : "border-slate-200 bg-white"}`}
+              style={{ borderLeftColor: child.color }}>
+              <div className="truncate text-sm font-semibold text-slate-800">{child.name}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-400"><span className="font-mono">{child.key}</span><span>·</span><span>{stats.total} tarea(s)</span></div>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${stats.pct}%`, background: child.color }} /></div>
+                <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-700">{stats.pct}%</span>
               </div>
-              <div className="mt-1 flex items-center gap-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${stats.pct}%` }} /></div>
-                <span className="shrink-0 text-[11px] font-medium text-slate-500">{stats.done}/{stats.total}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                {stats.total > 0 && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">{stats.done}/{stats.total} hechas</span>}
+                {stats.overdue > 0 && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">{stats.overdue} vencida(s)</span>}
+                {stats.stale > 0 && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{stats.stale} estancada(s)</span>}
+                {stats.total === 0 && <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">Sin tareas</span>}
               </div>
             </button>
           );
