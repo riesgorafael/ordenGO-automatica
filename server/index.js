@@ -944,7 +944,14 @@ const buildSettingsPatch = (body, current = {}) => {
   if (body.emergencyContact !== undefined) patch.emergencyContact = String(body.emergencyContact || "").trim().slice(0, 80);
   if (body.emergencyPhone !== undefined) patch.emergencyPhone = String(body.emergencyPhone || "").trim().slice(0, 40);
   if (body.bloodType !== undefined) patch.bloodType = String(body.bloodType || "").trim().slice(0, 10);
-  return Object.keys(patch).length ? { ...current, ...patch } : null;
+  if (!Object.keys(patch).length) return null;
+  const merged = { ...current, ...patch };
+  // Token de verificación de la credencial. Lo genera el servidor la primera vez que se guarda una
+  // ficha y no se vuelve a tocar: es lo que se imprime en el QR. Nunca se toma del cliente —este
+  // helper sólo copia campos conocidos, así que un credentialToken enviado en el cuerpo se descarta—
+  // porque si alguien pudiera elegirlo, podría clonar el QR de otra persona.
+  if (!merged.credentialToken) merged.credentialToken = crypto.randomUUID();
+  return merged;
 };
 // Qué ve del resto del equipo quien no es admin. Se suman foto y cargo, que son los datos con los
 // que la app identifica a una persona en tarjetas y avatares. Documento, teléfono, contacto de
@@ -1431,6 +1438,36 @@ async function ensureProjectAccess(userId, projectId) {
 // después de autenticar al usuario y aplicar el RLS de su organización. Así no se puede consultar
 // la ficha de otra empresa cambiando un slug o un parámetro de la URL.
 app.get("/api/branding", (_req, res) => res.json(DEFAULT_BRANDING));
+
+// Verificación pública de credenciales: es lo que abre el QR impreso en la tarjeta, para que en
+// portería se pueda comprobar que la persona sigue activa en la empresa.
+//
+// Está deliberadamente acotada, porque es la única ruta sin autenticar que toca datos de personas:
+//  · El identificador es un token opaco y aleatorio por empleado, no el id de usuario. Sin esto,
+//    quien tuviera una credencial podría recorrer ids y enumerar la nómina entera.
+//  · Devuelve sólo lo que ya está impreso en la tarjeta: nombre, cargo, foto y si está vigente.
+//    Documento, teléfono, correo, contacto de emergencia y grupo sanguíneo NO salen por acá.
+//  · Sin tenant en contexto la consulta corre con el rol de despliegue, así que se filtra por token
+//    exacto y se limita a una fila.
+//  · Va con límite de peticiones: un token filtrado no debe habilitar sondeo masivo.
+app.get("/api/credential/:token", async (req, res) => {
+  const token = String(req.params.token || "");
+  if (!/^[0-9a-f-]{36}$/i.test(token)) return res.status(404).json({ error: "Credencial no encontrada" });
+  if (!(await consumeRateLimit(`credential:${req.ip}`, 60 * 1000, 20))) return res.status(429).json({ error: "Demasiadas consultas. Esperá un momento." });
+  const row = (await pool.query(
+    `SELECT u.name, u.role, u.active, u.settings, o.name AS organization_name
+       FROM users u JOIN organizations o ON o.id = u.organization_id
+      WHERE u.settings->>'credentialToken' = $1 LIMIT 1`, [token])).rows[0];
+  if (!row) return res.status(404).json({ error: "Credencial no encontrada" });
+  res.json({
+    name: row.name,
+    position: row.settings?.position || "",
+    photoDataUrl: row.settings?.photoDataUrl || "",
+    active: row.active === true,
+    organizationName: row.organization_name || "",
+    checkedAt: new Date().toISOString(),
+  });
+});
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ordengo", at: new Date().toISOString() }));
 app.get("/api/ready", async (_req, res) => { try { await pool.query("SELECT 1"); res.json({ status: "ready" }); } catch { res.status(503).json({ status: "unavailable" }); } });
 
