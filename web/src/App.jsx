@@ -7711,6 +7711,7 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
     position: user.settings?.position || "",
     documentId: user.settings?.documentId || "",
     emergencyContact: user.settings?.emergencyContact || "",
+    emergencyPhone: user.settings?.emergencyPhone || "",
     bloodType: user.settings?.bloodType || "",
   });
   const [saving, setSaving] = useState(false);
@@ -7744,8 +7745,14 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
             <L label="Teléfono"><input value={form.phone} onChange={(event) => set({ phone: event.target.value })} maxLength={40} placeholder="Ej. +54 9 3462 …" className="u-input" /></L>
             <L label="Documento"><input value={form.documentId} onChange={(event) => set({ documentId: event.target.value })} maxLength={20} placeholder="DNI" className="u-input" /></L>
           </div>
+          {/* Nombre y teléfono de emergencia van separados, no en un solo campo libre: ante una
+              emergencia hay que poder marcar el número directo, y de un texto suelto habría que
+              adivinar dónde termina el nombre y empieza el teléfono. */}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <L label="Contacto de emergencia"><input value={form.emergencyContact} onChange={(event) => set({ emergencyContact: event.target.value })} maxLength={80} placeholder="Nombre y teléfono" className="u-input" /></L>
+            <L label="Contacto de emergencia"><input value={form.emergencyContact} onChange={(event) => set({ emergencyContact: event.target.value })} maxLength={80} placeholder="Nombre y apellido" className="u-input" /></L>
+            <L label="Teléfono de emergencia"><input value={form.emergencyPhone} onChange={(event) => set({ emergencyPhone: event.target.value })} maxLength={40} placeholder="Ej. +54 9 3462 …" className="u-input" /></L>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <L label="Grupo sanguíneo"><input value={form.bloodType} onChange={(event) => set({ bloodType: event.target.value })} maxLength={10} placeholder="Ej. 0+" className="u-input" /></L>
           </div>
           <p className="text-[11px] text-slate-400">Documento, contacto de emergencia y grupo sanguíneo sólo los ven administración y vos. El resto del equipo ve únicamente tu foto y tu cargo.</p>

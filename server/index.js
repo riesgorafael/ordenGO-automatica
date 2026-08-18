@@ -921,7 +921,7 @@ const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, 
 // nómina entera en cada arranque. El cliente la reduce a 256px antes de subirla; esto es la red.
 const PROFILE_PHOTO_MAX_CHARS = 200_000;
 // Campos de la ficha que cada persona puede editar de su propio perfil, sin pasar por administración.
-const PROFILE_SELF_FIELDS = ["photoDataUrl", "phone", "position", "documentId", "emergencyContact", "bloodType"];
+const PROFILE_SELF_FIELDS = ["photoDataUrl", "phone", "position", "documentId", "emergencyContact", "emergencyPhone", "bloodType"];
 // Config de pantalla TV por usuario (Monitor Oficina): permite N televisores, cada uno con su propia cuenta e identidad.
 const buildSettingsPatch = (body, current = {}) => {
   const patch = {};
@@ -942,6 +942,7 @@ const buildSettingsPatch = (body, current = {}) => {
   if (body.position !== undefined) patch.position = String(body.position || "").trim().slice(0, 60);
   if (body.documentId !== undefined) patch.documentId = String(body.documentId || "").trim().slice(0, 20);
   if (body.emergencyContact !== undefined) patch.emergencyContact = String(body.emergencyContact || "").trim().slice(0, 80);
+  if (body.emergencyPhone !== undefined) patch.emergencyPhone = String(body.emergencyPhone || "").trim().slice(0, 40);
   if (body.bloodType !== undefined) patch.bloodType = String(body.bloodType || "").trim().slice(0, 10);
   return Object.keys(patch).length ? { ...current, ...patch } : null;
 };
