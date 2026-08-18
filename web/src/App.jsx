@@ -1296,8 +1296,8 @@ export default function App() {
         <div className={`mx-auto flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3 ${tvMode ? "max-w-none lg:px-7" : "max-w-6xl"}`}>
           <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
             <div className="flex h-8 shrink-0 items-center rounded-lg bg-white px-1.5 shadow-sm ring-1 ring-white/10 sm:h-9 sm:px-2"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-6 w-auto object-contain sm:h-7" /></div>
-            <div className="hidden h-7 w-px bg-slate-700 min-[390px]:block" aria-hidden="true" />
-            <div className="hidden min-w-0 items-center gap-2 min-[390px]:flex"><CompanyLogo branding={branding} dark className="h-7 max-w-20 shrink-0 object-contain text-white" /><div className="hidden min-w-0 max-w-28 leading-tight sm:block"><div className="truncate text-xs font-semibold text-slate-200">{branding.companyName || "Empresa"}</div><div className="truncate text-[10px] text-slate-400">{branding.subtitle || "Campo + Proyectos"}</div></div></div>
+            <div className="hidden h-7 w-px bg-slate-700 sm:block" aria-hidden="true" />
+            <div className="hidden min-w-0 max-w-32 leading-tight sm:block"><div className="truncate text-[9px] font-medium uppercase tracking-wider text-slate-500">Entorno</div><div className="truncate text-xs font-semibold text-slate-200">{branding.companyName || "Empresa"}</div></div>
           </div>
           <div className="flex shrink-0 items-center gap-0 sm:gap-2">
             {activeModule === "orders" && <button onClick={() => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
