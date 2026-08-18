@@ -1749,7 +1749,10 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
           <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><img src={PRODUCT_LOGO} alt="OrdenGO · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
           <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Gestión conectada, de punta a punta</h1>
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">{branding.subtitle || "Campo + Proyectos"} · Órdenes, proyectos y gestión conectados en un entorno seguro.</p>
+          {/* Definición fija, no branding.subtitle: ese campo alimenta el título de la pestaña, donde
+              una línea larga no entra. Tampoco repite lo de los bullets de abajo (órdenes, proyectos,
+              trazabilidad, acceso seguro): antes los adelantaba y el bloque entero sonaba a relleno. */}
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">Software de gestión para empresas de servicios técnicos.</p>
           <div className="mt-8 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">Una sola plataforma para</div>
           <ul className="mt-3 space-y-2.5">
             {bullets.map(({ text, icon: Icon }) => (<li key={text} className="flex items-center gap-3 rounded-xl border border-cyan-200/10 bg-white/[0.035] px-3 py-2.5 text-sm text-slate-100"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><Icon className="h-4 w-4" /></span><span className="leading-snug">{text}</span></li>))}
