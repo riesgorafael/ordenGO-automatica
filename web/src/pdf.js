@@ -1671,131 +1671,125 @@ export function projectStatusReportPDF({
 // Tarjeta vertical formato CR80 (54 x 85,6 mm), dos carillas. Los colores y el logo salen de la
 // identidad visual de cada empresa: la app es multiempresa y clavar la paleta de una dejaría a las
 // demás con la marca ajena. Por eso todo sale de branding, nunca de constantes.
-export async function credentialPDF(user, branding = {}, companyProfileData = {}) {
+// Credencial de acceso: una sola carilla, formato CR80 vertical (54 x 85,6 mm). Encabezado blanco
+// con el logo y la ficha de la empresa; el color corporativo entra como acento (línea, rótulo y
+// marco de la foto) y no como fondo. Todo sale de la identidad visual de cada empresa: la app es
+// multiempresa y clavar una paleta dejaría a las demás con la marca ajena.
+export async function credentialPDF(user, branding = {}) {
   const doc = new jsPDF({ unit: "mm", format: [54, 85.6], orientation: "portrait" });
   const W = 54, H = 85.6, M = 4;
   const accent = reportAccent(branding);
-  const header = hexRgb(branding.headerColor || "#0B315F");
-  const settings = user?.settings || {};
+  const ink = hexRgb(branding.headerColor || "#0B315F");
+  const s = user?.settings || {};
   const company = companyProfile(branding);
 
-  /* ---------- Frente ---------- */
-  // Banda superior en el color corporativo. El degradado del diseño se aproxima con franjas: jsPDF
-  // no tiene degradados vectoriales, y una imagen rasterizada engordaría el archivo sin necesidad.
-  const bandH = 34;
-  for (let i = 0; i < bandH; i += 1) {
-    const t = i / bandH; // se aclara hacia abajo, como en el diseño de referencia
-    doc.setFillColor(...accent.map((c) => Math.round(c + (255 - c) * t * 0.28)));
-    doc.rect(0, i, W, 1.05, "F");
-  }
-
   // El logo se resuelve igual que en los reportes: en la organización Automática no viene en
-  // logoDataUrl sino del logo incorporado, marcado por builtInCompanyLogo. Mirar sólo logoDataUrl
-  // hacía caer al respaldo de texto justo en la empresa que sí tiene logo cargado.
+  // logoDataUrl sino del logo incorporado, marcado por builtInCompanyLogo.
   const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
-  let logoDrawn = false;
+  let headerBottom = 12;
   if (logoSource) {
-    // Se respeta la proporción real de la imagen: forzarla a un alto fijo deformaba el isotipo.
+    // Caja de tamaño fijo con ajuste por proporción: los logos varían entre apaisados, cuadrados y
+    // verticales, y forzar un alto fijo deformaría los que no coincidan.
     let ratio = LOGO_RATIO;
     try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
-    let lw = W - (M + 5) * 2, lh = lw * ratio;
-    if (lh > 13) { lh = 13; lw = lh / ratio; }
-    try { doc.addImage(logoSource, "PNG", (W - lw) / 2, 5, lw, lh, undefined, "FAST"); logoDrawn = true; } catch {}
-  }
-  if (!logoDrawn) {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(255, 255, 255);
-    doc.text(company.name.toUpperCase(), W / 2, 12, { align: "center" });
-  }
-  // Descriptor de la empresa, no branding.subtitle: ese es el subtítulo del producto ("Gestión de
-  // servicios") y habría quedado impreso bajo el logo del cliente como si fuera su lema.
-  if (branding.companyTagline) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(5.2); doc.setTextColor(255, 255, 255);
-    doc.text(String(branding.companyTagline), W / 2, 19, { align: "center", maxWidth: W - 8 });
-  }
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
-  doc.text("CREDENCIAL DE ACCESO", W / 2, 26.5, { align: "center" });
-
-  // Foto y QR conviven sobre el borde de la banda, como en el diseño.
-  const photoX = M, photoY = 29, photoW = 22, photoH = 27;
-  doc.setFillColor(255, 255, 255); doc.roundedRect(photoX - 0.8, photoY - 0.8, photoW + 1.6, photoH + 1.6, 1.2, 1.2, "F");
-  if (settings.photoDataUrl) {
-    try { doc.addImage(settings.photoDataUrl, "JPEG", photoX, photoY, photoW, photoH, undefined, "FAST"); } catch {}
+    let lw = 26, lh = lw * ratio;
+    if (lh > 12) { lh = 12; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", M, 5, lw, lh, undefined, "FAST"); headerBottom = Math.max(headerBottom, 5 + lh); } catch {}
   } else {
-    doc.setFillColor(226, 232, 240); doc.rect(photoX, photoY, photoW, photoH, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(148, 163, 184);
-    doc.text("SIN FOTO", photoX + photoW / 2, photoY + photoH / 2, { align: "center" });
+    // Sin logo cargado, el nombre ocupa su lugar. Con logo no se imprime: la marca ya lo dice y
+    // repetirlo al lado duplicaría la identificación.
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(...ink);
+    doc.text(company.name, M, 11, { maxWidth: 28 });
   }
 
-  // El QR abre la verificación pública: es lo único de la credencial que no se puede falsificar
-  // imprimiendo una tarjeta, porque consulta si la persona sigue activa.
-  const qrSide = 20, qrX = W - M - qrSide, qrY = 31;
-  if (settings.credentialToken) {
+  // Ficha de la empresa a la derecha, en tres líneas. Sale de la misma configuración que encabeza
+  // los reportes, así que un cambio de CUIT o de web se refleja en los dos lados a la vez. Cada
+  // línea ausente colapsa hacia arriba en lugar de dejar un hueco.
+  const infoX = W / 2 + 2;
+  let iy = 7.5;
+  const infoLine = (text, bold = false, size = 4.6) => {
+    if (!text) return;
+    doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(size);
+    doc.setTextColor(...(bold ? ink : [91, 100, 114]));
+    doc.text(fit(doc, String(text), W - infoX - M), infoX, iy); iy += 3.4;
+  };
+  infoLine(company.name, true, 5);
+  if (company.cuit) infoLine(`CUIT ${company.cuit}`);
+  infoLine(company.website);
+  headerBottom = Math.max(headerBottom, iy - 2);
+
+  doc.setDrawColor(...accent); doc.setLineWidth(0.7); doc.line(M, headerBottom + 2.5, W - M, headerBottom + 2.5);
+  doc.setLineWidth(0.2);
+  let y = headerBottom + 8;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(...accent);
+  doc.text("CREDENCIAL DE ACCESO", W / 2, y, { align: "center", charSpace: 0.35 });
+
+  /* ---------- Foto y QR ---------- */
+  y += 4;
+  const photoW = 24, photoH = 32; // 3:4, la proporción en que el cliente recorta la foto
+  doc.setDrawColor(...accent); doc.setLineWidth(0.6);
+  doc.roundedRect(M, y, photoW, photoH, 1, 1, "S");
+  doc.setLineWidth(0.2);
+  if (s.photoDataUrl) {
+    try { doc.addImage(s.photoDataUrl, "JPEG", M + 0.4, y + 0.4, photoW - 0.8, photoH - 0.8, undefined, "FAST"); } catch {}
+  } else {
+    doc.setFillColor(233, 237, 241); doc.rect(M + 0.4, y + 0.4, photoW - 0.8, photoH - 0.8, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(148, 163, 184);
+    doc.text("SIN FOTO", M + photoW / 2, y + photoH / 2, { align: "center" });
+  }
+
+  // Un solo identificador, derivado del token y prefijado con la empresa: se coteja a ojo contra la
+  // pantalla que abre el QR sin tener que mantener un contador de tarjetas aparte.
+  const shortId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 4).toUpperCase();
+  const prefix = String(company.name || "").replace(/[^A-Za-zÁÉÍÓÚÑ]/g, "").slice(0, 3).toUpperCase() || "ID";
+  const cardId = shortId ? `${prefix}-${shortId}` : "";
+
+  const qrSide = 19, qrX = W - M - qrSide;
+  if (s.credentialToken) {
     try {
       const { default: QRCode } = await import("qrcode");
-      const url = `${window.location.origin}/?credencial=${encodeURIComponent(settings.credentialToken)}`;
-      const qr = await QRCode.toDataURL(url, { margin: 0, width: 320, errorCorrectionLevel: "M" });
-      doc.setFillColor(255, 255, 255); doc.roundedRect(qrX - 1, qrY - 1, qrSide + 2, qrSide + 2, 1, 1, "F");
-      doc.addImage(qr, "PNG", qrX, qrY, qrSide, qrSide, undefined, "FAST");
+      const url = `${window.location.origin}/?credencial=${encodeURIComponent(s.credentialToken)}`;
+      const qr = await QRCode.toDataURL(url, { margin: 0, width: 360, errorCorrectionLevel: "M" });
+      doc.addImage(qr, "PNG", qrX, y, qrSide, qrSide, undefined, "FAST");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(...ink);
+      doc.text(`ID: ${cardId}`, qrX + qrSide / 2, y + qrSide + 3.2, { align: "center" });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(4.4); doc.setTextColor(150, 158, 168);
+      doc.text("Escaneá para verificar", qrX + qrSide / 2, y + qrSide + 6.2, { align: "center" });
     } catch {}
   }
 
-  /* ---------- Zona de datos ---------- */
-  doc.setFillColor(246, 248, 251); doc.rect(0, 58, W, H - 58 - 5, "F");
-  doc.setFillColor(255, 255, 255); doc.rect(0, H - 5, W, 5, "F");
-  let y = 65;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(...header);
-  const nameLines = doc.splitTextToSize(String(user?.name || "").toUpperCase(), W - M * 2).slice(0, 2);
-  nameLines.forEach((line) => { doc.text(line, M, y); y += 4.6; });
-  if (settings.position) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(71, 85, 105);
-    doc.text(String(settings.position), M, y, { maxWidth: W - M * 2 }); y += 4;
+  /* ---------- Titular ---------- */
+  y += photoH + 6;
+  // El nombre baja de cuerpo por pasos hasta entrar en dos líneas: la nómina tiene nombres cortos y
+  // otros de tres palabras, y un tamaño fijo obligaría a cortar los largos.
+  const fullName = String(user?.name || "").toUpperCase();
+  let nameSize = 12, nameLines = [];
+  for (; nameSize >= 7.5; nameSize -= 0.5) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
+    nameLines = doc.splitTextToSize(fullName, W - M * 2);
+    if (nameLines.length <= 2) break;
   }
-  doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.2); doc.line(M, y, W - M, y); y += 4;
+  doc.setTextColor(...ink);
+  nameLines.slice(0, 2).forEach((line) => { doc.text(line, M, y); y += nameSize * 0.42; });
 
-  // Vencimiento automático al 31/12 del año en curso: se decidió no cargarlo por empleado para que
-  // ninguna credencial quede sin fecha por olvido. Reemitir en enero renueva a todos.
-  const expiry = `31/12/${new Date().getFullYear()}`;
-  doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
-  doc.setFont("helvetica", "bold"); doc.text("VENCE:", M, y);
-  doc.setFont("helvetica", "normal"); doc.setTextColor(30, 41, 59); doc.text(expiry, M + 11, y); y += 4;
-  // Un solo identificador, derivado del token: los primeros 8 caracteres alcanzan para cotejarlo a
-  // ojo contra la pantalla de verificación y evitan mantener un contador de tarjetas aparte.
-  if (settings.credentialToken) {
-    doc.setFont("helvetica", "bold"); doc.setTextColor(100, 116, 139); doc.text("N°:", M, y);
-    doc.setFont("helvetica", "normal"); doc.setTextColor(30, 41, 59);
-    doc.text(String(settings.credentialToken).replace(/-/g, "").slice(0, 8).toUpperCase(), M + 11, y);
-  }
-  if (company.website) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(148, 163, 184);
-    doc.text(String(company.website), W / 2, H - 2.5, { align: "center" });
+  if (s.position) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(91, 100, 114);
+    doc.text(fit(doc, String(s.position).toUpperCase(), W - M * 2), M, y + 1.2); y += 4.4;
   }
 
-  /* ---------- Dorso ---------- */
-  doc.addPage([54, 85.6], "portrait");
-  doc.setFillColor(...accent); doc.rect(0, 0, W, 8, "F");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(255, 255, 255);
-  doc.text("DATOS DEL TITULAR", W / 2, 5.4, { align: "center" });
-  let by = 15;
-  const row = (label, value) => {
-    if (!value) return;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(5.8); doc.setTextColor(100, 116, 139);
-    doc.text(String(label).toUpperCase(), M, by);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(30, 41, 59);
-    doc.text(String(value), M, by + 3.6, { maxWidth: W - M * 2 });
-    by += 9;
+  /* ---------- Vigencia ---------- */
+  // Vencimiento automático al 31/12 del año en curso: no se carga por empleado para que ninguna
+  // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina de una vez.
+  const footY = H - 9;
+  doc.setDrawColor(227, 230, 234); doc.line(M, footY - 4, W - M, footY - 4);
+  const pair = (label, value, ty) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(...ink);
+    doc.text(label, M, ty);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(91, 100, 114);
+    doc.text(String(value), M + 15, ty);
   };
-  row("Documento", settings.documentId);
-  row("Teléfono", settings.phone);
-  row("Grupo sanguíneo", settings.bloodType);
-  row("Contacto de emergencia", settings.emergencyContact);
-  row("Teléfono de emergencia", settings.emergencyPhone);
+  pair("VENCE:", `31/12/${new Date().getFullYear()}`, footY);
+  if (cardId) pair("TARJETA N°:", String(s.credentialToken).replace(/-/g, "").slice(0, 8).toUpperCase(), footY + 4);
 
-  doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.2); doc.line(M, H - 26, W - M, H - 26);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(5.4); doc.setTextColor(100, 116, 139);
-  doc.text(`Esta credencial es propiedad de ${company.name} y su uso es personal e intransferible. Escaneá el código del frente para verificar su vigencia. Si la encontraste, devolvela a:`, M, H - 22, { maxWidth: W - M * 2 });
-  doc.setFont("helvetica", "bold"); doc.setFontSize(5.8); doc.setTextColor(30, 41, 59);
-  doc.text(company.name, M, H - 9, { maxWidth: W - M * 2 });
-  if (company.address) { doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139); doc.text(String(company.address), M, H - 6, { maxWidth: W - M * 2 }); }
-
-  doc.save(`credencial_${String(user?.name || "empleado").replace(/\s+/g, "_").toLowerCase()}.pdf`);
+  doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }

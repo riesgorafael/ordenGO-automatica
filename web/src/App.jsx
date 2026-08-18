@@ -297,10 +297,14 @@ function fileToProfilePhoto(file) {
     reader.onload = () => {
       const image = new Image();
       image.onload = () => {
-        const side = Math.min(image.width, image.height);
+        // Proporción 3:4 vertical, la de una foto carnet: es el marco de la credencial. Antes se
+        // recortaba cuadrada y en un marco vertical habría quedado deformada o con bandas.
+        const targetRatio = 3 / 4;
+        let sw = image.width, sh = image.height;
+        if (sw / sh > targetRatio) sw = sh * targetRatio; else sh = sw / targetRatio;
         const canvas = document.createElement("canvas");
-        canvas.width = 256; canvas.height = 256;
-        canvas.getContext("2d").drawImage(image, (image.width - side) / 2, (image.height - side) / 2, side, side, 0, 0, 256, 256);
+        canvas.width = 240; canvas.height = 320;
+        canvas.getContext("2d").drawImage(image, (image.width - sw) / 2, (image.height - sh) / 2, sw, sh, 0, 0, 240, 320);
         resolve(canvas.toDataURL("image/jpeg", 0.85));
       };
       image.onerror = reject; image.src = reader.result;
@@ -7798,7 +7802,7 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
               <input type="file" accept="image/*" className="hidden" onChange={(event) => { pickPhoto(event.target.files?.[0]); event.target.value = ""; }} />
             </label>
             {form.photoDataUrl && <button onClick={() => set({ photoDataUrl: "" })} className="ml-2 text-xs text-rose-600 hover:underline">Quitar</button>}
-            <p className="mt-1.5 text-[11px] text-slate-400">Se recorta cuadrada y se reduce a 256px automáticamente.</p>
+            <p className="mt-1.5 text-[11px] text-slate-400">Se recorta en proporción carnet (3:4) automáticamente.</p>
           </div>
         </div>
         <div className="space-y-2">
