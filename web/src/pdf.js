@@ -111,7 +111,7 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null, bran
   doc.text(`Fecha: ${formatDate(order.date)}`, W - M, 28, { align: "right" });
   doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
 
-  const heading = (text, y) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, y); };
+  const heading = (text, y) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...reportAccent(branding)); doc.text(text, M, y); };
   // Esta primera hoja es un resumen de posiciones fijas (la firma va a una altura fija), así que
   // los textos largos se acotan a unas pocas líneas. El detalle completo va en la hoja siguiente.
   // Lo que faltaba era avisarlo: antes la frase se cortaba a mitad y nada indicaba que seguía, así
@@ -221,7 +221,7 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null,
   if (technical.serial) kv("N° de serie:", technical.serial);
   y += 2;
 
-  const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(241, 135, 0); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
+  const section = (t) => { brk(12); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...reportAccent(branding)); doc.text(t, M, y); doc.setTextColor(15, 23, 42); y += 5; };
   const para = (label, val) => {
     if (!val) return;
     doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
@@ -519,7 +519,7 @@ export function purchaseOrderReportPDF(po, supplier, project, branding = {}) {
   doc.text(`Fecha: ${formatDate(po.createdAt)}`, W - M, 28, { align: "right" });
   doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
 
-  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...reportAccent(branding)); doc.text(text, M, atY); };
   const field = (label, value, x, atY, width = 60) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, atY);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
@@ -770,7 +770,7 @@ export function budgetReportPDF(budget, client, audience = "cliente", branding =
   doc.text(`Fecha: ${formatDate(budget.createdAt || new Date())}`, W - M, 28, { align: "right" });
   doc.setDrawColor(203, 213, 225); doc.line(M, 49, W - M, 49);
 
-  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...reportAccent(branding)); doc.text(text, M, atY); };
   const field = (label, value, x, atY, width = 60) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, atY);
     doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
@@ -877,7 +877,7 @@ export function dashboardReportPDF(periodLabel, kpis, topClients, mix, tech, agi
   doc.setDrawColor(203, 213, 225); doc.line(M, 32, W - M, 32);
   y = 42;
 
-  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(241, 135, 0); doc.text(text, M, atY); };
+  const heading = (text, atY) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...reportAccent(branding)); doc.text(text, M, atY); };
   // Recorta al ancho real de la columna, medido con la fuente activa: sin esto un nombre largo se
   // superponía con la columna del importe.
   const fit = (text, maxWidth) => {
@@ -936,9 +936,9 @@ export function financeReportPDF({
   };
   const brk = (need = 8) => { if (y + need > 272) { doc.addPage(); drawHead(); return true; } return false; };
   const heading = (text) => {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(241, 135, 0);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...reportAccent(branding));
     doc.text(text, M, y);
-    doc.setDrawColor(241, 135, 0); doc.setLineWidth(0.4); doc.line(M, y + 1.6, M + doc.getTextWidth(text), y + 1.6); doc.setLineWidth(0.2);
+    doc.setDrawColor(...reportAccent(branding)); doc.setLineWidth(0.4); doc.line(M, y + 1.6, M + doc.getTextWidth(text), y + 1.6); doc.setLineWidth(0.2);
     y += 7;
   };
   const caption = (text) => {
@@ -1201,6 +1201,32 @@ const hexRgb = (hex) => {
   const n = parseInt(full, 16);
   return Number.isNaN(n) || full.length !== 6 ? [148, 163, 184] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 };
+// Color de acento de los reportes: títulos de sección y sus subrayados. Sale del tema configurado
+// de la empresa —primaryColor, y si no está, headerColor— y el naranja histórico queda sólo como
+// último recurso cuando no hay marca cargada.
+//
+// Sólo se tiñe lo estructural. Los colores con significado (rojo/verde/ámbar de los semáforos, la
+// paleta de series financieras elegida para distinguirse con daltonismo) se dejan intactos: teñirlos
+// de corporativo borraría justamente la información que codifican.
+const REPORT_ACCENT_FALLBACK = "#F18700";
+const relativeLuminance = ([r, g, b]) => {
+  const channel = (value) => { const v = value / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+};
+// Contraste del color contra el papel blanco, según la fórmula de WCAG.
+const contrastOnPaper = (rgb) => 1.05 / (relativeLuminance(rgb) + 0.05);
+const reportAccent = (branding = {}) => {
+  const chosen = branding.primaryColor || branding.headerColor || REPORT_ACCENT_FALLBACK;
+  let rgb = hexRgb(chosen);
+  // hexRgb devuelve un gris cuando no puede interpretar el valor; ahí conviene el naranja de
+  // siempre antes que un título gris que parezca deshabilitado.
+  if (rgb[0] === 148 && rgb[1] === 163 && rgb[2] === 184) rgb = hexRgb(REPORT_ACCENT_FALLBACK);
+  // Una marca clara (amarillo, celeste) dejaría los títulos ilegibles sobre blanco, y estos
+  // reportes se leen tanto impresos como en pantalla. Se oscurece hasta alcanzar contraste
+  // suficiente, conservando el matiz de la empresa.
+  for (let step = 0; step < 24 && contrastOnPaper(rgb) < 4.5; step += 1) rgb = rgb.map((c) => Math.round(c * 0.9));
+  return rgb;
+};
 // Redondea el tope del eje a un valor "redondo" (1, 2, 5, 10, 20, 50…) para que las marcas de la
 // grilla caigan en números enteros legibles en vez de decimales arbitrarios.
 const niceCeil = (value) => {
@@ -1236,9 +1262,9 @@ export function projectStatusReportPDF({
   const brk = (need = 8) => { if (y + need > 272) { doc.addPage(); drawHead(); return true; } return false; };
 
   const heading = (text) => {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(241, 135, 0);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...reportAccent(branding));
     doc.text(text, M, y);
-    doc.setDrawColor(241, 135, 0); doc.setLineWidth(0.4); doc.line(M, y + 1.6, M + doc.getTextWidth(text), y + 1.6); doc.setLineWidth(0.2);
+    doc.setDrawColor(...reportAccent(branding)); doc.setLineWidth(0.4); doc.line(M, y + 1.6, M + doc.getTextWidth(text), y + 1.6); doc.setLineWidth(0.2);
     y += 7;
   };
   // El estilo se vuelve a aplicar en cada línea porque un salto de página redibuja el encabezado
@@ -1330,7 +1356,7 @@ export function projectStatusReportPDF({
     const cx = M + col * (cardW + 3), cy = y + row * (cardH + 3);
     doc.setFillColor(250, 251, 252); doc.setDrawColor(226, 232, 240);
     doc.roundedRect(cx, cy, cardW, cardH, 1.5, 1.5, "FD");
-    doc.setFillColor(...hexRgb(kpi.accent || "#F18700"));
+    doc.setFillColor(...(kpi.accent ? hexRgb(kpi.accent) : reportAccent(branding)));
     doc.rect(cx, cy + 1.5, 1.2, cardH - 3, "F");
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.setTextColor(100, 116, 139);
     doc.text(fit(kpi.label, cardW - 8), cx + 4, cy + 5);
@@ -1507,10 +1533,10 @@ export function projectStatusReportPDF({
     const posOf = (time) => trackX + ((time - minT) / span) * trackW;
     const todayX = posOf(Date.now());
     doc.setDrawColor(226, 232, 240); doc.line(trackX, y - 1, trackX + trackW, y - 1);
-    doc.setDrawColor(241, 135, 0); doc.setLineDashPattern([1, 1], 0);
+    doc.setDrawColor(...reportAccent(branding)); doc.setLineDashPattern([1, 1], 0);
     doc.line(todayX, y - 1, todayX, y + timeline.length * 5.4 + 1);
     doc.setLineDashPattern([], 0);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(241, 135, 0);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...reportAccent(branding));
     doc.text("HOY", todayX, y - 2.5, { align: "center" });
     timeline.forEach((item) => {
       doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
