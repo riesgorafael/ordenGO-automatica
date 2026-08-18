@@ -287,6 +287,27 @@ function fileToImages(file) {
     rd.onerror = reject; rd.readAsDataURL(file);
   });
 }
+// Foto de perfil: recorte cuadrado centrado y 256px de lado. Se recorta en vez de deformar porque
+// el avatar es un círculo y la credencial un rectángulo vertical; una foto estirada se nota.
+// El tamaño chico no es sólo estético: estas fotos viajan dentro de settings y el bootstrap devuelve
+// todos los usuarios, así que el peso se multiplica por la nómina en cada arranque.
+function fileToProfilePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const side = Math.min(image.width, image.height);
+        const canvas = document.createElement("canvas");
+        canvas.width = 256; canvas.height = 256;
+        canvas.getContext("2d").drawImage(image, (image.width - side) / 2, (image.height - side) / 2, side, side, 0, 0, 256, 256);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      image.onerror = reject; image.src = reader.result;
+    };
+    reader.onerror = reject; reader.readAsDataURL(file);
+  });
+}
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const rd = new FileReader();
@@ -668,6 +689,7 @@ export default function App() {
   const finishedMenuRef = useRef(null);
   const [editing, setEditing] = useState(undefined);
   const [pwOpen, setPwOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
@@ -1440,7 +1462,7 @@ export default function App() {
                 llave aparte en la barra; al sacarlo quedaba sin ningún acceso, porque era el único
                 lugar de toda la app donde cambiar la propia clave. Colgarlo del nombre es además
                 dónde se lo busca: es una acción de la cuenta, no una herramienta más de la barra. */}
-            <button onClick={() => setPwOpen(true)} title="Cambiar contraseña" className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
+            <button onClick={() => setProfileOpen(true)} title="Mi ficha y contraseña" className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en OrdenGO" aria-label="Buscar en OrdenGO" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
             <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
@@ -1657,6 +1679,12 @@ export default function App() {
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
       {editing !== undefined && <TaskModal task={editing} defaultProjectId={pProj === "all" ? "" : pProj} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr || (!isMonitor && !!editing && editing.assignee === me.id)} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} onDuplicate={duplicateTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
+      {profileOpen && <ProfileDialog user={me} onClose={() => setProfileOpen(false)} onErr={err} onSave={async (profile) => {
+        // Se actualiza `me` con lo que devuelve el servidor, no con el formulario: así la foto que
+        // queda en pantalla es la que realmente se guardó, ya saneada y recortada.
+        try { const saved = await api.updateMyProfile(profile); setMe(saved); setUsers((items) => items.map((item) => item.id === saved.id ? { ...item, settings: saved.settings } : item)); setProfileOpen(false); toast("Ficha actualizada", "success"); }
+        catch (error) { err(error); }
+      }} />}
       {accessProj && <ProjectAccess project={accessProj} users={users} onClose={() => setAccessProj(null)} onSave={saveAccess} />}
       {dupProj && <DuplicateProject project={dupProj} users={users} tasksCount={tasks.filter((t) => t.project === dupProj.id).length} onClose={() => setDupProj(null)} onDuplicate={doDuplicate} />}
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
@@ -7670,6 +7698,65 @@ function Reports({ tasks, users, projects, proj, me, whiteboardNotes = [], onOpe
 }
 function ChartBox({ data }) {
   return (<div style={{ width: "100%", height: 220 }}><ResponsiveContainer debounce={1} minWidth={200} minHeight={200}><BarChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} /><RechartsBar dataKey="value" radius={[5, 5, 0, 0]} isAnimationActive={false}>{data.map((d, i) => <Cell key={i} fill={d.fill} />)}</RechartsBar></BarChart></ResponsiveContainer></div>);
+}
+
+/* Ficha personal: foto y datos de contacto que alimentan la credencial de empresa. La usa tanto el
+   propio usuario (por PATCH /api/me/profile) como administración sobre un tercero (por PATCH
+   /api/users/:id); quién guarda lo decide el llamador con onSave, el diálogo es el mismo. */
+function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
+  useDialogOpenClass(onClose);
+  const [form, setForm] = useState({
+    photoDataUrl: user.settings?.photoDataUrl || "",
+    phone: user.settings?.phone || "",
+    position: user.settings?.position || "",
+    documentId: user.settings?.documentId || "",
+    emergencyContact: user.settings?.emergencyContact || "",
+    bloodType: user.settings?.bloodType || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (patch) => setForm((current) => ({ ...current, ...patch }));
+  const pickPhoto = async (file) => {
+    if (!file) return;
+    try { set({ photoDataUrl: await fileToProfilePhoto(file) }); }
+    catch { onErr?.(new Error("No se pudo leer la imagen. Probá con otra.")); }
+  };
+  const save = async () => { setSaving(true); await onSave(form); setSaving(false); };
+  return (
+    <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Ficha de {user.name}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mb-4 flex items-center gap-4">
+          <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-full" style={{ background: user.color || "#94a3b8" }}>
+            {form.photoDataUrl ? <img src={form.photoDataUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-xl font-semibold text-white">{initials(user.name)}</span>}
+          </div>
+          <div className="min-w-0 flex-1">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Upload className="h-3.5 w-3.5" /> {form.photoDataUrl ? "Cambiar foto" : "Subir foto"}
+              <input type="file" accept="image/*" className="hidden" onChange={(event) => { pickPhoto(event.target.files?.[0]); event.target.value = ""; }} />
+            </label>
+            {form.photoDataUrl && <button onClick={() => set({ photoDataUrl: "" })} className="ml-2 text-xs text-rose-600 hover:underline">Quitar</button>}
+            <p className="mt-1.5 text-[11px] text-slate-400">Se recorta cuadrada y se reduce a 256px automáticamente.</p>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <L label="Cargo" help="Cómo figura en la credencial. Ej. Técnico de campo, Ingeniero de proyectos."><input value={form.position} onChange={(event) => set({ position: event.target.value })} maxLength={60} placeholder="Ej. Técnico de campo" className="u-input" /></L>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <L label="Teléfono"><input value={form.phone} onChange={(event) => set({ phone: event.target.value })} maxLength={40} placeholder="Ej. +54 9 3462 …" className="u-input" /></L>
+            <L label="Documento"><input value={form.documentId} onChange={(event) => set({ documentId: event.target.value })} maxLength={20} placeholder="DNI" className="u-input" /></L>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <L label="Contacto de emergencia"><input value={form.emergencyContact} onChange={(event) => set({ emergencyContact: event.target.value })} maxLength={80} placeholder="Nombre y teléfono" className="u-input" /></L>
+            <L label="Grupo sanguíneo"><input value={form.bloodType} onChange={(event) => set({ bloodType: event.target.value })} maxLength={10} placeholder="Ej. 0+" className="u-input" /></L>
+          </div>
+          <p className="text-[11px] text-slate-400">Documento, contacto de emergencia y grupo sanguíneo sólo los ven administración y vos. El resto del equipo ve únicamente tu foto y tu cargo.</p>
+        </div>
+        <div className="mt-5 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button onClick={save} disabled={saving} className="flex-1 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50">{saving ? "Guardando…" : "Guardar ficha"}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ===================================== EQUIPO (ADMIN) ===================================== */
