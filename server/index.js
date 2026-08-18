@@ -412,10 +412,52 @@ async function initDb() {
     await isolationProbe.query("BEGIN");
     await isolationProbe.query("INSERT INTO organizations(id,slug,name,profile) VALUES($1,$2,'Probe A','{}'),($3,$4,'Probe B','{}')", [organizationA, `probe-a-${probeSuffix}`, organizationB, `probe-b-${probeSuffix}`]);
     await isolationProbe.query("INSERT INTO whiteboard_notes(id,data,organization_id) VALUES($1,$2,$3),($4,$5,$6)", [noteA, { id: noteA, title: "A" }, organizationA, noteB, { id: noteB, title: "B" }, organizationB]);
+    const partA = `part-probe-a-${probeSuffix}`;
+    const partB = `part-probe-b-${probeSuffix}`;
+    await isolationProbe.query("INSERT INTO parts(id,data,organization_id) VALUES($1,$2,$3),($4,$5,$6)", [partA, { id: partA, name: "A" }, organizationA, partB, { id: partB, name: "B" }, organizationB]);
     await isolationProbe.query("SELECT set_config('app.organization_id',$1,true)", [organizationA]);
     await isolationProbe.query(`SET LOCAL ROLE ${TENANT_DB_ROLE}`);
+
+    // Lectura. Se comprueba en dos tablas distintas: si alguna quedara fuera del bucle que
+    // aplica las políticas, una sola tabla de muestra no lo detectaría.
     const visibleProbeNotes = (await isolationProbe.query("SELECT id FROM whiteboard_notes WHERE id=ANY($1::text[]) ORDER BY id", [[noteA, noteB]])).rows.map((row) => row.id);
     if (visibleProbeNotes.length !== 1 || visibleProbeNotes[0] !== noteA) throw new Error("La política RLS permitió leer otro tenant");
+    const visibleProbeParts = (await isolationProbe.query("SELECT id FROM parts WHERE id=ANY($1::text[]) ORDER BY id", [[partA, partB]])).rows.map((row) => row.id);
+    if (visibleProbeParts.length !== 1 || visibleProbeParts[0] !== partA) throw new Error("La política RLS permitió leer inventario de otro tenant");
+
+    // Escritura. La política tiene WITH CHECK además de USING, pero eso no se verificaba nunca:
+    // si alguien lo quitara al editarla, la lectura seguiría aislada y las escrituras cruzadas
+    // pasarían sin que nada avisara. Se usan SAVEPOINT porque un error aborta la transacción.
+    const mustFail = async (label, sql, params) => {
+      await isolationProbe.query("SAVEPOINT probe_write");
+      try {
+        await isolationProbe.query(sql, params);
+        throw new Error(label);
+      } catch (error) {
+        if (error.message === label) throw error; // no falló: el aislamiento está roto
+        await isolationProbe.query("ROLLBACK TO SAVEPOINT probe_write");
+      }
+    };
+    // Un alta que declara otra empresa no falla: el trigger BEFORE INSERT reescribe el campo con el
+    // tenant activo. Lo que corresponde comprobar es eso, que el registro quede estampado en la
+    // empresa de la sesión y no en la que pidió el cliente.
+    const stampedId = `note-probe-x-${probeSuffix}`;
+    await isolationProbe.query("INSERT INTO whiteboard_notes(id,data,organization_id) VALUES($1,$2,$3)", [stampedId, { title: "X" }, organizationB]);
+    const stamped = (await isolationProbe.query("SELECT organization_id FROM whiteboard_notes WHERE id=$1", [stampedId])).rows[0];
+    if (!stamped || stamped.organization_id !== organizationA) throw new Error("Un alta pudo declarar una empresa ajena");
+
+    await mustFail(
+      "La política RLS permitió mover un registro a otro tenant",
+      "UPDATE whiteboard_notes SET organization_id=$2 WHERE id=$1",
+      [noteA, organizationB]);
+
+    // UPDATE y DELETE sobre filas ajenas no deben fallar: simplemente no alcanzan ninguna fila.
+    // Si afectaran alguna, el tenant estaría escribiendo sobre datos de otra empresa.
+    const updatedForeign = (await isolationProbe.query("UPDATE whiteboard_notes SET data=$2 WHERE id=$1", [noteB, { title: "hackeado" }])).rowCount;
+    if (updatedForeign !== 0) throw new Error("La política RLS permitió modificar un registro de otro tenant");
+    const deletedForeign = (await isolationProbe.query("DELETE FROM whiteboard_notes WHERE id=$1", [noteB])).rowCount;
+    if (deletedForeign !== 0) throw new Error("La política RLS permitió eliminar un registro de otro tenant");
+
     await isolationProbe.query("ROLLBACK");
   } catch (error) {
     try { await isolationProbe.query("ROLLBACK"); } catch {}
