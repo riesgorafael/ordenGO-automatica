@@ -1682,6 +1682,9 @@ export async function credentialPDF(user, branding = {}) {
   const ink = hexRgb(branding.headerColor || "#0B315F");
   const s = user?.settings || {};
   const company = companyProfile(branding);
+  // fit está declarada dentro de otras funciones de este archivo, no a nivel de módulo, así que acá
+  // no está en alcance. Se define local: recorta el texto al ancho disponible en vez de desbordarlo.
+  const clip = (text, width) => { const lines = doc.splitTextToSize(String(text), width); return lines[0] + (lines.length > 1 ? "…" : ""); };
 
   // El logo se resuelve igual que en los reportes: en la organización Automática no viene en
   // logoDataUrl sino del logo incorporado, marcado por builtInCompanyLogo.
@@ -1711,7 +1714,7 @@ export async function credentialPDF(user, branding = {}) {
     if (!text) return;
     doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(size);
     doc.setTextColor(...(bold ? ink : [91, 100, 114]));
-    doc.text(fit(doc, String(text), W - infoX - M), infoX, iy); iy += 3.4;
+    doc.text(clip(text, W - infoX - M), infoX, iy); iy += 3.4;
   };
   infoLine(company.name, true, 5);
   if (company.cuit) infoLine(`CUIT ${company.cuit}`);
@@ -1774,7 +1777,7 @@ export async function credentialPDF(user, branding = {}) {
 
   if (s.position) {
     doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(91, 100, 114);
-    doc.text(fit(doc, String(s.position).toUpperCase(), W - M * 2), M, y + 1.2); y += 4.4;
+    doc.text(clip(String(s.position).toUpperCase(), W - M * 2), M, y + 1.2); y += 4.4;
   }
 
   /* ---------- Vigencia ---------- */
