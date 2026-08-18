@@ -606,7 +606,15 @@ function SearchSelect({ value, onChange, options, emptyLabel = "Sin asociar", pl
     </div>
   );
 }
-const Avatar = ({ user, size = 28 }) => (<div className="grid shrink-0 place-items-center rounded-full font-semibold text-white" style={{ width: size, height: size, background: user?.color || "#94a3b8", fontSize: size * 0.4 }} title={user?.name}>{initials(user?.name)}</div>);
+// Con foto cargada se muestra la foto; sin ella, las iniciales sobre el color de la persona, que es
+// como funcionó siempre. El color se mantiene de fondo detrás de la imagen: si la foto tarda o falla
+// en cargar, el círculo no queda en blanco.
+const Avatar = ({ user, size = 28 }) => {
+  const photo = user?.settings?.photoDataUrl;
+  return (<div className="grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-white" style={{ width: size, height: size, background: user?.color || "#94a3b8", fontSize: size * 0.4 }} title={user?.name}>
+    {photo ? <img src={photo} alt="" className="h-full w-full object-cover" /> : initials(user?.name)}
+  </div>);
+};
 // "caption" queda siempre visible (clave en móvil, donde no existe el hover del tooltip);
 // "description" se reserva para el detalle más largo que solo hace falta ocasionalmente.
 const Metric = ({ label, value, icon: Icon, tint, caption = "", description = "" }) => (

@@ -39,6 +39,9 @@ export const api = {
   getBranding: () => { const organization = new URLSearchParams(window.location.search).get("organization") || new URLSearchParams(window.location.search).get("empresa"); return req("/branding" + (organization ? `?organization=${encodeURIComponent(organization)}` : "")); },
   bootstrap: () => req("/bootstrap"),
   changePassword: (current, next) => req("/me/password", { method: "POST", body: JSON.stringify({ current, next }) }),
+  // Ficha propia (foto y datos de contacto para la credencial). Ruta separada de /users/:id: esa
+  // exige rol admin porque además cambia rol, estado y contraseña.
+  updateMyProfile: (profile) => req("/me/profile", { method: "PATCH", body: JSON.stringify(profile) }),
 
   addClient: (c) => req("/clients", { method: "POST", body: JSON.stringify(c) }),
   updateClient: (id, patch) => req("/clients/" + id, { method: "PATCH", body: JSON.stringify(patch) }),

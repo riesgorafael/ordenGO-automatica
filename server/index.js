@@ -916,6 +916,12 @@ async function initDb() {
 
 /* ------------------------------------------------ Helpers ------------------------------------------------ */
 const pubUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, color: u.color, active: u.active, organizationId: u.organization_id, mustChangePassword: u.mustchangepassword || false, settings: u.settings || {} });
+// Tope de la foto de perfil, en caracteres del data URL. Estas fotos viajan dentro de settings y
+// /api/bootstrap devuelve todos los usuarios, así que una foto sin achicar se multiplica por la
+// nómina entera en cada arranque. El cliente la reduce a 256px antes de subirla; esto es la red.
+const PROFILE_PHOTO_MAX_CHARS = 200_000;
+// Campos de la ficha que cada persona puede editar de su propio perfil, sin pasar por administración.
+const PROFILE_SELF_FIELDS = ["photoDataUrl", "phone", "position", "documentId", "emergencyContact", "bloodType"];
 // Config de pantalla TV por usuario (Monitor Oficina): permite N televisores, cada uno con su propia cuenta e identidad.
 const buildSettingsPatch = (body, current = {}) => {
   const patch = {};
@@ -923,9 +929,30 @@ const buildSettingsPatch = (body, current = {}) => {
   if (body.tvModeEnabled !== undefined) patch.tvModeEnabled = Boolean(body.tvModeEnabled);
   if (body.tvCycleEnabled !== undefined) patch.tvCycleEnabled = Boolean(body.tvCycleEnabled);
   if (body.tvCycleSeconds !== undefined) patch.tvCycleSeconds = Math.max(10, Math.round(Number(body.tvCycleSeconds) || 30));
+  // Ficha personal para la credencial de empresa. La foto viaja como data URL y se valida el tipo
+  // igual que el logo de marca: sin esta comprobación cualquier cadena entraría a la base y después
+  // se renderizaría en un <img> y en el PDF. Se acepta cadena vacía para poder borrarla.
+  if (body.photoDataUrl !== undefined) {
+    const photo = String(body.photoDataUrl || "");
+    // El tamaño se valida en la ruta (ver PROFILE_PHOTO_MAX_CHARS) para poder devolver un 400 con el
+    // motivo: este helper es síncrono y con Express 4 un throw acá quedaría como unhandled rejection.
+    if (!photo || (photo.length <= PROFILE_PHOTO_MAX_CHARS && /^data:image\/(png|jpeg|webp);base64,/i.test(photo))) patch.photoDataUrl = photo;
+  }
+  if (body.phone !== undefined) patch.phone = String(body.phone || "").trim().slice(0, 40);
+  if (body.position !== undefined) patch.position = String(body.position || "").trim().slice(0, 60);
+  if (body.documentId !== undefined) patch.documentId = String(body.documentId || "").trim().slice(0, 20);
+  if (body.emergencyContact !== undefined) patch.emergencyContact = String(body.emergencyContact || "").trim().slice(0, 80);
+  if (body.bloodType !== undefined) patch.bloodType = String(body.bloodType || "").trim().slice(0, 10);
   return Object.keys(patch).length ? { ...current, ...patch } : null;
 };
-const directoryUser = (u, viewerRole) => viewerRole === "admin" ? pubUser(u) : ({ id: u.id, name: u.name, role: u.role, color: u.color, active: u.active });
+// Qué ve del resto del equipo quien no es admin. Se suman foto y cargo, que son los datos con los
+// que la app identifica a una persona en tarjetas y avatares. Documento, teléfono, contacto de
+// emergencia y grupo sanguíneo NO se exponen: son datos personales que sólo necesitan la
+// administración y su propio dueño, y la credencial se genera del lado de quien tiene acceso.
+const directoryUser = (u, viewerRole) => viewerRole === "admin" ? pubUser(u) : ({
+  id: u.id, name: u.name, role: u.role, color: u.color, active: u.active,
+  settings: { photoDataUrl: u.settings?.photoDataUrl || "", position: u.settings?.position || "" },
+});
 const VALID_ROLES = new Set(["admin", "gerente", "tecnico", "tecnico_oficina", "monitor_oficina"]);
 const timelineErrorsValue = (technical, now = Date.now()) => {
   const errors = [];
@@ -1420,6 +1447,26 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
 app.post("/api/auth/logout", (_req, res) => { res.setHeader("Set-Cookie", `og_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${IS_PRODUCTION ? "; Secure" : ""}`); res.status(204).end(); });
 
 /* Cada usuario cambia su propia contraseña */
+// Ficha personal propia. Va por una ruta aparte y no abriendo PATCH /api/users/:id a cualquiera:
+// esa ruta también cambia rol, estado y contraseña, y habilitarla para que alguien suba su foto
+// sería entregar mucho más que lo necesario. Acá el id sale del token, así que nadie puede editar
+// la ficha de otro ni pasando un id en el cuerpo.
+app.patch("/api/me/profile", auth, async (req, res) => {
+  if (req.body?.photoDataUrl && String(req.body.photoDataUrl).length > PROFILE_PHOTO_MAX_CHARS) return res.status(400).json({ error: "La foto de perfil es demasiado grande. Usá una imagen más liviana." });
+  const target = (await pool.query("SELECT settings FROM users WHERE id=$1", [req.user.id])).rows[0];
+  if (!target) return res.status(404).json({ error: "El usuario ya no existe" });
+  // Se filtra el cuerpo a los campos de ficha antes de sanear: buildSettingsPatch también entiende
+  // la configuración de pantalla TV, que es potestad de administración y no tiene por qué viajar
+  // por acá. Sin este filtro, cualquiera podría escribir esos campos en su propio registro.
+  const profileBody = {};
+  for (const field of PROFILE_SELF_FIELDS) if (req.body?.[field] !== undefined) profileBody[field] = req.body[field];
+  const merged = buildSettingsPatch(profileBody, target.settings || {});
+  if (!merged) return res.status(400).json({ error: "Nada que actualizar" });
+  // Sólo settings: nombre, rol y estado siguen siendo potestad de administración. Que alguien pueda
+  // cambiar su propia foto no significa que pueda renombrarse ni reasignarse el rol.
+  const updated = (await pool.query("UPDATE users SET settings=$2 WHERE id=$1 RETURNING *", [req.user.id, merged])).rows[0];
+  res.json(pubUser(updated));
+});
 app.post("/api/me/password", auth, async (req, res) => {
   const { current, next } = req.body || {};
   if (!next || String(next).length < 8) return res.status(400).json({ error: "La nueva contraseña debe tener al menos 8 caracteres" });
@@ -3403,6 +3450,9 @@ app.patch("/api/users/:id", auth, requireRole("admin"), async (req, res) => {
   // El nombre pasó a ser editable desde el directorio de empleados, así que se valida acá: es el
   // rótulo con el que la persona aparece en órdenes, tareas y reportes, y en blanco dejaría filas
   // anónimas imposibles de atribuir.
+  // Se rechaza explícitamente en vez de descartar la foto en silencio: si el usuario eligió una
+  // imagen y la respuesta viniera OK sin haberla guardado, no habría forma de entender qué pasó.
+  if (req.body?.photoDataUrl && String(req.body.photoDataUrl).length > PROFILE_PHOTO_MAX_CHARS) return res.status(400).json({ error: "La foto de perfil es demasiado grande. Usá una imagen más liviana." });
   if (name !== undefined) {
     const cleanName = String(name).trim().slice(0, 80);
     if (!cleanName) return res.status(400).json({ error: "El nombre no puede quedar vacío" });
