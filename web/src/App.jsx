@@ -7775,7 +7775,12 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
     catch { onErr?.(new Error("No se pudo leer la imagen. Probá con otra.")); }
   };
   const save = async () => { setSaving(true); await onSave(form); setSaving(false); };
-  return (
+  // Se monta en document.body por portal. Dentro del árbol de la app, `position: fixed` no se
+  // resolvía contra la ventana sino contra un ancestro —basta con que alguno tenga transform,
+  // filter o will-change para que deje de ser el viewport—, así que el diálogo scrolleaba junto con
+  // la página y su encabezado quedaba tapado por la barra superior. Colgándolo del body no hay
+  // ancestro que lo capture, y vale igual en móvil y en escritorio.
+  return createPortal((
     <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}>
       {/* Columna con alto acotado: el contenido es largo y sin tope el diálogo crecía más que la
           ventana, dejando el título y la foto fuera de vista. Ahora sólo scrollea el cuerpo, y el
@@ -7824,7 +7829,7 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 /* ===================================== EQUIPO (ADMIN) ===================================== */
