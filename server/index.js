@@ -1624,10 +1624,37 @@ app.delete("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req
 });
 
 /* ------------------------------------------------ Proyectos ------------------------------------------------ */
+// Jerarquía de proyectos: un proyecto puede colgar de otro para armar "Proyecto General →
+// subproyecto → tareas". La validación vive acá y no en el front porque un ciclo dejaría girando
+// para siempre a todo lo que recorra el árbol (selector, acumulados, reportes). Devuelve
+// {skip:true} cuando el patch no toca el vínculo, para no pisarlo sin querer.
+async function resolveProjectParent(parentId, projectId) {
+  if (parentId === undefined) return { skip: true };
+  if (!parentId) return { value: null };
+  const id = String(parentId);
+  if (id === projectId) return { error: "Un proyecto no puede colgar de sí mismo" };
+  // Se sube por la cadena de padres: si se vuelve a pasar por el propio proyecto, el vínculo
+  // cerraría un ciclo. De paso confirma que cada eslabón exista y sea de esta empresa (lo segundo
+  // lo garantiza RLS, que deja fuera del SELECT a los proyectos de otro tenant).
+  const seen = new Set([projectId]);
+  let cursor = id;
+  while (cursor) {
+    if (seen.has(cursor)) return { error: "La jerarquía no puede formar un ciclo" };
+    seen.add(cursor);
+    const row = (await pool.query("SELECT data->>'parentId' AS parent FROM projects WHERE id=$1", [cursor])).rows[0];
+    if (!row) return { error: "El proyecto general indicado no existe" };
+    cursor = row.parent || null;
+  }
+  return { value: id };
+}
+
 app.post("/api/projects", auth, requireRole("admin", "gerente"), async (req, res) => {
   const p = { ...(req.body || {}) }; if (!p.id) p.id = `p-${crypto.randomUUID()}`;
   p.name = String(p.name || "").trim(); p.key = String(p.key || "PRJ").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "PRJ";
   if (!p.name) return res.status(400).json({ error: "El nombre del proyecto es obligatorio" });
+  const newParent = await resolveProjectParent(p.parentId, p.id);
+  if (newParent.error) return res.status(400).json({ error: newParent.error });
+  if (!newParent.skip) p.parentId = newParent.value;
   if ((await pool.query("SELECT 1 FROM projects WHERE upper(data->>'key')=upper($1) LIMIT 1", [p.key])).rows[0]) return res.status(409).json({ error: "Ya existe un proyecto con esa clave" });
   if (!Array.isArray(p.allowedUsers)) {
     const monitors = (await pool.query("SELECT id FROM users WHERE active=true AND role='monitor_oficina'")).rows.map((row) => row.id);
@@ -1647,6 +1674,9 @@ app.patch("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req
   const merged = { ...rows[0].data, ...patch, key: rows[0].data.key, id: req.params.id };
   merged.name = String(merged.name || "").trim();
   if (!merged.name) return res.status(400).json({ error: "El nombre del proyecto es obligatorio" });
+  const movedParent = await resolveProjectParent(patch.parentId, req.params.id);
+  if (movedParent.error) return res.status(400).json({ error: movedParent.error });
+  if (!movedParent.skip) merged.parentId = movedParent.value;
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
@@ -1672,6 +1702,11 @@ app.patch("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req
 app.delete("/api/projects/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const project = (await pool.query("SELECT data FROM projects WHERE id=$1", [req.params.id])).rows[0]?.data;
   if (!project) return res.status(404).json({ error: "No existe" });
+  // Se bloquea antes que nada: borrar un padre dejaría a sus subproyectos apuntando a un id que ya
+  // no existe, y ahí no aparecerían ni bajo el general ni sueltos en la raíz. Mismo criterio que
+  // los demás vínculos de abajo: se avisa y decide la persona, no se reasigna en silencio.
+  const childCount = Number((await pool.query("SELECT count(*)::int AS count FROM projects WHERE data->>'parentId'=$1", [req.params.id])).rows[0]?.count || 0);
+  if (childCount > 0) return res.status(409).json({ error: `No se puede eliminar: el proyecto tiene ${childCount} subproyecto(s). Movelos a otro proyecto general o eliminalos primero.` });
   const financialCount = Number((await pool.query("SELECT count(*)::int AS count FROM financial_movements WHERE data->>'projectId'=$1", [req.params.id])).rows[0]?.count || 0);
   if (financialCount > 0) return res.status(409).json({ error: `No se puede eliminar: el proyecto tiene ${financialCount} movimiento(s) financiero(s) asociado(s). Elimina o reasigna primero esos registros.` });
   const [orderLinks, materialLinks] = await Promise.all([

@@ -412,8 +412,46 @@ const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
 const isDueSoon = (t, days = 4) => t.due && t.status !== "Hecho" && t.due >= todayStr() && t.due <= localDateKey(addCalendarDays(new Date(), days));
 // Urgencia de un proyecto calculada a partir de sus tareas (vencidas / por vencer), en vez de un campo
 // manual de prioridad: así no depende de que alguien la actualice y siempre refleja el estado real.
-const projectUrgency = (tasks, projectId) => {
-  const ts = tasks.filter((t) => t.project === projectId);
+// Ordena los proyectos como árbol —cada padre seguido de los suyos— y anota la profundidad para
+// poder sangrar el selector. Un parentId que apunte a un proyecto inexistente o filtrado de la
+// lista se trata como raíz, y al final se agregan los que un ciclo heredado de datos viejos hubiera
+// dejado fuera: el selector nunca debe perder un proyecto por un vínculo mal formado.
+const projectTree = (projects) => {
+  const ids = new Set(projects.map((p) => p.id));
+  const byParent = new Map();
+  projects.forEach((p) => {
+    const parent = p.parentId && p.parentId !== p.id && ids.has(p.parentId) ? p.parentId : null;
+    if (!byParent.has(parent)) byParent.set(parent, []);
+    byParent.get(parent).push(p);
+  });
+  const out = [], seen = new Set();
+  const walk = (parent, depth) => (byParent.get(parent) || []).forEach((p) => {
+    if (seen.has(p.id)) return;
+    seen.add(p.id); out.push({ project: p, depth });
+    walk(p.id, depth + 1);
+  });
+  walk(null, 0);
+  projects.forEach((p) => { if (!seen.has(p.id)) { seen.add(p.id); out.push({ project: p, depth: 0 }); } });
+  return out;
+};
+
+// Un proyecto junto con todo lo que cuelga de él. Elegir un "Proyecto General" tiene que mostrar
+// también las tareas de sus subproyectos: si no, el general aparecería siempre vacío, que es
+// justamente lo que la jerarquía viene a resolver.
+const projectWithDescendants = (projects, rootId) => {
+  const ids = new Set([rootId]);
+  for (let grew = true; grew;) {
+    grew = false;
+    projects.forEach((p) => { if (p.parentId && ids.has(p.parentId) && !ids.has(p.id)) { ids.add(p.id); grew = true; } });
+  }
+  return ids;
+};
+
+// El alcance puede ser el id de un proyecto o un Set con el proyecto y sus subproyectos: un
+// "Proyecto General" tiene que sumar lo que cuelga de él, no figurar siempre en cero.
+const projectUrgency = (tasks, scope) => {
+  const inScope = scope instanceof Set ? (t) => scope.has(t.project) : (t) => t.project === scope;
+  const ts = tasks.filter(inScope);
   return { overdue: ts.filter(isOverdue).length, dueSoon: ts.filter(isDueSoon).length };
 };
 const dueLabel = (due) => {
@@ -1087,7 +1125,7 @@ export default function App() {
   const nextTaskId = (projectId) => { const key = projects.find((p) => p.id === projectId)?.key || "TASK"; const n = Math.max(0, ...tasks.filter((t) => t.id.startsWith(key + "-")).map((t) => parseInt(t.id.split("-")[1], 10) || 0)) + 1; return `${key}-${n}`; };
   const createProject = () => setProjectEditor({ mode: "create", name: "", key: "PRJ", color: PALETTE[projects.length % PALETTE.length] });
   const editProject = (id) => { const current = projects.find((p) => p.id === id); if (current) setProjectEditor({ mode: "edit", ...current }); };
-  const saveProjectEditor = async (form) => { try { if (form.mode === "create") { const project = await api.createProject({ name: form.name, key: form.key, color: form.color, active: form.active !== false }); setProjects((items) => [...items, project]); } else { const project = await api.updateProject(form.id, { name: form.name, color: form.color, active: form.active !== false }); setProjects((items) => items.map((item) => item.id === form.id ? project : item)); setTasks((items) => items.map((task) => task.project === project.id ? { ...task, color: project.color } : task)); if (project.active === false && pProj === project.id) setPProj("all"); } setProjectEditor(null); toast("Proyecto guardado", "success"); } catch (e) { err(e); } };
+  const saveProjectEditor = async (form) => { try { if (form.mode === "create") { const project = await api.createProject({ name: form.name, key: form.key, color: form.color, active: form.active !== false, parentId: form.parentId || null }); setProjects((items) => [...items, project]); } else { const project = await api.updateProject(form.id, { name: form.name, color: form.color, active: form.active !== false, parentId: form.parentId || null }); setProjects((items) => items.map((item) => item.id === form.id ? project : item)); setTasks((items) => items.map((task) => task.project === project.id ? { ...task, color: project.color } : task)); if (project.active === false && pProj === project.id) setPProj("all"); } setProjectEditor(null); toast("Proyecto guardado", "success"); } catch (e) { err(e); } };
   const deleteProject = async (id) => {
     const cur = projects.find((p) => p.id === id); if (!cur) return;
     const n = tasks.filter((t) => t.project === id).length;
@@ -1493,7 +1531,11 @@ export default function App() {
                 })}
               </div>
               <select value={pProj} onChange={(e) => setPProj(e.target.value)} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium sm:w-auto">
-                <option value="all">Todos los proyectos</option>{projects.filter((p) => p.active !== false || p.id === pProj).map((p) => { const urgency = projectUrgency(tasks, p.id); const flag = urgency.overdue > 0 ? ` ⚠ ${urgency.overdue} vencida(s)` : urgency.dueSoon > 0 ? ` ⏰ ${urgency.dueSoon} por vencer` : ""; return <option key={p.id} value={p.id}>{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}{flag}</option>; })}
+                {/* Los subproyectos van sangrados bajo su general. Se usan espacios duros porque un
+                    <option> no respeta padding de forma pareja entre navegadores. El recuento de
+                    vencidas de un general incluye el de lo que cuelga de él, que es lo que se ve al
+                    seleccionarlo. */}
+                <option value="all">Todos los proyectos</option>{projectTree(projects.filter((p) => p.active !== false || p.id === pProj)).map(({ project: p, depth }) => { const urgency = projectUrgency(tasks, projectWithDescendants(projects, p.id)); const flag = urgency.overdue > 0 ? ` ⚠ ${urgency.overdue} vencida(s)` : urgency.dueSoon > 0 ? ` ⏰ ${urgency.dueSoon} por vencer` : ""; return <option key={p.id} value={p.id}>{depth > 0 ? `${" ".repeat(depth * 4)}└ ` : ""}{p.key} · {p.name}{p.active === false ? " (Finalizado)" : ""}{flag}</option>; })}
               </select>
               {projects.some((p) => p.active === false) && (
                 <div ref={finishedMenuRef} className="relative shrink-0">
@@ -1533,7 +1575,10 @@ export default function App() {
             </div>}
             {(() => {
               const finishedProjectIds = new Set(projects.filter((p) => p.active === false).map((p) => p.id));
-              const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : t.project === pProj) && (!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
+              // Seleccionar un proyecto general incluye las tareas de sus subproyectos: es el
+              // sentido de la jerarquía, y sin esto el general se vería siempre vacío.
+              const scopeIds = pProj === "all" ? null : projectWithDescendants(projects, pProj);
+              const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : scopeIds.has(t.project)) &&(!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} me={me} branding={branding} whiteboardNotes={whiteboardNotes} reportSignal={projectReportSignal} onConsumeReport={() => setProjectReportSignal(0)} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} branding={branding} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
@@ -1564,7 +1609,7 @@ export default function App() {
       {me.mustChangePassword && <ChangePassword forced onDone={() => setMe((m) => ({ ...m, mustChangePassword: false }))} />}
       {globalSearchOpen && <GlobalSearch orders={orders} tasks={tasks} clients={clients} parts={parts} projects={projects} budgets={budgets} finances={finances} suppliers={suppliers} purchaseOrders={purchaseOrders} materialLists={materialLists} isMgr={isMgr} canSeeMaterialLists={isMgr || me.role === "tecnico"} onClose={() => setGlobalSearchOpen(false)} onSelect={(result) => { setGlobalSearchOpen(false); if (result.kind === "order") { navigateModule("orders"); setODetail(result.item); } else if (result.kind === "task") { navigateModule("projects"); setPTab("board"); setEditing(result.item); } else if (result.kind === "budget") navigateModule("budgets"); else if (result.kind === "finance") navigateModule("finances"); else if (result.kind === "client") navigateModule("clients"); else if (result.kind === "part") navigateModule("inventory"); else if (result.kind === "supplier" || result.kind === "purchaseOrder") navigateModule("purchaseOrders"); else if (result.kind === "materialList") navigateModule("materialLists"); }} />}
       {confirmDialog && <ConfirmDialog {...confirmDialog} onClose={() => setConfirmDialog(null)} onConfirm={async () => { const action = confirmDialog.action; setConfirmDialog(null); await action(); }} />}
-      {projectEditor && <ProjectEditor value={projectEditor} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
+      {projectEditor && <ProjectEditor value={projectEditor} projects={projects} onClose={() => setProjectEditor(null)} onSave={saveProjectEditor} />}
 
       {/* Menú secundario móvil */}
       {mobileMoreOpen && mobileExtraTabs.length > 0 && (
@@ -1756,11 +1801,15 @@ function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger, onC
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-2xl sm:pb-5" onClick={(e) => e.stopPropagation()}><div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl ${danger ? "bg-rose-50 text-rose-600" : "bg-brand-50 text-brand-600"}`}>{danger ? <Trash2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</div><h2 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h2><p className="mt-2 text-sm leading-relaxed text-slate-500">{message}</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button onClick={onConfirm} className={`rounded-lg px-3 py-2.5 text-sm font-semibold text-white ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-brand-500 hover:bg-brand-400"}`}>{confirmLabel}</button></div></div></div>;
 }
 
-function ProjectEditor({ value, onClose, onSave }) {
+function ProjectEditor({ value, projects = [], onClose, onSave }) {
   const [form, setForm] = useState(value);
   const set = (patch) => setForm((current) => ({ ...current, ...patch }));
   const mouseDownOnBackdrop = useRef(false);
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
+  // Candidatos a proyecto general: se excluye el propio y su descendencia, porque colgarlo de un
+  // hijo cerraría un ciclo. El servidor lo rechaza igual, pero conviene que la opción ni aparezca.
+  const ownBranch = form.id ? projectWithDescendants(projects, form.id) : new Set();
+  const parentOptions = projectTree(projects.filter((p) => !ownBranch.has(p.id)));
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}><div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold text-slate-900">{form.mode === "create" ? "Nuevo proyecto" : "Editar proyecto"}</h2><p className="text-xs text-slate-500">Definí una identidad clara para las tareas.</p></div><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="space-y-3"><L label="Nombre"><input autoFocus value={form.name} onChange={(e) => set({ name: e.target.value })} className="u-input" placeholder="Nombre del proyecto" /></L><L label="Clave"><input disabled={form.mode === "edit"} value={form.key} onChange={(e) => set({ key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) })} className="u-input font-mono" placeholder="AUT" /></L><L label="Proyecto general" help="Colgá este proyecto de otro para armar una jerarquía. Al seleccionar el general, el tablero, el calendario y los reportes incluyen también las tareas de sus subproyectos."><select value={form.parentId || ""} onChange={(e) => set({ parentId: e.target.value || null })} className="u-input"><option value="">Ninguno · es un proyecto general</option>{parentOptions.map(({ project: p, depth }) => <option key={p.id} value={p.id}>{depth > 0 ? `${" ".repeat(depth * 4)}└ ` : ""}{p.key} · {p.name}</option>)}</select></L><L label="Color"><div className="flex flex-wrap gap-2">{PALETTE.map((color) => <button key={color} onClick={() => set({ color })} aria-label={`Color ${color}`} className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ${form.color === color ? "ring-slate-700" : "ring-transparent"}`} style={{ background: color }} />)}</div></L><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.active !== false} onChange={(e) => set({ active: e.target.checked })} /> Proyecto activo</label>{form.active === false && <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Un proyecto finalizado deja de listarse por defecto en el selector de Proyectos. Podés reactivarlo cuando quieras.</p>}</div><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={!form.name.trim() || !form.key.trim()} onClick={() => onSave(form)} className="rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Guardar proyecto</button></div></div></div>;
 }
 
 function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], finances = [], suppliers = [], purchaseOrders = [], materialLists = [], isMgr, canSeeMaterialLists, onClose, onSelect }) {
