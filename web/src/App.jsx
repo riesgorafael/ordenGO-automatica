@@ -7724,8 +7724,12 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
   const save = async () => { setSaving(true); await onSave(form); setSaving(false); };
   return (
     <div className="motion-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Ficha de {user.name}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+      {/* Columna con alto acotado: el contenido es largo y sin tope el diálogo crecía más que la
+          ventana, dejando el título y la foto fuera de vista. Ahora sólo scrollea el cuerpo, y el
+          encabezado y los botones quedan siempre visibles. */}
+      <div className="mobile-dialog mobile-sheet-content flex max-h-[90dvh] w-full max-w-md flex-col rounded-t-2xl bg-white sm:max-h-[85vh] sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Ficha de {user.name}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="mb-4 flex items-center gap-4">
           <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-full" style={{ background: user.color || "#94a3b8" }}>
             {form.photoDataUrl ? <img src={form.photoDataUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-xl font-semibold text-white">{initials(user.name)}</span>}
@@ -7760,7 +7764,8 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
         {/* El cambio de contraseña vive acá cuando es la ficha propia: es la otra acción de "mi
             cuenta" y este diálogo es el único lugar al que se llega desde el nombre en la barra. */}
         {onChangePassword && <button onClick={onChangePassword} className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:underline"><KeyRound className="h-3.5 w-3.5" /> Cambiar mi contraseña</button>}
-        <div className="mt-5 flex gap-2">
+        </div>
+        <div className="flex shrink-0 gap-2 border-t border-slate-100 px-5 py-4">
           <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
           <button onClick={save} disabled={saving} className="flex-1 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50">{saving ? "Guardando…" : "Guardar ficha"}</button>
         </div>
