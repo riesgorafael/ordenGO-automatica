@@ -5701,9 +5701,12 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], branding = DEFAU
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold text-slate-900">Panel de dirección</h2>
         <button onClick={exportPdf} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> PDF</button>
-        <div className="ml-auto flex rounded-lg bg-slate-200 p-0.5">
+        {/* En móvil ocupa el ancho completo con los tres botones en tercios iguales: antes iba
+            pegado a la derecha por el ml-auto y, al envolver a la segunda fila, "Año" se salía del
+            borde de la pantalla. Desde sm vuelve a ser compacto y alineado a la derecha. */}
+        <div className="ml-auto flex w-full rounded-lg bg-slate-200 p-0.5 sm:w-auto">
           {[["mes", "Mes"], ["trim", "Trimestre"], ["anio", "Año"]].map(([id, lb]) => (
-            <button key={id} onClick={() => setPeriod(id)} className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${period === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{lb}</button>
+            <button key={id} onClick={() => setPeriod(id)} className={`flex-1 rounded-md px-2.5 py-2 text-center text-sm font-medium sm:flex-none sm:py-1.5 ${period === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{lb}</button>
           ))}
         </div>
       </div>
