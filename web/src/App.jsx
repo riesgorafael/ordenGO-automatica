@@ -1149,6 +1149,9 @@ export default function App() {
   const isMonitor = me.role === "monitor_oficina";
   const tvMode = isMonitor && tvSettings.tvModeEnabled;
   const isOffice = me.role === "tecnico_oficina" || isMonitor;
+  // Perfiles de solo lectura: no se les ofrece ninguna acción de alta. El servidor ya las rechaza,
+  // pero mostrar un botón que va a fallar es peor que no mostrarlo.
+  const isReadOnlyRole = isMonitor || me.role === "cliente";
   // Los técnicos pueden desglosar en subproyectos un proyecto que ya tengan asignado. No abarca a
   // los monitores, que son de sólo visualización. El servidor aplica el mismo límite: acá se
   // decide qué se muestra, allá qué se permite.
@@ -1558,7 +1561,7 @@ export default function App() {
             <div className="hidden min-w-0 max-w-32 leading-tight sm:block"><div className="truncate text-[9px] font-medium uppercase tracking-wider text-slate-500">Entorno</div><div className="truncate text-xs font-semibold text-slate-200">{branding.companyName || "Empresa"}</div></div>
           </div>
           <div className="flex shrink-0 items-center gap-0 sm:gap-2">
-            {activeModule === "orders" && <button onClick={() => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
+            {activeModule === "orders" && !isReadOnlyRole && <button onClick={() => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("new"); }} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden</button>}
             {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "finances" && <button onClick={() => setFinanceCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Movimiento</button>}
             {activeModule === "purchaseOrders" && <button onClick={() => setPurchaseOrderCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden de compra</button>}
