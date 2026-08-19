@@ -1716,7 +1716,11 @@ export async function credentialPDF(user, branding = {}) {
 
   /* ---------- Foto ---------- */
   const photoW = 18, photoH = 24; // 3:4, la proporción en que el cliente recorta la foto
-  const px = center - photoW / 2;
+  // Foto y QR lado a lado, centrados como par: en vertical no entraban los dos, y así el QR no
+  // agrega altura porque es más bajo que la foto.
+  const qrSide = 18, gap = 4;
+  const px = center - (photoW + gap + qrSide) / 2;
+  const qrX = px + photoW + gap;
   if (s.photoDataUrl) {
     try { doc.addImage(s.photoDataUrl, "JPEG", px, y, photoW, photoH, undefined, "FAST"); } catch {}
   } else {
@@ -1726,6 +1730,16 @@ export async function credentialPDF(user, branding = {}) {
   }
   doc.setDrawColor(...accent); doc.setLineWidth(0.5);
   doc.roundedRect(px, y, photoW, photoH, 1.5, 1.5, "S"); doc.setLineWidth(0.2);
+  if (s.credentialToken) {
+    try {
+      const { default: QRCode } = await import("qrcode");
+      const url = `${window.location.origin}/?credencial=${encodeURIComponent(s.credentialToken)}`;
+      const qr = await QRCode.toDataURL(url, { margin: 0, width: 360, errorCorrectionLevel: "M" });
+      doc.addImage(qr, "PNG", qrX, y, qrSide, qrSide, undefined, "FAST");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(4); doc.setTextColor(150, 158, 168);
+      doc.text("Escaneá para verificar", qrX + qrSide / 2, y + qrSide + 2.6, { align: "center" });
+    } catch {}
+  }
   y += photoH + 5;
 
   /* ---------- Identidad ---------- */
@@ -1758,7 +1772,9 @@ export async function credentialPDF(user, branding = {}) {
   const footLineY = H - 12.5;
   if (rows.length) {
     const boxH = rows.length * 4.4 + 3;
-    const boxY = Math.max(y, footLineY - 2.5 - boxH);
+    // min, no max: el recuadro se ancla al pie siempre. Con max, cuando el flujo de arriba bajaba
+    // más de lo previsto, la última fila terminaba cruzada por la línea divisoria.
+    const boxY = Math.min(y, footLineY - 3 - boxH);
     doc.setFillColor(246, 248, 251); doc.roundedRect(M, boxY, W - M * 2, boxH, 1.5, 1.5, "F");
     let ry = boxY + 4.2;
     rows.forEach(([label, value]) => {
