@@ -1895,9 +1895,11 @@ export async function credentialCleanPDF(user, branding = {}) {
     doc.text(clip(value, W - dx - M), dx, ty + 3);
   };
   // Las tres filas se reparten a lo alto del QR para que ambos bloques empiecen y terminen juntos.
-  pair("DNI", credentialDni(s.documentId), qrY + 3);
-  pair("Vence", credentialExpiry(), qrY + 9.5);
-  pair("Tarjeta N°", credentialCardId(s.credentialToken), qrY + 16);
+  pair("DNI", credentialDni(s.documentId), qrY + 1);
+  pair("Vence", credentialExpiry(), qrY + 7);
+  // La última fila cierra en qrY+16, dos milímetros por encima del pie: el valor se dibuja 3 mm
+  // debajo de su etiqueta, y con qrY+16 terminaba justo sobre la línea del sitio web.
+  pair("Tarjeta N°", credentialCardId(s.credentialToken), qrY + 13);
 
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }
