@@ -687,6 +687,23 @@ function CredentialCheck({ token }) {
             {person.position && <p className="text-sm text-slate-500">{person.position}</p>}
             {person.organizationName && <p className="mt-2 text-xs font-medium text-slate-600">{person.organizationName}</p>}
             {!person.active && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">Esta persona ya no figura activa. No autorices el ingreso con esta credencial.</p>}
+            {(person.documentId || person.phone) && (
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left">
+                {person.documentId && <p className="text-xs text-slate-700"><span className="text-slate-500">Documento:</span> {person.documentId}</p>}
+                {person.phone && <p className="mt-0.5 text-xs text-slate-700"><span className="text-slate-500">Teléfono:</span> {person.phone}</p>}
+              </div>
+            )}
+            {/* Bloque de emergencia: el motivo por el que estos datos son públicos. Va destacado y
+                al final, porque quien lo necesita lo busca con urgencia y no debe tener que leer
+                el resto de la tarjeta para encontrarlo. */}
+            {(person.bloodType || person.emergencyContact || person.emergencyPhone) && (
+              <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-left">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">En caso de emergencia</div>
+                {person.bloodType && <p className="mt-1.5 text-xs text-slate-700"><span className="text-slate-500">Grupo sanguíneo:</span> <b>{person.bloodType}</b></p>}
+                {person.emergencyContact && <p className="mt-0.5 text-xs text-slate-700"><span className="text-slate-500">Contacto:</span> {person.emergencyContact}</p>}
+                {person.emergencyPhone && <a href={`tel:${person.emergencyPhone}`} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">Llamar a {person.emergencyPhone}</a>}
+              </div>
+            )}
             <p className="mt-4 text-[11px] text-slate-400">Verificado el {new Date(person.checkedAt).toLocaleString("es-AR")}</p>
           </div>
         ) : state.status === "error" ? (

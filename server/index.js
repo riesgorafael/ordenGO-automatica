@@ -1465,6 +1465,17 @@ app.get("/api/credential/:token", async (req, res) => {
     photoDataUrl: row.settings?.photoDataUrl || "",
     active: row.active === true,
     organizationName: row.organization_name || "",
+    // Datos de emergencia: se exponen a propósito. Quien escanea la credencial de alguien accidentado
+    // necesita el grupo sanguíneo y a quién avisar, y ese es el caso de uso que justifica el QR.
+    // Documento y teléfono personal se incluyen por pedido expreso: quedan legibles para cualquiera
+    // que escanee la credencial. Es una decisión de negocio, no un descuido — ver la advertencia
+    // dada al implementarlo. Si se revierte, basta con sacarlos de esta respuesta: no hay que
+    // reimprimir credenciales porque el QR sólo lleva la URL, no los datos.
+    documentId: row.settings?.documentId || "",
+    phone: row.settings?.phone || "",
+    bloodType: row.settings?.bloodType || "",
+    emergencyContact: row.settings?.emergencyContact || "",
+    emergencyPhone: row.settings?.emergencyPhone || "",
     checkedAt: new Date().toISOString(),
   });
 });
