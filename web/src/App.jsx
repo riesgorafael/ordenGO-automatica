@@ -13,7 +13,7 @@ import {
   Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity, Sun, Moon, Monitor,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
-import { LOGO, LOGO_LIGHT, PRODUCT_LOGO } from "./logo";
+import { LOGO, LOGO_LIGHT } from "./logo";
 const pdfModule = () => import("./pdf");
 let REPORT_BRANDING = {};
 const withReportBranding = (args, expected) => args.length >= expected ? args : [...args, REPORT_BRANDING];
@@ -637,6 +637,29 @@ function SearchSelect({ value, onChange, options, emptyLabel = "Sin asociar", pl
 // Con foto cargada se muestra la foto; sin ella, las iniciales sobre el color de la persona, que es
 // como funcionó siempre. El color se mantiene de fondo detrás de la imagen: si la foto tarda o falla
 // en cargar, el círculo no queda en blanco.
+/* Logo del producto volcado en el DOM en lugar de <img src>. Un SVG cargado como imagen queda
+   aislado: no ve las fuentes de la página, así que Montserrat —la tipografía del logo— no se
+   aplicaba y el texto caía a una fuente del sistema. Inline sí la toma. El trazado del símbolo y
+   los colores son los del archivo oficial (logo_miordengo.svg). */
+function ProductLogo({ className = "" }) {
+  return (
+    <svg viewBox="0 0 448 129" className={className} role="img" aria-label="MiOrdenGo · Gestión y Facturación">
+      <g transform="translate(-124 -50)">
+        <g transform="translate(210)">
+          <text transform="translate(0 110)" fill="#17345e" fontSize="62" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="700" letterSpacing="-0.016em"><tspan x="0" y="0">MiOrden</tspan><tspan y="0" fill="#00a4d3">Go</tspan></text>
+          <text transform="translate(3 148)" fill="#707372" fontSize="28" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="600" letterSpacing="-0.018em"><tspan x="0" y="0">Gestión y Facturación</tspan></text>
+          <text transform="translate(362 174)" fill="#a0a3a2" fontSize="20" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="500"><tspan x="-162.6" y="0">miordengo.com</tspan></text>
+        </g>
+        <g transform="translate(84 14.866)">
+          <rect width="79" height="14" rx="4" transform="translate(40 102.134)" fill="#17345e" />
+          <rect width="56" height="14" rx="4" transform="translate(40 121.134)" fill="#17345e" />
+          <path d="M40,79.393H79.187L106.618,45l5.8,14.041L90.943,87.991H40Z" transform="translate(0 8.299)" fill="#00a4d3" />
+          <path d="M110,40l28.961-3.824-3.166,29.619Z" transform="translate(-16.842 9)" fill="#00a4d3" />
+        </g>
+      </g>
+    </svg>
+  );
+}
 const Avatar = ({ user, size = 28 }) => {
   const photo = user?.settings?.photoDataUrl;
   return (<div className="grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-white" style={{ width: size, height: size, background: user?.color || "#94a3b8", fontSize: size * 0.4 }} title={user?.name}>
@@ -1545,7 +1568,7 @@ export default function App() {
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-ink-900 text-slate-100">
         <div className={`mx-auto flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3 ${tvMode ? "max-w-none lg:px-7" : "max-w-6xl"}`}>
           <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
-            <div className="flex h-8 shrink-0 items-center rounded-lg bg-white px-1.5 shadow-sm ring-1 ring-white/10 sm:h-9 sm:px-2"><img src={PRODUCT_LOGO} alt="MiOrdenGo · Gestión y Facturación" className="h-6 w-auto object-contain sm:h-7" /></div>
+            <div className="flex h-8 shrink-0 items-center rounded-lg bg-white px-1.5 shadow-sm ring-1 ring-white/10 sm:h-9 sm:px-2"><ProductLogo className="h-6 w-auto object-contain sm:h-7" /></div>
             <div className="hidden h-7 w-px bg-slate-700 sm:block" aria-hidden="true" />
             <div className="hidden min-w-0 max-w-32 leading-tight sm:block"><div className="truncate text-[9px] font-medium uppercase tracking-wider text-slate-500">Entorno</div><div className="truncate text-xs font-semibold text-slate-200">{branding.companyName || "Empresa"}</div></div>
           </div>
@@ -1886,7 +1909,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
         <div className="pointer-events-none absolute -right-10 top-1/2 h-[30rem] w-[30rem] -translate-y-1/2 rounded-full border border-cyan-300/10" />
         <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 bg-cyan-400/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
-          <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><img src={PRODUCT_LOGO} alt="MiOrdenGo · Gestión y Facturación" className="h-14 w-auto max-w-80 object-contain" /></div>
+          <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><ProductLogo className="h-14 w-auto max-w-80 object-contain" /></div>
           <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Vos dirigís. Nosotros ordenamos.</h1>
           {/* Definición fija, no branding.subtitle: ese campo alimenta el título de la pestaña, donde
               una línea larga no entra. Tampoco repite lo de los bullets de abajo (órdenes, proyectos,
@@ -1902,7 +1925,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
       {/* Tarjeta de acceso */}
       <div className="flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-sm">
-          <div className="mb-6 lg:hidden"><img src={PRODUCT_LOGO} alt="MiOrdenGo · Gestión y Facturación" className="h-auto w-56 max-w-full object-contain" /></div>
+          <div className="mb-6 lg:hidden"><ProductLogo className="h-auto w-56 max-w-full object-contain" /></div>
           <div className="login-card overflow-hidden rounded-3xl shadow-2xl shadow-[#0B315F]/15">
             <div className="h-1 bg-gradient-to-r from-[#0B315F] via-[#0EA5C5] to-[#20C4DE]" />
             <div className="p-6 sm:p-8">
@@ -9040,7 +9063,7 @@ function SettingsModule({ branding, companyProfile, onSaveBranding, onSaveCompan
       </Box>
       <Box className="self-start overflow-hidden">
         <div className="border-b border-slate-100 p-4"><h3 className="text-sm font-semibold text-slate-900">Vista previa</h3><p className="mt-0.5 text-[11px] text-slate-500">Aplicación y encabezado institucional de los reportes.</p></div>
-        <div className="space-y-4 p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><span className="shrink-0 rounded-md bg-white px-1.5 py-1"><img src={PRODUCT_LOGO} alt="MiOrdenGo" className="h-5 w-auto" /></span><span className="h-6 w-px shrink-0 bg-white/15" /><div className="min-w-0 leading-tight"><span className="block text-[8px] font-medium uppercase tracking-wider text-white/50">Entorno</span><b className="block break-words text-[10px] text-white">{form.companyName || "Empresa"}</b></div></div><div className="bg-slate-50 p-3"><div className="mb-2 flex gap-1"><i className="h-2 w-12 rounded-full bg-slate-300" /><i className="h-2 w-8 rounded-full bg-slate-200" /></div><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: form.primaryColor, color: readableTextColor(form.primaryColor) }}>Crear registro</button><div className="mt-3 grid grid-cols-3 gap-1"><i className="h-7 rounded bg-emerald-100" /><i className="h-7 rounded bg-amber-100" /><i className="h-7 rounded bg-rose-100" /></div></div></div></div><div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Encabezado del reporte</p><div className="rounded-xl border border-slate-200 bg-white p-4"><CompanyLogo branding={form} className="mb-3 max-h-10 max-w-40 object-contain text-slate-700" /><div className="space-y-0.5 text-[10px] leading-relaxed text-slate-500"><b className="block text-xs text-slate-700">{form.companyLegalName || form.companyName || "Empresa"}</b>{form.companyCuit && <div>CUIT: {formatCuit(form.companyCuit)}</div>}{form.companyAddress && <div>{form.companyAddress}</div>}{form.companyPhone && <div>Tel.: {form.companyPhone}</div>}{form.companyEmail && <div>{form.companyEmail}</div>}{form.companyWebsite && <div>{form.companyWebsite}</div>}<div className="mt-3 border-t border-slate-100 pt-2 text-[9px] font-semibold text-sky-700">Generado con MiOrdenGo</div></div></div></div></div>
+        <div className="space-y-4 p-4"><div className="overflow-hidden rounded-xl border border-slate-200"><div className="flex items-center gap-2 p-3 text-white" style={{ background: form.headerColor }}><span className="shrink-0 rounded-md bg-white px-1.5 py-1"><ProductLogo className="h-5 w-auto" /></span><span className="h-6 w-px shrink-0 bg-white/15" /><div className="min-w-0 leading-tight"><span className="block text-[8px] font-medium uppercase tracking-wider text-white/50">Entorno</span><b className="block break-words text-[10px] text-white">{form.companyName || "Empresa"}</b></div></div><div className="bg-slate-50 p-3"><div className="mb-2 flex gap-1"><i className="h-2 w-12 rounded-full bg-slate-300" /><i className="h-2 w-8 rounded-full bg-slate-200" /></div><div className="rounded-lg border border-slate-200 bg-white p-3"><span className="text-[10px] text-slate-400">Acción principal</span><button className="mt-2 block rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: form.primaryColor, color: readableTextColor(form.primaryColor) }}>Crear registro</button><div className="mt-3 grid grid-cols-3 gap-1"><i className="h-7 rounded bg-emerald-100" /><i className="h-7 rounded bg-amber-100" /><i className="h-7 rounded bg-rose-100" /></div></div></div></div><div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Encabezado del reporte</p><div className="rounded-xl border border-slate-200 bg-white p-4"><CompanyLogo branding={form} className="mb-3 max-h-10 max-w-40 object-contain text-slate-700" /><div className="space-y-0.5 text-[10px] leading-relaxed text-slate-500"><b className="block text-xs text-slate-700">{form.companyLegalName || form.companyName || "Empresa"}</b>{form.companyCuit && <div>CUIT: {formatCuit(form.companyCuit)}</div>}{form.companyAddress && <div>{form.companyAddress}</div>}{form.companyPhone && <div>Tel.: {form.companyPhone}</div>}{form.companyEmail && <div>{form.companyEmail}</div>}{form.companyWebsite && <div>{form.companyWebsite}</div>}<div className="mt-3 border-t border-slate-100 pt-2 text-[9px] font-semibold text-sky-700">Generado con MiOrdenGo</div></div></div></div></div>
       </Box>
     </div>
     <Box className="overflow-hidden">
