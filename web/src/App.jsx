@@ -36,7 +36,7 @@ import { clearOfflineUserData, clearOrderDraft, flushOfflineQueue, loadOrderDraf
 /* ===================================== CONFIG ===================================== */
 const CUR = "USD ";
 let DEFAULT_RATE = 50;
-const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", monitor_oficina: "Monitor de oficina" };
+const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", cliente: "Cliente corporativo", monitor_oficina: "Monitor de oficina" };
 const DEFAULT_COMPANY_PROFILE = { locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD", pricing: { defaultHourlyRate: 0, defaultInternalHourlyCost: 0, minimumBillableHours: 0, targetMargin: 0, vatRate: 0 }, laborRoles: [{ name: "Técnico", cost: 0 }], features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true } };
 const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", team: "team" };
 const allowedModulesForRole = (role, profile = DEFAULT_COMPANY_PROFILE) => {

@@ -961,7 +961,7 @@ const directoryUser = (u, viewerRole) => viewerRole === "admin" ? pubUser(u) : (
   id: u.id, name: u.name, role: u.role, color: u.color, active: u.active,
   settings: { photoDataUrl: u.settings?.photoDataUrl || "", position: u.settings?.position || "" },
 });
-const VALID_ROLES = new Set(["admin", "gerente", "tecnico", "tecnico_oficina", "monitor_oficina"]);
+const VALID_ROLES = new Set(["admin", "gerente", "tecnico", "tecnico_oficina", "monitor_oficina", "cliente"]);
 const timelineErrorsValue = (technical, now = Date.now()) => {
   const errors = [];
   const points = [["aviso", technical?.reportedAt], ["llegada", technical?.arrivalAt], ["inicio", technical?.startedAt], ["finalización", technical?.completedAt]]
@@ -1299,9 +1299,15 @@ registerGanttRoutes(app, pool, { auth, requireRole, tecCanProject });
 // Roles "técnicos" (campo u oficina): nunca ven importes ni el estado "Facturada"
 const isTec = (r) => r === "tecnico" || r === "tecnico_oficina";
 const isMonitor = (r) => r === "monitor_oficina";
-const isProjectScoped = (r) => isTec(r) || isMonitor(r);
+// Cliente corporativo: personal de una empresa contratante. Vive dentro de la organización del
+// proveedor —no tiene organización propia— así que su aislamiento no lo da RLS sino allowedUsers,
+// igual que un técnico. La diferencia es que además NO puede ver dinero interno: costos, márgenes
+// ni precios de compra. Ese filtro se aplica al serializar, no en la interfaz.
+const isClient = (r) => r === "cliente";
+const isProjectScoped = (r) => isTec(r) || isMonitor(r) || isClient(r);
 const requireOrdersAccess = (req, res, next) => (req.user.role === "tecnico_oficina" || isMonitor(req.user.role)) ? res.status(403).json({ error: "Este perfil no tiene acceso a órdenes de trabajo" }) : next();
-const requireProjectWrite = (req, res, next) => isMonitor(req.user.role) ? res.status(403).json({ error: "Monitor Oficina tiene acceso de solo visualización" }) : next();
+// Monitores y clientes corporativos son perfiles de sólo lectura: ninguno puede crear ni modificar.
+const requireProjectWrite = (req, res, next) => (isMonitor(req.user.role) || isClient(req.user.role)) ? res.status(403).json({ error: "Monitor Oficina tiene acceso de solo visualización" }) : next();
 const orderAssignedIds = orderAssignedIdsValue;
 const orderVisibleToUser = orderVisibleToUserValue;
 async function hydrateOrderAssignments(order, db = pool) {
@@ -1538,6 +1544,10 @@ app.post("/api/me/password", auth, async (req, res) => {
 /* ------------------------------------------------ Bootstrap (carga inicial) ------------------------------------------------ */
 app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const tec = isTec(req.user.role);
+  // Un cliente corporativo ve el avance de sus proyectos, nada del negocio del proveedor. Se lo
+  // excluye acá, al armar la respuesta, y no ocultando cosas en la interfaz: lo que no viaja no se
+  // puede filtrar desde el navegador ni leer llamando la API a mano.
+  const client = isClient(req.user.role);
   const organizationId = req.user.organizationId;
   const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, wb] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1 AND organization_id=$2", [req.user.id, organizationId]),
@@ -1590,6 +1600,9 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   }
   const visibleClients = cl.rows
     .map((row) => row.data)
+    // El cliente corporativo no ve la cartera del proveedor: sin esto recibía el listado completo
+    // de clientes de la empresa, que es información comercial sensible y ajena.
+    .filter(() => !client)
     .filter((client) => !tec || operationalClientIds.has(client.id) || operationalClientNames.has(String(client.name || "").trim().toLowerCase()))
     .map((client) => clientForRole(client, req.user.role)).filter(Boolean);
   res.json({
@@ -1597,20 +1610,20 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     users: u.rows.map((user) => directoryUser(user, req.user.role)),
     clients: visibleClients,
     projects: companyProfile.features.projects === false ? [] : visibleProjects,
-    budgets: tec || isMonitor(req.user.role) || companyProfile.features.budgets === false ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
-    finances: tec || isMonitor(req.user.role) || companyProfile.features.finances === false ? [] : fi.rows.map((r) => {
+    budgets: tec || client || isMonitor(req.user.role) || companyProfile.features.budgets === false ? [] : bu.rows.map((r) => ({ ...normalizeBudget(r.data), _updatedAt: r.updated_at })),
+    finances: tec || client || isMonitor(req.user.role) || companyProfile.features.finances === false ? [] : fi.rows.map((r) => {
       // Los adjuntos no viajan en el listado (son data: URIs pesados): solo cuántos hay.
       const { attachmentUrl, attachments, ...summary } = r.data;
       const count = Array.isArray(attachments) ? attachments.length : (attachmentUrl ? 1 : 0);
       return { ...summary, hasAttachment: count > 0, attachmentCount: count, _updatedAt: r.updated_at };
     }),
-    orders: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role) || companyProfile.features.orders === false) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    orders: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.orders === false) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: companyProfile.features.projects === false ? [] : ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: notifRows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
-    parts: pa.rows.map((r) => partOut(r.data)),
-    suppliers: tec || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
-    purchaseOrders: tec || isMonitor(req.user.role) || companyProfile.features.purchaseOrders === false ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
-    materialLists: (req.user.role === "tecnico_oficina" || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    parts: client ? [] : pa.rows.map((r) => partOut(r.data)),
+    suppliers: tec || client || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
+    purchaseOrders: tec || client || isMonitor(req.user.role) || companyProfile.features.purchaseOrders === false ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    materialLists: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     whiteboardNotes: companyProfile.features.whiteboard === false ? [] : wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
     companyProfile,
@@ -3149,6 +3162,10 @@ app.get("/api/orders", auth, requireOrdersAccess, async (req, res) => {
     ? await pool.query("SELECT data, updated_at FROM orders WHERE updated_at>$1 AND organization_id=$2 ORDER BY updated_at", [since.toISOString(), req.user.organizationId])
     : await pool.query("SELECT data, updated_at FROM orders WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   const tec = isTec(req.user.role);
+  // Un cliente corporativo ve el avance de sus proyectos, nada del negocio del proveedor. Se lo
+  // excluye acá, al armar la respuesta, y no ocultando cosas en la interfaz: lo que no viaja no se
+  // puede filtrar desde el navegador ni leer llamando la API a mano.
+  const client = isClient(req.user.role);
   res.json(rows.filter((row) => !row.data.archivedAt && orderVisibleToUser(req.user, row.data)).map((row) => ({ ...(tec ? stripMoney(row.data) : row.data), _updatedAt: row.updated_at })));
 });
 
