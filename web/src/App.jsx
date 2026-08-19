@@ -2743,7 +2743,6 @@ function FinanceEntryModal({
                   <input
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     className="hidden"
                     onChange={(event) => selectFile(event.target.files?.[0])}
                   />
@@ -7345,7 +7344,7 @@ function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumA
 }
 const Toggle = ({ active, onClick, children }) => <button onClick={onClick} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${active ? "bg-brand-500 text-white" : "bg-slate-100 text-slate-600"}`}>{children}</button>;
 function PhotoBtn({ icon: Icon, label, cat, onPick }) {
-  return (<label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white py-3 text-[11px] font-medium text-slate-600 transition hover:border-brand-400 hover:text-brand-600"><Icon className="h-4 w-4" /> {label}<input type="file" accept={EVIDENCE_ACCEPT} capture="environment" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; onPick(f, cat); }} /></label>);
+  return (<label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white py-3 text-[11px] font-medium text-slate-600 transition hover:border-brand-400 hover:text-brand-600"><Icon className="h-4 w-4" /> {label}<input type="file" accept={EVIDENCE_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; onPick(f, cat); }} /></label>);
 }
 function SignaturePad({ onChange }) {
   const ref = useRef(null); const drawing = useRef(false); const last = useRef(null);
