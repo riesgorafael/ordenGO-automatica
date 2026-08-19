@@ -6975,7 +6975,17 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [stepAttempted, setStepAttempted] = useState(false);
   useEffect(() => { setStepAttempted(false); }, [step]);
   const [clientMode, setClientMode] = useState(initial.clientMode || "existing");
-  const defaultClient = clients[0];
+  // Cliente inicial: el que más órdenes tiene, no el primero de la lista alfabética. Una empresa de
+  // servicios concentra la mayoría de sus visitas en unos pocos clientes, así que el más frecuente
+  // acierta casi siempre y evita corregir el desplegable en cada alta. No se clava ninguno por
+  // nombre: la app es multiempresa y el cliente habitual de una no es el de otra.
+  const defaultClient = useMemo(() => {
+    if (!clients.length) return undefined;
+    const uses = new Map();
+    knownOrders.forEach((order) => { const key = order.clientId || order.client; if (key) uses.set(key, (uses.get(key) || 0) + 1); });
+    const scored = clients.map((c) => ({ c, n: (uses.get(c.id) || 0) + (uses.get(c.name) || 0) }));
+    return scored.reduce((best, row) => (row.n > best.n ? row : best), scored[0]).c;
+  }, [clients, knownOrders]);
   const defaultClientId = defaultClient?.id || "";
   const defaultSite = clientSites(defaultClient)[0];
   const [clientId, setClientId] = useState(initial.clientId || defaultClientId);
