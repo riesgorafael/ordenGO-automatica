@@ -1,9 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="448" height="129" viewBox="0 0 448 129">
+  <style>@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&display=swap");</style>
   <g id="gemini-svg2" transform="translate(-124 -50)">
     <g id="typography" transform="translate(210)">
-      <text id="MiOrdenGo" transform="translate(0 110)" fill="#17345e" font-size="62" font-family="Montserrat-Bold, Montserrat" font-weight="700" letter-spacing="-0.016em"><tspan x="0" y="0">MiOrden</tspan><tspan y="0" fill="#00a4d3">Go</tspan></text>
-      <text id="Gestión_y_Facturación" data-name="Gestión y Facturación" transform="translate(3 148)" fill="#707372" font-size="28" font-family="Montserrat-SemiBold, Montserrat" font-weight="600" letter-spacing="-0.018em"><tspan x="0" y="0">Gestión y Facturación</tspan></text>
-      <text id="miordengo.com" transform="translate(362 174)" fill="#a0a3a2" font-size="20" font-family="Montserrat-Medium, Montserrat" font-weight="500"><tspan x="-162.6" y="0">miordengo.com</tspan></text>
+      <text id="MiOrdenGo" transform="translate(0 110)" fill="#17345e" font-size="62" font-family="Montserrat, Helvetica, Arial, sans-serif" font-weight="700" letter-spacing="-0.016em"><tspan x="0" y="0">MiOrden</tspan><tspan y="0" fill="#00a4d3">Go</tspan></text>
+      <text id="Gestión_y_Facturación" data-name="Gestión y Facturación" transform="translate(3 148)" fill="#707372" font-size="28" font-family="Montserrat, Helvetica, Arial, sans-serif" font-weight="600" letter-spacing="-0.018em"><tspan x="0" y="0">Gestión y Facturación</tspan></text>
+      <text id="miordengo.com" transform="translate(362 174)" fill="#a0a3a2" font-size="20" font-family="Montserrat, Helvetica, Arial, sans-serif" font-weight="500"><tspan x="-162.6" y="0">miordengo.com</tspan></text>
     </g>
     <g id="Grupo_48064" data-name="Grupo 48064" transform="translate(84 14.866)">
       <rect id="Rectángulo_1668" data-name="Rectángulo 1668" width="79" height="14" rx="4" transform="translate(40 102.134)" fill="#17345e"/>
