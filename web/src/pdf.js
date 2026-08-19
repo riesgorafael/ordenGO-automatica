@@ -1685,7 +1685,12 @@ export function projectStatusReportPDF({
 // número de tarjeta agrupado en dos bloques se puede dictar por teléfono y comparar a ojo sin
 // equivocarse, cosa que ocho caracteres hexadecimales seguidos no permiten.
 const MESES_LARGOS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-const credentialDni = (value) => { const d = String(value || "").replace(/D/g, ""); return d ? d.replace(/B(?=(d{3})+(?!d))/g, ".") : ""; };
+const credentialDni = (value) => {
+  const digits = String(value || "").replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  // Separador de miles cada tres dígitos desde la derecha, como figura en el DNI argentino.
+  return digits.split("").reverse().join("").match(/.{1,3}/g).join(".").split("").reverse().join("");
+};
 const credentialCardId = (token) => { const raw = String(token || "").replace(/-/g, "").slice(0, 8).toUpperCase(); return raw ? `${raw.slice(0, 4)}-${raw.slice(4)}` : ""; };
 // Mes y año: lo que importa es hasta cuándo vale, no el día exacto.
 const credentialExpiry = () => `${MESES_LARGOS[11]} ${new Date().getFullYear()}`;
@@ -1861,7 +1866,9 @@ export async function credentialCleanPDF(user, branding = {}) {
     doc.text(clip(s.position, W - M * 2), C, y + 1.6, { align: "center" }); y += 4;
   }
   doc.setDrawColor(...accent); doc.setLineWidth(0.6);
-  doc.line(C - 8, y + 3, C + 8, y + 3); doc.setLineWidth(0.2);
+  // El subrayado va pegado al cargo, no tres milímetros más abajo: ahí caía sobre la etiqueta DNI
+  // del bloque del pie, que tiene posición fija.
+  doc.line(C - 8, y - 1, C + 8, y - 1); doc.setLineWidth(0.2);
 
   // Pie: QR a la izquierda y datos a la derecha, en posiciones fijas ancladas al borde inferior.
   const qrSide = 17, qrY = H - qrSide - 4;
