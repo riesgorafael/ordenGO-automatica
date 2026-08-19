@@ -5,10 +5,10 @@
 // Dependencia adicional: npm i gantt-task-react
 // Esa librería trae su propio CSS: import "gantt-task-react/dist/index.css"; (ya incluido abajo).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gantt, ViewMode } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
-import { Upload, Download, Loader2, AlertTriangle, Plus, Trash2, X, CheckSquare } from "lucide-react";
+import { Upload, Download, Loader2, AlertTriangle, Plus, Trash2, X, CheckSquare, Maximize2 } from "lucide-react";
 import { api } from "./api";
 const exportGanttToPdf = (...args) => import("./ganttPdf").then((module) => module.exportGanttToPdf(...args));
 
@@ -306,6 +306,7 @@ export default function GanttChart({ projectId, projectName, users = [], brandin
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [viewMode, setViewMode] = useState(ViewMode.Week);
+  const [viewDate, setViewDate] = useState(undefined);
   const [error, setError] = useState("");
   // Mismo corte que el breakpoint "sm" de Tailwind (640px), para deshabilitar Día/Mes en celular.
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
@@ -468,6 +469,26 @@ export default function GanttChart({ projectId, projectName, users = [], brandin
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const todayKey = new Date().toISOString().slice(0, 10);
   const ganttTasks = tasks.map((t) => toGanttTaskShape(t, byId, todayKey));
+  // Encuadre del cronograma. La librería arranca en la fecha de hoy y con escala fija, así que un
+  // proyecto que empieza en septiembre se abría mostrando julio vacío y las barras quedaban fuera
+  // de la vista. Se calcula el rango real de las tareas y se elige escala y fecha inicial a partir
+  // de ahí: meses para proyectos largos, semanas para medianos, días para los cortos.
+  const projectSpan = useMemo(() => {
+    const dates = ganttTasks.flatMap((t) => [t.start, t.end]).filter((d) => d instanceof Date && !Number.isNaN(d.getTime()));
+    if (!dates.length) return null;
+    const start = new Date(Math.min(...dates.map((d) => d.getTime())));
+    const end = new Date(Math.max(...dates.map((d) => d.getTime())));
+    return { start, end, days: Math.max(1, Math.round((end - start) / 86400000)) };
+  }, [ganttTasks]);
+  // Reencuadra al cargar y cuando cambia el proyecto, no en cada render: si se recalculara siempre,
+  // pisaría el desplazamiento que el usuario hizo a mano.
+  const fitToProject = useCallback(() => {
+    if (!projectSpan) return;
+    setViewMode(projectSpan.days > 120 ? ViewMode.Month : projectSpan.days > 30 ? ViewMode.Week : ViewMode.Day);
+    // Una semana de aire antes del inicio, para que la primera barra no quede pegada al borde.
+    setViewDate(new Date(projectSpan.start.getTime() - 7 * 86400000));
+  }, [projectSpan]);
+  useEffect(() => { fitToProject(); }, [projectId, projectSpan?.start?.getTime()]); // eslint-disable-line react-hooks/exhaustive-deps
   const editingTask = editingTaskId && editingTaskId !== "new" ? tasks.find((t) => t.id === editingTaskId) : null;
 
   return (
@@ -485,6 +506,7 @@ export default function GanttChart({ projectId, projectName, users = [], brandin
           <p className="text-[11px] text-slate-500">{tasks.length} tarea(s) · {projectName}</p>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+          <button onClick={fitToProject} disabled={!projectSpan} title="Encuadra el cronograma completo y elige la escala según su duración" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"><Maximize2 className="h-3.5 w-3.5" /> Ajustar al proyecto</button>
           {[["Día", ViewMode.Day], ["Semana", ViewMode.Week], ["Mes", ViewMode.Month]].map(([label, mode]) => {
             // "Día" y "Mes" quedan deshabilitados en celular: con columnas tan angostas esas
             // escalas son casi ilegibles ahí; "Semana" es la que realmente sirve en esa pantalla.
@@ -541,6 +563,7 @@ export default function GanttChart({ projectId, projectName, users = [], brandin
             TaskListHeader={GanttTaskListHeader}
             TaskListTable={TaskListTableWithEdit}
             listCellWidth="180px"
+            viewDate={viewDate}
             columnWidth={viewMode === ViewMode.Month ? 300 : viewMode === ViewMode.Week ? 250 : 65}
           />
         )}
