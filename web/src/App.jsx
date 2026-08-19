@@ -433,6 +433,9 @@ const businessDaysBetween = (startStr, endStr) => {
   return total;
 };
 const startOfCalendarWeek = (date) => addCalendarDays(date, -((date.getDay() + 6) % 7));
+// Roles cuyo acceso a proyectos se limita por la lista de "Accesos del proyecto". El servidor ya
+// aplica este mismo criterio (isProjectScoped), así que ambos necesitan poder asignarse proyectos.
+const isTecRole = (role) => role === "tecnico" || role === "tecnico_oficina";
 const isOverdue = (t) => t.due && t.due < todayStr() && t.status !== "Hecho";
 // Vence en los próximos N días (por defecto 2), sin contar las que ya están vencidas.
 const isDueSoon = (t, days = 4) => t.due && t.status !== "Hecho" && t.due >= todayStr() && t.due <= localDateKey(addCalendarDays(new Date(), days));
@@ -9066,7 +9069,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
                 </>) : (<>
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${load ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-400"}`}>{load} tarea(s)</span>
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${ords ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-400"}`}>{ords} orden(es)</span>
-                  {u.role === "tecnico_oficina" && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)</span>}
+                  {isTecRole(u.role) && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)</span>}
                   {/* Admin y gerencia no se limitan por proyecto: sin esta etiqueta, la ausencia del conteo
                       se leía como "no tiene ninguno" en vez de "los ve todos". */}
                   {["admin", "gerente"].includes(u.role) && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Todos los proyectos</span>}
@@ -9076,7 +9079,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
               <select title="Define los módulos, datos y acciones que puede utilizar este usuario." value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} title={u.id === me.id ? "No podés desactivar tu propio usuario: quedarías sin acceso al sistema" : u.active ? "Desactivar: pierde el acceso, su historial se conserva" : "Reactivar el acceso de esta persona"} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
               {isViewer && <button onClick={() => setTvScreenUser(u)} title="Configurar pantalla TV" aria-label={`Configurar pantalla TV de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Maximize2 className="h-4 w-4" /></button>}
-              {u.role === "tecnico_oficina" && <button onClick={() => setUserProjectsFor(u)} title="Asociar a proyectos" aria-label={`Asociar proyectos a ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Folder className="h-4 w-4" /></button>}
+              {isTecRole(u.role) && <button onClick={() => setUserProjectsFor(u)} title="Asociar a proyectos" aria-label={`Asociar proyectos a ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Folder className="h-4 w-4" /></button>}
               {/* Una cuenta de monitor es una pantalla de TV, no una persona: no lleva credencial de
                   acceso ni ficha personal, así que no se ofrecen ni el PDF ni la carga de datos. */}
               {!isViewer && <div className="relative">
