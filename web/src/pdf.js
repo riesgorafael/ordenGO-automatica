@@ -1874,7 +1874,9 @@ export async function credentialCleanPDF(user, branding = {}) {
   // El subrayado va pegado al cargo, no tres milímetros más abajo: ahí caía sobre la etiqueta DNI
   // del bloque del pie, que tiene posición fija.
   // Subrayado ancho y centrado, como en la referencia: acompaña el bloque nombre + cargo.
-  doc.line(C - 16, y + 1.5, C + 16, y + 1.5); doc.setLineWidth(0.2);
+  // A y-0,5 y no y+1,5: el bloque de datos arranca en 65,6 y la línea caía a 64,5, o sea pegada a
+  // la etiqueta DNI. Así queda a 3 mm, agrupada con el cargo en vez de flotando entre bloques.
+  doc.line(C - 16, y - 0.5, C + 16, y - 0.5); doc.setLineWidth(0.2);
 
   // Pie: QR a la izquierda y datos a la derecha, en posiciones fijas ancladas al borde inferior.
   const qrSide = 17, qrY = H - qrSide - 4;
