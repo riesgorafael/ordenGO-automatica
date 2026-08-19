@@ -643,12 +643,11 @@ function SearchSelect({ value, onChange, options, emptyLabel = "Sin asociar", pl
    los colores son los del archivo oficial (logo_miordengo.svg). */
 function ProductLogo({ className = "" }) {
   return (
-    <svg viewBox="0 0 448 129" className={className} role="img" aria-label="MiOrdenGo · Gestión y Facturación">
+    <svg viewBox="0 0 424 112" className={className} role="img" aria-label="MiOrdenGo · Gestión y Facturación">
       <g transform="translate(-124 -50)">
         <g transform="translate(210)">
           <text transform="translate(0 110)" fill="#17345e" fontSize="62" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="700" letterSpacing="-0.016em"><tspan x="0" y="0">MiOrden</tspan><tspan y="0" fill="#00a4d3">Go</tspan></text>
           <text transform="translate(3 148)" fill="#707372" fontSize="28" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="600" letterSpacing="-0.018em"><tspan x="0" y="0">Gestión y Facturación</tspan></text>
-          <text transform="translate(362 174)" fill="#a0a3a2" fontSize="20" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="500"><tspan x="-162.6" y="0">miordengo.com</tspan></text>
         </g>
         <g transform="translate(84 14.866)">
           <rect width="79" height="14" rx="4" transform="translate(40 102.134)" fill="#17345e" />
