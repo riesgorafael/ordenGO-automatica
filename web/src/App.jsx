@@ -6655,7 +6655,9 @@ function OrderDetail({ ger, order, users = [], projects = [], branding = DEFAULT
     try {
       const { orderReportFile } = await pdfModule();
       const file = await orderReportFile(order, "client", projects?.find((p) => p.id === order.projectId) || null, branding);
-      if (navigator.canShare?.({ files: [file] })) { await navigator.share({ title: `Orden ${order.id}`, text, files: [file] }); return; }
+      // Sólo el archivo: WhatsApp y similares mandan el texto como mensaje aparte, y el cliente
+      // recibía el PDF precedido de un bloque redundante con datos que el propio PDF ya trae.
+      if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file] }); return; }
       // Sin soporte para archivos: se descarga el PDF y se comparte el texto, así el usuario lo
       // adjunta a mano en lugar de quedarse sin nada.
       downloadDataUrl(file.name, URL.createObjectURL(file));
