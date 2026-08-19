@@ -9172,6 +9172,13 @@ function Team({ users, tasks, orders, clients = [], projects = [], me, branding 
                   {/* Admin y gerencia no se limitan por proyecto: sin esta etiqueta, la ausencia del conteo
                       se leía como "no tiene ninguno" en vez de "los ve todos". */}
                   {["admin", "gerente"].includes(u.role) && <span className="shrink-0 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Todos los proyectos</span>}
+                  {/* Alcance del cliente corporativo, visible en la fila: sin esto la asignación de
+                      empresa y planta quedaba invisible tras crearlo y había que abrir la ficha
+                      para saber qué ve. Sin empresa asignada no ve ninguna orden, así que el aviso
+                      va en ámbar: es una cuenta a medio configurar, no un estado normal. */}
+                  {u.role === "cliente" && (u.settings?.clientId
+                    ? <span className="shrink-0 whitespace-nowrap rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{clients.find((c) => c.id === u.settings.clientId)?.name || "Empresa desconocida"}{u.settings.clientSite ? ` · ${u.settings.clientSite}` : " · todas las plantas"}</span>
+                    : <span className="shrink-0 whitespace-nowrap rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Sin empresa asignada</span>)}
                 </>)}
               </div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
