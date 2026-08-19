@@ -9062,16 +9062,16 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
               {/* La carga va en su propia línea y como etiquetas: encadenada al correo con puntos
                   medios, al envolver partía los conteos ("11 ta / rea(s)") y quedaba ilegible.
                   Separada, cada dato se lee entero y se ve de un vistazo quién tiene trabajo. */}
-              {/* Una sola línea horizontal: con flex-wrap, la etiqueta de proyectos bajaba a un segundo
-                  renglón y desalineaba el alto de las filas. Si no entran, la fila scrollea. */}
-              <div className="mt-1 flex items-center gap-1 overflow-x-auto">
+              {/* Una sola línea horizontal, sin scroll: las etiquetas se acortaron ("6 tareas" en vez de
+                  "6 tarea(s)") para que entren las tres sin barra de desplazamiento. */}
+              <div className="mt-1 flex items-center gap-1">
                 {isViewer ? (<>
                   <span className="shrink-0 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Solo visualización</span>
                   {u.settings?.tvModeEnabled && <span className="shrink-0 whitespace-nowrap rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">Modo TV activo</span>}
                 </>) : (<>
-                  <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium ${load ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-400"}`}>{load} tarea(s)</span>
-                  <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium ${ords ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-400"}`}>{ords} orden(es)</span>
-                  {isTecRole(u.role) && <span className="shrink-0 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)</span>}
+                  <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium ${load ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-400"}`}>{load} tareas</span>
+                  <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium ${ords ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-400"}`}>{ords} órdenes</span>
+                  {isTecRole(u.role) && <span className="shrink-0 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyectos</span>}
                   {/* Admin y gerencia no se limitan por proyecto: sin esta etiqueta, la ausencia del conteo
                       se leía como "no tiene ninguno" en vez de "los ve todos". */}
                   {["admin", "gerente"].includes(u.role) && <span className="shrink-0 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Todos los proyectos</span>}
