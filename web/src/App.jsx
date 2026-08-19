@@ -9027,7 +9027,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
         <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-words text-xs text-slate-500">{u.email}</div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="truncate text-xs text-slate-500" title={u.email}>{u.email}</div>
               {/* La carga va en su propia línea y como etiquetas: encadenada al correo con puntos
                   medios, al envolver partía los conteos ("11 ta / rea(s)") y quedaba ilegible.
                   Separada, cada dato se lee entero y se ve de un vistazo quién tiene trabajo. */}
@@ -9039,6 +9039,9 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${load ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-400"}`}>{load} tarea(s)</span>
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${ords ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-400"}`}>{ords} orden(es)</span>
                   {u.role === "tecnico_oficina" && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)</span>}
+                  {/* Admin y gerencia no se limitan por proyecto: sin esta etiqueta, la ausencia del conteo
+                      se leía como "no tiene ninguno" en vez de "los ve todos". */}
+                  {["admin", "gerente"].includes(u.role) && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Todos los proyectos</span>}
                 </>)}
               </div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
