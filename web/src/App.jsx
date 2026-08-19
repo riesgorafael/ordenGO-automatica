@@ -7130,13 +7130,32 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           <div className="mt-2">
             <span className="mb-1 flex items-center gap-1 text-[11px] font-medium text-slate-500">Técnicos acompañantes (opcional)<HelpHint text="Suma a otro técnico si más de una persona trabaja en esta orden. Todos los que agregues acá van a poder ver y editar esta OT desde su propia cuenta." /></span>
             {assignedTechs.length > 0 && <div className="mb-1.5 flex flex-wrap gap-1.5">{assignedTechs.map((name) => <Chip key={name} className="bg-slate-100 text-slate-700 ring-slate-300">{name}{name !== me.name && <button type="button" onClick={() => removeAssignedTech(name)} aria-label={`Quitar a ${name}`} className="ml-1 text-slate-400 hover:text-rose-500"><X className="h-3 w-3" /></button>}</Chip>)}</div>}
+            {/* Lista propia en vez de <datalist>: el desplegable nativo lo dibuja el navegador y no
+                admite imágenes, así que no había forma de mostrar la foto. Con la lista propia se
+                elige de un clic —sin pasar por el botón Agregar— y se reconoce a la persona por
+                la cara, que es más rápido que leer nombres parecidos. */}
             <div className="flex gap-2">
-              <input list="new-order-mate-techs" value={assignedTechPick} onChange={(e) => setAssignedTechPick(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addAssignedTech(assignedTechPick); } }} placeholder="Buscar técnico para sumar" className="u-input flex-1" />
+              <input value={assignedTechPick} onChange={(e) => setAssignedTechPick(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addAssignedTech(assignedTechPick); } }} placeholder="Buscar técnico para sumar" className="u-input flex-1" />
               <button type="button" onClick={() => addAssignedTech(assignedTechPick)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Agregar</button>
             </div>
-            {/* Se excluye también al técnico responsable: acompañarse a sí mismo lo contaría dos
-                veces en la dotación y en las métricas de carga. */}
-            <datalist id="new-order-mate-techs">{fieldTechs.filter((u) => u.name.toLowerCase() !== tech.trim().toLowerCase() && !assignedTechs.some((name) => name.toLowerCase() === u.name.toLowerCase())).map((u) => <option key={u.id} value={u.name} />)}</datalist>
+            {(() => {
+              const query = assignedTechPick.trim().toLowerCase();
+              const options = fieldTechs.filter((u) => u.name.toLowerCase() !== tech.trim().toLowerCase()
+                && !assignedTechs.some((name) => name.toLowerCase() === u.name.toLowerCase())
+                && (!query || u.name.toLowerCase().includes(query)));
+              if (!options.length) return query ? <p className="mt-1.5 text-[11px] text-slate-400">Ningún técnico coincide con “{assignedTechPick}”.</p> : null;
+              return (
+                <div className="mt-1.5 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                  {options.map((u) => (
+                    <button key={u.id} type="button" onClick={() => addAssignedTech(u.name)} className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-brand-50">
+                      <Avatar user={u} size={24} />
+                      <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{u.name}</span>
+                      <Plus className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           {ger && <div className="mt-2 grid grid-cols-2 gap-2"><L label="N° de presupuesto"><input value={quoteNumber} onChange={(e) => setQuoteNumber(e.target.value)} placeholder="Opcional" className="u-input" /></L><L label="Orden de compra del cliente"><input value={customerPO} onChange={(e) => setCustomerPO(e.target.value)} placeholder="Opcional" className="u-input" /></L></div>}
           <div className="mt-2 flex flex-wrap items-center gap-2">{!location && <button onClick={captureLocation} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><MapPin className="h-3.5 w-3.5" /> Vincular GPS manualmente</button>}{location && <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">GPS vinculado a “{siteLabel || location.label || "Sitio de intervención"}”</span>}{geoMsg && <span className="text-xs text-slate-500">{geoMsg}</span>}</div>
@@ -9049,7 +9068,9 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} title={u.id === me.id ? "No podés desactivar tu propio usuario: quedarías sin acceso al sistema" : u.active ? "Desactivar: pierde el acceso, su historial se conserva" : "Reactivar el acceso de esta persona"} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
               {isViewer && <button onClick={() => setTvScreenUser(u)} title="Configurar pantalla TV" aria-label={`Configurar pantalla TV de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Maximize2 className="h-4 w-4" /></button>}
               {u.role === "tecnico_oficina" && <button onClick={() => setUserProjectsFor(u)} title="Asociar a proyectos" aria-label={`Asociar proyectos a ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Folder className="h-4 w-4" /></button>}
-              <div className="relative">
+              {/* Una cuenta de monitor es una pantalla de TV, no una persona: no lleva credencial de
+                  acceso ni ficha personal, así que no se ofrecen ni el PDF ni la carga de datos. */}
+              {!isViewer && <div className="relative">
                 <button onClick={() => setCredentialFor(credentialFor === u.id ? null : u.id)} title="Descargar credencial de acceso" aria-label={`Descargar credencial de ${u.name}`} aria-expanded={credentialFor === u.id} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Briefcase className="h-4 w-4" /></button>
                 {credentialFor === u.id && <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
                   <div className="border-b border-slate-100 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Elegí el diseño</div>
@@ -9060,8 +9081,8 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
                     </button>
                   ))}
                 </div>}
-              </div>
-              <button onClick={() => setFichaUser(u)} title="Editar ficha y foto" aria-label={`Editar ficha de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><FileText className="h-4 w-4" /></button>
+              </div>}
+              {!isViewer && <button onClick={() => setFichaUser(u)} title="Editar ficha y foto" aria-label={`Editar ficha de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><FileText className="h-4 w-4" /></button>}
               <button onClick={() => setPasswordUser(u)} title="Restablecer contraseña" aria-label={`Restablecer contraseña de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><KeyRound className="h-4 w-4" /></button>
               <button onClick={() => setPendingDelete(u)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
             </div>
