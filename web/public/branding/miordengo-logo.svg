@@ -1,11 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 240" role="img" aria-label="MiOrdenGo · Gestión y Facturación">
-  <g stroke-linecap="round" fill="none">
-    <path d="M40 128 H118 L206 40" stroke="#35BEE8" stroke-width="34"/>
-    <path d="M40 176 H160" stroke="#163B6B" stroke-width="34"/>
-    <path d="M40 222 H134" stroke="#163B6B" stroke-width="34"/>
+  <g fill="#16386B">
+    <path d="M42 74 h150 l-30 30 H42 a15 15 0 0 1 0 -30 z"/>
+    <path d="M42 112 h132 l-30 30 H42 a15 15 0 0 1 0 -30 z"/>
+    <path d="M42 150 h116 l-30 30 H42 a15 15 0 0 1 0 -30 z"/>
   </g>
-  <path d="M176 22 L246 8 L230 80 L208 56 L188 74 L156 42 L188 40 Z" fill="#35BEE8"/>
-  <text x="288" y="128" font-family="Helvetica, Arial, sans-serif" font-size="76" font-weight="bold" fill="#163B6B">MiOrden<tspan fill="#29ABE2">Go</tspan></text>
-  <text x="288" y="180" font-family="Helvetica, Arial, sans-serif" font-size="44" fill="#58595B">Gestión y Facturación</text>
-  <text x="750" y="216" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="26" fill="#8A8C8E">miordengo.com</text>
+  <g fill="#29ABE2">
+    <path d="M196 186 L258 124 l26 26 L232 202 z"/>
+    <path d="M244 118 L292 70 l-24 -24 L330 40 l-14 66 l-24 -24 l-48 48 z"/>
+    <path d="M236 156 h58 l-20 -20 L326 128 l-14 60 l-20 -20 h-56 z"/>
+  </g>
+  <text x="330" y="128" font-family="Helvetica, Arial, sans-serif" font-size="76" font-weight="bold" fill="#16386B">MiOrden<tspan fill="#29ABE2">Go</tspan></text>
+  <text x="330" y="180" font-family="Helvetica, Arial, sans-serif" font-size="44" fill="#58595B">Gestión y Facturación</text>
+  <text x="746" y="216" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="26" fill="#8A8C8E">miordengo.com</text>
 </svg>
