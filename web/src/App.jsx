@@ -1614,7 +1614,7 @@ export default function App() {
                   return (
                     <React.Fragment key={id}>
                       {divider}
-                      <button onClick={() => navigateModule(id)} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
+                      <button onClick={() => { setDrawingSignal(0); navigateModule(id); }} className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-t-lg px-2.5 py-2 text-sm font-medium transition ${activeModule === id ? "bg-slate-100 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}><Icon className="h-4 w-4" /> {label}{badge > 0 && <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{badge}</span>}</button>
                     </React.Fragment>
                   );
                 })}
@@ -1822,7 +1822,7 @@ export default function App() {
                   {groupData.name !== "General" && <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{groupData.name}</p>}
                   <div className="grid grid-cols-1 gap-2">
                     {groupData.tabs.map(({ id, label, icon: Icon, badge }) => (
-                      <button key={id} onClick={() => { navigateModule(id); setMobileMoreOpen(false); }} className={`flex min-h-14 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left ${activeModule === id ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+                      <button key={id} onClick={() => { setDrawingSignal(0); navigateModule(id); setMobileMoreOpen(false); }} className={`flex min-h-14 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left ${activeModule === id ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
                         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${activeModule === id ? "bg-brand-100" : "bg-slate-100"}`}><Icon className="h-5 w-5" /></span>
                         <span className="min-w-0 flex-1 text-sm font-medium">{label}</span>
                         {badge > 0 && <span className="grid h-6 min-w-6 place-items-center rounded-full bg-rose-500 px-1.5 text-xs font-bold text-white">{badge}</span>}
@@ -1839,7 +1839,7 @@ export default function App() {
       {/* Barra de navegación inferior (móvil) */}
       <nav className="mobile-bottom-bar fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 backdrop-blur sm:hidden" aria-label="Navegación principal">
         {mobilePrimaryTabs.map(({ id, label, icon: Icon, badge }) => (
-          <button key={id} onClick={() => { navigateModule(id); setMobileMoreOpen(false); }} title={label} aria-label={label} className={`mobile-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
+          <button key={id} onClick={() => { setDrawingSignal(0); navigateModule(id); setMobileMoreOpen(false); }} title={label} aria-label={label} className={`mobile-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium ${activeModule === id ? "text-brand-600" : "text-slate-400"}`}>
             {badge > 0 && <span className="absolute right-1/4 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-rose-500 px-1 text-[8px] font-bold text-white">{badge}</span>}
             <Icon className="h-5 w-5" /><span className="mobile-nav-label">{label}</span>
           </button>
@@ -8443,7 +8443,13 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", drawing
   // El lápiz de la barra superior abre el lienzo directo, sin pasar por el listado. Se usa una
   // señal incremental —el mismo patrón que el botón flotante de otros módulos— porque el disparo
   // viene de afuera del componente y tiene que poder repetirse.
-  useEffect(() => { if (drawingSignal > 0) startNew("drawing"); }, [drawingSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Se compara contra el valor visto, no contra cero: la señal queda en 1 después del primer uso,
+  // así que al volver a Notas desde el menú el componente se montaba y abría el lienzo de nuevo.
+  // Con la referencia, sólo dispara cuando la señal cambia respecto de la última vez.
+  const seenDrawingSignal = useRef(0);
+  useEffect(() => {
+    if (drawingSignal !== seenDrawingSignal.current) { seenDrawingSignal.current = drawingSignal; if (drawingSignal > 0) startNew("drawing"); }
+  }, [drawingSignal]); // eslint-disable-line react-hooks/exhaustive-deps
   const startEdit = (note) => setEditorMode({ kind: note.type, note });
   const startDuplicate = (note) => setEditorMode({ kind: note.type, note: { ...note, id: undefined, _updatedAt: undefined, sharedWith: [], title: `${note.title || "Sin título"} (copia)` } });
 
