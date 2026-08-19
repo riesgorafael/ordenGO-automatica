@@ -7950,7 +7950,9 @@ function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePa
 /* ===================================== ACCESO POR PROYECTO ===================================== */
 function ProjectAccess({ project, users, onClose, onSave }) {
   useDialogOpenClass(onClose);
-  const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina" || u.role === "monitor_oficina"));
+  // Incluye a los clientes corporativos: su acceso a un proyecto se otorga acá, igual que el de un
+  // técnico. Sin esto el rol existía pero no había forma de asignarle ningún proyecto.
+  const techs = users.filter((u) => u.active && (u.role === "tecnico" || u.role === "tecnico_oficina" || u.role === "monitor_oficina" || u.role === "cliente"));
   const [sel, setSel] = useState(new Set(project.allowedUsers || []));
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const mouseDownOnBackdrop = useRef(false);
@@ -7958,7 +7960,7 @@ function ProjectAccess({ project, users, onClose, onSave }) {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Accesos del proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-        <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá qué técnicos y monitores pueden ver este proyecto y sus tareas. La gerencia siempre lo ve.</p>
+        <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá quién puede ver este proyecto y sus tareas: técnicos, monitores y clientes corporativos. La gerencia siempre lo ve.</p>
         <div className="space-y-1.5">
           {techs.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">No hay técnicos cargados.</div>}
           {techs.map((u) => (
