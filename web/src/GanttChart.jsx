@@ -486,7 +486,9 @@ export default function GanttChart({ projectId, projectName, users = [], brandin
     if (!projectSpan) return;
     setViewMode(projectSpan.days > 120 ? ViewMode.Month : projectSpan.days > 30 ? ViewMode.Week : ViewMode.Day);
     // Una semana de aire antes del inicio, para que la primera barra no quede pegada al borde.
-    setViewDate(new Date(projectSpan.start.getTime() - 7 * 86400000));
+    // Exactamente el inicio del proyecto: la librería ya agrega relleno propio al eje, así que
+    // restarle días acá corría la vista todavía más atrás sobre una zona vacía.
+    setViewDate(new Date(projectSpan.start.getTime()));
   }, [projectSpan]);
   useEffect(() => { fitToProject(); }, [projectId, projectSpan?.start?.getTime()]); // eslint-disable-line react-hooks/exhaustive-deps
   const editingTask = editingTaskId && editingTaskId !== "new" ? tasks.find((t) => t.id === editingTaskId) : null;
@@ -564,7 +566,9 @@ export default function GanttChart({ projectId, projectName, users = [], brandin
             TaskListTable={TaskListTableWithEdit}
             listCellWidth="180px"
             viewDate={viewDate}
-            columnWidth={viewMode === ViewMode.Month ? 300 : viewMode === ViewMode.Week ? 250 : 65}
+            // Columnas más angostas en Mes y Semana: con 300 px entraban dos meses en pantalla y un
+            // proyecto de cinco meses obligaba a scrollear para verlo entero.
+            columnWidth={viewMode === ViewMode.Month ? 160 : viewMode === ViewMode.Week ? 130 : 65}
           />
         )}
       </div>
