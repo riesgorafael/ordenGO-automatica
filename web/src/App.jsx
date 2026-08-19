@@ -1572,6 +1572,11 @@ export default function App() {
                 lugar de toda la app donde cambiar la propia clave. Colgarlo del nombre es además
                 dónde se lo busca: es una acción de la cuenta, no una herramienta más de la barra. */}
             <button onClick={() => (me.role === "cliente" || isMonitor ? setPwOpen(true) : setProfileOpen(true))} title={me.role === "cliente" || isMonitor ? "Cambiar contraseña" : "Mi ficha y contraseña"} className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
+            {/* Acceso directo a Notas, sólo desde tablet en adelante: en el teléfono la barra ya
+                está llena y Notas se alcanza desde el menú "Más". Se muestra únicamente si el
+                módulo está habilitado para el rol y la empresa, para no ofrecer un botón que
+                lleve a una pantalla vacía o sin permiso. */}
+            {allowedForCompany.has("whiteboard") && <button onClick={() => navigateModule("whiteboard")} title="Notas" aria-label="Ir a Notas" className={`hidden rounded-lg p-1.5 sm:block sm:p-2 ${activeModule === "whiteboard" ? "bg-ink-800 text-white" : "text-slate-300 hover:bg-ink-800"}`}><Pencil className="h-4 w-4" /></button>}
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en MiOrdenGo" aria-label="Buscar en MiOrdenGo" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
             <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
