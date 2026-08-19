@@ -9149,7 +9149,33 @@ function Team({ users, tasks, orders, clients = [], projects = [], me, branding 
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2"><Panel title={`Empleados (${users.length}) · directorio compartido`}>
-        <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; // Cuenta de pantalla: sin credencial ni ficha.
+        {/* El listado se arma como una secuencia plana de encabezados y personas en vez de dos mapas
+            separados: la fila es un bloque JSX extenso y duplicarlo garantizaba que los dos lados se
+            desincronizaran con el primer cambio. Primero el equipo interno, después los clientes
+            corporativos agrupados por empresa, y al final los que quedaron sin empresa asignada. */}
+        <div className="space-y-2">{(() => {
+          const internal = users.filter((u) => u.role !== "cliente");
+          const externals = users.filter((u) => u.role === "cliente");
+          const byCompany = new Map();
+          externals.forEach((u) => {
+            const id = u.settings?.clientId || "";
+            const label = id ? (clients.find((c) => c.id === id)?.name || "Empresa desconocida") : "Sin empresa asignada";
+            if (!byCompany.has(label)) byCompany.set(label, []);
+            byCompany.get(label).push(u);
+          });
+          const rows = [];
+          if (internal.length) rows.push({ header: `Equipo interno · ${internal.length}` }, ...internal.map((u) => ({ u })));
+          if (externals.length) {
+            rows.push({ header: `Clientes corporativos · ${externals.length}` });
+            [...byCompany.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([label, list]) => {
+              rows.push({ subheader: label, count: list.length }, ...list.map((u) => ({ u })));
+            });
+          }
+          return rows;
+        })().map((row, rowIndex) => {
+          if (row.header) return <div key={`h-${rowIndex}`} className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 first:pt-0">{row.header}</div>;
+          if (row.subheader) return <div key={`s-${rowIndex}`} className="flex items-center gap-1.5 pl-1 pt-1 text-[11px] font-medium text-slate-500"><Building2 className="h-3.5 w-3.5 text-slate-400" />{row.subheader}<span className="text-slate-400">· {row.count}</span></div>;
+          const u = row.u; const isViewer = u.role === "monitor_oficina"; // Cuenta de pantalla: sin credencial ni ficha.
           // El cliente corporativo tampoco lleva credencial de acceso ni ficha personal: es personal de
           // otra empresa, no del plantel propio, así que no se lo acredita ni se le cargan datos médicos.
           const noBadge = isViewer || u.role === "cliente"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
