@@ -9006,7 +9006,7 @@ function EditableName({ user, onRename }) {
   return <input value={draft} onChange={(e) => setDraft(e.target.value)} onFocus={() => setEditing(true)} onBlur={finish}
     onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancelled.current = true; e.currentTarget.blur(); } }}
     aria-label={`Nombre de ${user.name}`} title="Editar nombre"
-    className="-mx-1 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-slate-800 hover:border-slate-200 focus:border-brand-500 focus:bg-white focus:outline-none" />;
+    className="-mx-1 min-w-[14rem] flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-slate-800 hover:border-slate-200 focus:border-brand-500 focus:bg-white focus:outline-none" />;
 }
 
 function Team({ users, tasks, orders, projects = [], me, branding = {}, companyProfile = {}, onAdd, onPatch, onRemove, onSaveUserProjects, onErr }) {
