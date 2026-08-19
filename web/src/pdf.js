@@ -1758,13 +1758,15 @@ export async function credentialPDF(user, branding = {}) {
   if (s.photoDataUrl) {
     try { doc.addImage(s.photoDataUrl, "JPEG", M, photoY, photoW, photoH, undefined, "FAST"); } catch {}
   } else {
-    doc.setFillColor(233, 237, 241); doc.roundedRect(M, photoY, photoW, photoH, 1.5, 1.5, "F");
+    doc.setFillColor(233, 237, 241); doc.rect(M, photoY, photoW, photoH, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(160, 170, 182);
     doc.text("SIN FOTO", M + photoW / 2, photoY + photoH / 2, { align: "center" });
   }
   // Hairline gris, el mismo de la línea que separa los datos: sólo delimita la foto, no compite.
   doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
-  doc.roundedRect(M, photoY, photoW, photoH, 1.5, 1.5, "S");
+  // Marco recto, no redondeado: jsPDF dibuja las imágenes siempre como rectángulo, así que las
+  // esquinas de la foto sobresalían del redondeo y el encuadre quedaba desprolijo.
+  doc.rect(M, photoY, photoW, photoH, "S");
 
   const colX = M + photoW + 3.5, colW = W - M - colX;
   // El nombre baja de cuerpo hasta entrar en dos líneas: la nómina tiene nombres de una palabra y
@@ -1874,12 +1876,12 @@ export async function credentialCleanPDF(user, branding = {}) {
   if (s.photoDataUrl) {
     try { doc.addImage(s.photoDataUrl, "JPEG", C - photoW / 2, photoY, photoW, photoH, undefined, "FAST"); } catch {}
   } else {
-    doc.setFillColor(233, 237, 241); doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "F");
+    doc.setFillColor(233, 237, 241); doc.rect(C - photoW / 2, photoY, photoW, photoH, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(160, 170, 182);
     doc.text("SIN FOTO", C, photoY + photoH / 2, { align: "center" });
   }
   doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
-  doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "S");
+  doc.rect(C - photoW / 2, photoY, photoW, photoH, "S");
 
   let y = photoY + photoH + 4;
   let nameSize = 12, nameLines = [];

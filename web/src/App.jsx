@@ -9148,7 +9148,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
                   acceso ni ficha personal, así que no se ofrecen ni el PDF ni la carga de datos. */}
               {!isViewer && <div className="relative">
                 <button onClick={() => setCredentialFor(credentialFor === u.id ? null : u.id)} title="Descargar credencial de acceso" aria-label={`Descargar credencial de ${u.name}`} aria-expanded={credentialFor === u.id} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Briefcase className="h-4 w-4" /></button>
-                {credentialFor === u.id && <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                {credentialFor === u.id && <div className="absolute left-0 right-auto z-20 mt-1 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg sm:left-auto sm:right-0">
                   <div className="border-b border-slate-100 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Elegí el diseño</div>
                   {[["credentialPDF", "Foto lateral", "Foto a la izquierda y nombre al lado"], ["credentialCleanPDF", "Centrado", "Logo, foto y nombre centrados"]].map(([fn, label, hint]) => (
                     <button key={fn} onClick={async () => { setCredentialFor(null); try { const mod = await pdfModule(); await mod[fn](u, branding); } catch (e) { onErr(e); } }} className="block w-full px-3 py-2 text-left hover:bg-slate-50">
