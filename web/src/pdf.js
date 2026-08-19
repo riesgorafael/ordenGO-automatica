@@ -1702,20 +1702,20 @@ export async function credentialPDF(user, branding = {}) {
   // Igual que en los reportes: en la organización Automática el logo no viene en logoDataUrl sino
   // del incorporado. Caja fija con ajuste por proporción, para no deformar logos de otras formas.
   const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
-  let y = 15;
+  let y = 13.5;
   if (logoSource) {
     let ratio = LOGO_RATIO;
     try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
     let lw = 24, lh = lw * ratio;
-    if (lh > 8) { lh = 8; lw = lh / ratio; }
-    try { doc.addImage(logoSource, "PNG", center - lw / 2, y, lw, lh, undefined, "FAST"); y += lh + 3; } catch { y += 2; }
+    if (lh > 6) { lh = 6; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", center - lw / 2, y, lw, lh, undefined, "FAST"); y += lh + 2; } catch { y += 2; }
   } else {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...ink);
     doc.text(clip(company.name, W - M * 2), center, y + 4, { align: "center" }); y += 8;
   }
 
   /* ---------- Foto ---------- */
-  const photoW = 23, photoH = 30.5; // 3:4, la proporción en que el cliente recorta la foto
+  const photoW = 18, photoH = 24; // 3:4, la proporción en que el cliente recorta la foto
   const px = center - photoW / 2;
   if (s.photoDataUrl) {
     try { doc.addImage(s.photoDataUrl, "JPEG", px, y, photoW, photoH, undefined, "FAST"); } catch {}
@@ -1726,7 +1726,7 @@ export async function credentialPDF(user, branding = {}) {
   }
   doc.setDrawColor(...accent); doc.setLineWidth(0.5);
   doc.roundedRect(px, y, photoW, photoH, 1.5, 1.5, "S"); doc.setLineWidth(0.2);
-  y += photoH + 6;
+  y += photoH + 5;
 
   /* ---------- Identidad ---------- */
   // El nombre baja de cuerpo por pasos hasta entrar en dos líneas: la nómina tiene nombres de una
@@ -1752,10 +1752,15 @@ export async function credentialPDF(user, branding = {}) {
   // Sólo documento y teléfono. Los de emergencia quedan fuera del impreso a pedido: se ven al
   // escanear el QR, donde además se pueden cambiar sin reimprimir las credenciales.
   const rows = [["Documento", s.documentId], ["Teléfono", s.phone]].filter(([, v]) => v);
+  // El recuadro se ancla sobre la línea del pie en lugar de seguir el flujo vertical. Dejándolo
+  // fluir, la suma de banda + logo + foto + tres textos se pasaba del alto de la tarjeta y el
+  // bloque terminaba impreso encima de VENCE y del sitio web.
+  const footLineY = H - 12.5;
   if (rows.length) {
     const boxH = rows.length * 4.4 + 3;
-    doc.setFillColor(246, 248, 251); doc.roundedRect(M, y, W - M * 2, boxH, 1.5, 1.5, "F");
-    let ry = y + 4.2;
+    const boxY = Math.max(y, footLineY - 2.5 - boxH);
+    doc.setFillColor(246, 248, 251); doc.roundedRect(M, boxY, W - M * 2, boxH, 1.5, 1.5, "F");
+    let ry = boxY + 4.2;
     rows.forEach(([label, value]) => {
       doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(120, 130, 145);
       doc.text(`${label}:`, M + 2.5, ry);
@@ -1763,7 +1768,7 @@ export async function credentialPDF(user, branding = {}) {
       doc.text(clip(value, W - M * 2 - 20), M + 15, ry);
       ry += 4.4;
     });
-    y += boxH + 4;
+    // y ya no avanza: el pie tiene posición fija propia.
   }
 
   /* ---------- Vigencia ---------- */
@@ -1771,7 +1776,7 @@ export async function credentialPDF(user, branding = {}) {
   // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina de una vez.
   const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
   const footY = H - 8;
-  doc.setDrawColor(227, 230, 234); doc.line(M, footY - 4.5, W - M, footY - 4.5);
+  doc.setDrawColor(227, 230, 234); doc.line(M, footLineY, W - M, footLineY);
   doc.setFontSize(5.4);
   doc.setFont("helvetica", "bold"); doc.setTextColor(...ink); doc.text("VENCE:", M, footY);
   doc.setFont("helvetica", "normal"); doc.setTextColor(91, 100, 114);
