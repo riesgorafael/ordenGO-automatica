@@ -1778,10 +1778,10 @@ export async function credentialPDF(user, branding = {}) {
   // Las tres filas arrancan a la misma altura que el QR y terminan con él: así las dos columnas
   // del bloque inferior quedan alineadas arriba y abajo en vez de desfasadas por unos milímetros.
   pair("DNI", credentialDni(s.documentId), M, 53);
-  pair("Teléfono", s.phone, M, 61.5);
+  pair("Teléfono", s.phone, M, 61.25);
   // Vencimiento automático al 31/12 del año en curso: no se carga por empleado para que ninguna
   // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina.
-  pair("Vence", credentialExpiry(), M, 70);
+  pair("Vence", credentialExpiry(), M, 69.5);
   const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
 
   const qrSide = 20, qrX = W - M - qrSide, qrY = 50.5;
@@ -1882,19 +1882,22 @@ export async function credentialCleanPDF(user, branding = {}) {
     } catch {}
   }
   doc.setFont("helvetica", "normal"); doc.setFontSize(3.6); doc.setTextColor(150, 158, 168);
-  doc.text("Escaneá para verificar", M + qrSide / 2, qrY + qrSide + 2.4, { align: "center" });
+  // Misma línea de base que el sitio web de la derecha: dos textos al pie a alturas distintas se
+  // leen como un desalineo, aunque cada uno esté bien respecto de su propio bloque.
+  doc.text("Escaneá para verificar", M + qrSide / 2, H - 2, { align: "center" });
   if (company.website) doc.text(String(company.website), W - M, H - 2, { align: "right" });
   const dx = M + qrSide + 4;
   const pair = (label, value, ty) => {
     if (!value) return;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(4.2); doc.setTextColor(140, 149, 160);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(4.4); doc.setTextColor(140, 149, 160);
     doc.text(String(label).toUpperCase(), dx, ty);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(5.6); doc.setTextColor(...ink);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...ink);
     doc.text(clip(value, W - dx - M), dx, ty + 3);
   };
-  pair("DNI", credentialDni(s.documentId), qrY + 1);
-  pair("Vence", credentialExpiry(), qrY + 7.5);
-  pair("Tarjeta N°", credentialCardId(s.credentialToken), qrY + 14);
+  // Las tres filas se reparten a lo alto del QR para que ambos bloques empiecen y terminen juntos.
+  pair("DNI", credentialDni(s.documentId), qrY + 3);
+  pair("Vence", credentialExpiry(), qrY + 9.5);
+  pair("Tarjeta N°", credentialCardId(s.credentialToken), qrY + 16);
 
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }
