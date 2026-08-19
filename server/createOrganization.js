@@ -32,7 +32,7 @@ try {
   await db.query(
     "INSERT INTO app_settings(organization_id,key,value) VALUES($1,'branding_v1',$2)",
     [organizationId, {
-      appName: "OrdenGO", subtitle: "Gestión de servicios", companyName: name, companyLegalName: name,
+      appName: "MiOrdenGo", subtitle: "Gestión de servicios", companyName: name, companyLegalName: name,
       companyCuit: "", companyIvaCondition: "", companyAddress: "", companyPhone: "", companyEmail: "", companyWebsite: "",
       theme: "ordengo", primaryColor: "#0EA5C5", headerColor: "#0B315F", logoDataUrl: "",
     }],

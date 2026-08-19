@@ -278,7 +278,7 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, br
     doc.setPage(page);
     try { doc.addImage(PRODUCT_MARK_DATA_URL, "PNG", PAGE_W / 2 - 8, PAGE_H - 8, 3.6, 3.6); } catch {}
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
-    doc.text("OrdenGO", PAGE_W / 2 - 3, PAGE_H - 5.2);
+    doc.text("MiOrdenGo", PAGE_W / 2 - 3, PAGE_H - 5.2);
   }
   doc.save(fileName || `Gantt_${projectName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }

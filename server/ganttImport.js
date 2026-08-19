@@ -1,4 +1,4 @@
-// Importación de cronogramas de MS Project al Gantt interno de OrdenGO.
+// Importación de cronogramas de MS Project al Gantt interno de MiOrdenGo.
 //
 // IMPORTANTE — cambio de enfoque: la primera versión de este archivo asumía un paquete npm
 // llamado "mpxj" para leer el binario .mpp directamente. Ese paquete no existe en el registro

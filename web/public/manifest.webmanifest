@@ -1,6 +1,6 @@
 {
-  "name": "OrdenGO Suite",
-  "short_name": "OrdenGO",
+  "name": "MiOrdenGo Suite",
+  "short_name": "MiOrdenGo",
   "description": "Gestión y facturación para empresas de servicios.",
   "start_url": "/",
   "display": "standalone",

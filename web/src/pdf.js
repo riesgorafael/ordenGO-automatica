@@ -90,7 +90,7 @@ function stampProductBranding(doc) {
     doc.setPage(page);
     try { doc.addImage(PRODUCT_MARK_DATA_URL, "PNG", 94, 287.2, 3.6, 3.6); } catch {}
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
-    doc.text("OrdenGO", 99, 290, { align: "left" });
+    doc.text("MiOrdenGo", 99, 290, { align: "left" });
   }
   doc.setPage(Math.min(currentPage, pages));
 }

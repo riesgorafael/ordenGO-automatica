@@ -129,7 +129,7 @@ app.use((req, res, next) => {
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
 const DEFAULT_BRANDING = {
-  appName: "OrdenGO",
+  appName: "MiOrdenGo",
   subtitle: "Gestión de servicios",
   companyName: "",
   theme: "ordengo",
@@ -204,7 +204,7 @@ const validHexColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || ""));
 const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
 const normalizeBranding = (value = {}) => ({
   ...DEFAULT_BRANDING,
-  // OrdenGO es la marca fija del producto; cada tenant personaliza su empresa, logo y tema,
+  // MiOrdenGo es la marca fija del producto; cada tenant personaliza su empresa, logo y tema,
   // pero no puede renombrar la aplicación desde la interfaz ni mediante la API.
   appName: DEFAULT_BRANDING.appName,
   subtitle: String(value.subtitle || DEFAULT_BRANDING.subtitle).trim().slice(0, 80),
@@ -1024,7 +1024,7 @@ async function notifyTaskAssignmentEmail(userId, task, project) {
     const lines = [
       `Hola ${user.name || ""},`.trim(),
       "",
-      `Se te asignó una tarea en OrdenGO:`,
+      `Se te asignó una tarea en MiOrdenGo:`,
       "",
       `Proyecto: ${projectLabel}`,
       `Tarea: ${task.id} — ${task.title}`,
@@ -1032,12 +1032,12 @@ async function notifyTaskAssignmentEmail(userId, task, project) {
       task.due ? `Vencimiento: ${task.due}` : null,
       task.priority ? `Prioridad: ${task.priority}` : null,
       "",
-      "Ingresá a OrdenGO para ver el detalle completo.",
+      "Ingresá a MiOrdenGo para ver el detalle completo.",
     ].filter((line) => line !== null).join("\n");
     await transporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to: user.email,
-      subject: `OrdenGO · Nueva tarea asignada: ${task.title}`,
+      subject: `MiOrdenGo · Nueva tarea asignada: ${task.title}`,
       text: lines,
     });
   } catch (error) { console.error("No se pudo enviar el correo de asignación de tarea:", error.message); }
@@ -1053,14 +1053,14 @@ async function notifyProjectAssignmentEmail(userId, project, taskCount) {
     const lines = [
       `Hola ${user.name || ""},`.trim(),
       "",
-      `Se te asignó el proyecto "${project.name}" en OrdenGO, con ${taskCount} tarea(s).`,
+      `Se te asignó el proyecto "${project.name}" en MiOrdenGo, con ${taskCount} tarea(s).`,
       "",
-      "Ingresá a OrdenGO para ver el detalle completo.",
+      "Ingresá a MiOrdenGo para ver el detalle completo.",
     ].join("\n");
     await transporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to: user.email,
-      subject: `OrdenGO · Nuevo proyecto asignado: ${project.name}`,
+      subject: `MiOrdenGo · Nuevo proyecto asignado: ${project.name}`,
       text: lines,
     });
   } catch (error) { console.error("No se pudo enviar el correo de asignación de proyecto:", error.message); }
@@ -1434,7 +1434,7 @@ async function ensureProjectAccess(userId, projectId) {
 }
 
 /* ------------------------------------------------ Auth ------------------------------------------------ */
-// El login es siempre OrdenGO. La identidad corporativa sólo se entrega dentro de /api/bootstrap,
+// El login es siempre MiOrdenGo. La identidad corporativa sólo se entrega dentro de /api/bootstrap,
 // después de autenticar al usuario y aplicar el RLS de su organización. Así no se puede consultar
 // la ficha de otra empresa cambiando un slug o un parámetro de la URL.
 app.get("/api/branding", (_req, res) => res.json(DEFAULT_BRANDING));
@@ -2669,7 +2669,7 @@ app.get("/api/exchange-rates/wholesale", auth, requireRole("admin", "gerente"), 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     let response;
-    try { response = await fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/5?limit=1", { signal: controller.signal, headers: { Accept: "application/json", "User-Agent": "OrdenGO/1.0" } }); }
+    try { response = await fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/5?limit=1", { signal: controller.signal, headers: { Accept: "application/json", "User-Agent": "MiOrdenGo/1.0" } }); }
     finally { clearTimeout(timeout); }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
@@ -3694,5 +3694,5 @@ function scheduleDailyDigest() {
 const PORT = process.env.PORT || 3000;
 initDb()
   .then(() => migrateLegacyDataAssets())
-  .then(() => app.listen(PORT, () => { console.log(`OrdenGO API + web escuchando en :${PORT}`); scheduleDailyDigest(); }))
+  .then(() => app.listen(PORT, () => { console.log(`MiOrdenGo API + web escuchando en :${PORT}`); scheduleDailyDigest(); }))
   .catch((e) => { console.error("Error iniciando la base de datos:", e); process.exit(1); });
