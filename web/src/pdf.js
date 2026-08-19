@@ -1777,14 +1777,16 @@ export async function credentialPDF(user, branding = {}) {
   };
   // Las tres filas arrancan a la misma altura que el QR y terminan con él: así las dos columnas
   // del bloque inferior quedan alineadas arriba y abajo en vez de desfasadas por unos milímetros.
-  pair("DNI", credentialDni(s.documentId), M, 53);
-  pair("Teléfono", s.phone, M, 61.25);
+  // Interlínea de 6,5 mm entre filas y QR alineado a la derecha del mismo bloque, replicando las
+  // proporciones que ajustó el usuario sobre el render.
+  pair("DNI", credentialDni(s.documentId), M, 51.5);
+  pair("Teléfono", s.phone, M, 58);
   // Vencimiento automático al 31/12 del año en curso: no se carga por empleado para que ninguna
   // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina.
-  pair("Vence", credentialExpiry(), M, 69.5);
+  pair("Vence", credentialExpiry(), M, 64.5);
   const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
 
-  const qrSide = 20, qrX = W - M - qrSide, qrY = 50.5;
+  const qrSide = 14, qrX = W - M - qrSide, qrY = 54;
   if (s.credentialToken) {
     try {
       const { default: QRCode } = await import("qrcode");
@@ -1792,8 +1794,8 @@ export async function credentialPDF(user, branding = {}) {
       const qr = await QRCode.toDataURL(url, { margin: 0, width: 360, errorCorrectionLevel: "M" });
       doc.addImage(qr, "PNG", qrX, qrY, qrSide, qrSide, undefined, "FAST");
       doc.setFont("helvetica", "normal"); doc.setFontSize(4.4); doc.setTextColor(140, 149, 160);
-      doc.text(`N° ${credentialCardId(s.credentialToken)}`, qrX + qrSide / 2, qrY + qrSide + 2.6, { align: "center" });
-      doc.setFontSize(3.9); doc.text("Escaneá para verificar vigencia", qrX + qrSide / 2, qrY + qrSide + 5.6, { align: "center" });
+      doc.text(`N° ${credentialCardId(s.credentialToken)}`, qrX + qrSide / 2, qrY + qrSide + 2.8, { align: "center" });
+
     } catch {}
   }
 
