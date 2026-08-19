@@ -1610,7 +1610,6 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     .filter(() => !client)
     .filter((client) => !tec || operationalClientIds.has(client.id) || operationalClientNames.has(String(client.name || "").trim().toLowerCase()))
     .map((client) => clientForRole(client, req.user.role)).filter(Boolean);
-  res.json({
   // Órdenes para el cliente corporativo: sólo las de su empresa y, si tiene planta asignada, sólo
   // las de esa planta. La serialización deja fuera todo el dinero y el costo interno —precios,
   // materiales, horas facturables, márgenes—: es el mismo criterio que la audiencia "cliente" de
@@ -1628,6 +1627,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
         arrivalAt: o.technical?.arrivalAt || "", completedAt: o.technical?.completedAt || "" },
       photos: o.photos || [], signatureUrl: o.signatureUrl || "", signedBy: o.signedBy || "",
     }));
+  res.json({
     me: pubUser(me.rows[0]),
     users: u.rows.map((user) => directoryUser(user, req.user.role)),
     clients: visibleClients,
