@@ -1455,7 +1455,7 @@ app.get("/api/credential/:token", async (req, res) => {
   if (!/^[0-9a-f-]{36}$/i.test(token)) return res.status(404).json({ error: "Credencial no encontrada" });
   if (!(await consumeRateLimit(`credential:${req.ip}`, 60 * 1000, 20))) return res.status(429).json({ error: "Demasiadas consultas. Esperá un momento." });
   const row = (await pool.query(
-    `SELECT u.name, u.role, u.active, u.settings, o.name AS organization_name
+    `SELECT u.name, u.email, u.role, u.active, u.settings, o.name AS organization_name
        FROM users u JOIN organizations o ON o.id = u.organization_id
       WHERE u.settings->>'credentialToken' = $1 LIMIT 1`, [token])).rows[0];
   if (!row) return res.status(404).json({ error: "Credencial no encontrada" });
@@ -1473,6 +1473,9 @@ app.get("/api/credential/:token", async (req, res) => {
     // reimprimir credenciales porque el QR sólo lleva la URL, no los datos.
     documentId: row.settings?.documentId || "",
     phone: row.settings?.phone || "",
+    // Correo laboral: se expone por pedido expreso, para que el contacto guardado desde el QR quede
+    // completo. Queda legible para cualquiera que escanee la credencial, igual que el resto.
+    email: row.email || "",
     bloodType: row.settings?.bloodType || "",
     emergencyContact: row.settings?.emergencyContact || "",
     emergencyPhone: row.settings?.emergencyPhone || "",

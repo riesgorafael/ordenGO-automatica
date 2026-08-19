@@ -694,6 +694,7 @@ function CredentialCheck({ token }) {
               <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left">
                 {person.documentId && <p className="text-xs text-slate-700"><span className="text-slate-500">Documento:</span> {person.documentId}</p>}
                 {person.phone && <p className="mt-0.5 text-xs text-slate-700"><span className="text-slate-500">Teléfono:</span> {person.phone}</p>}
+                {person.email && <p className="mt-0.5 break-all text-xs text-slate-700"><span className="text-slate-500">Correo:</span> {person.email}</p>}
               </div>
             )}
             {/* Bloque de emergencia: el motivo por el que estos datos son públicos. Va destacado y
@@ -707,6 +708,26 @@ function CredentialCheck({ token }) {
                 {person.emergencyPhone && <a href={`tel:${person.emergencyPhone}`} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">Llamar a {person.emergencyPhone}</a>}
               </div>
             )}
+            {/* Descarga un .vcf: es el formato que Android e iOS abren directamente ofreciendo
+                "Agregar a contactos". Se arma en el navegador con los datos que ya se muestran,
+                sin pedir nada más al servidor. Las líneas van separadas por CRLF porque así lo
+                exige el formato vCard; con saltos simples, varios teléfonos lo rechazan. */}
+            <button onClick={() => {
+              const card = ["BEGIN:VCARD", "VERSION:3.0", `FN:${person.name}`,
+                person.position ? `TITLE:${person.position}` : "",
+                person.organizationName ? `ORG:${person.organizationName}` : "",
+                person.phone ? `TEL;TYPE=CELL:${person.phone}` : "",
+                person.email ? `EMAIL;TYPE=WORK:${person.email}` : "",
+                "END:VCARD"].filter(Boolean).join("\r\n");
+              const url = URL.createObjectURL(new Blob([card], { type: "text/vcard;charset=utf-8" }));
+              const link = document.createElement("a");
+              link.href = url; link.download = `${person.name.replace(/\s+/g, "_").toLowerCase()}.vcf`;
+              document.body.appendChild(link); link.click(); link.remove();
+              // Se libera el objeto para no dejar el blob retenido en memoria.
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }} className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <UserPlus className="h-4 w-4" /> Agregar a contactos
+            </button>
             <p className="mt-4 text-[11px] text-slate-400">Verificado el {new Date(person.checkedAt).toLocaleString("es-AR")}</p>
           </div>
         ) : state.status === "error" ? (
