@@ -637,27 +637,10 @@ function SearchSelect({ value, onChange, options, emptyLabel = "Sin asociar", pl
 // Con foto cargada se muestra la foto; sin ella, las iniciales sobre el color de la persona, que es
 // como funcionó siempre. El color se mantiene de fondo detrás de la imagen: si la foto tarda o falla
 // en cargar, el círculo no queda en blanco.
-/* Logo del producto volcado en el DOM en lugar de <img src>. Un SVG cargado como imagen queda
-   aislado: no ve las fuentes de la página, así que Montserrat —la tipografía del logo— no se
-   aplicaba y el texto caía a una fuente del sistema. Inline sí la toma. El trazado del símbolo y
-   los colores son los del archivo oficial (logo_miordengo.svg). */
+/* Logo del producto: la imagen oficial (logo_ordenGo_2.png). Se sirve como archivo y no como SVG en
+   línea, así que no depende de que Montserrat esté instalada — la tipografía ya viene dibujada. */
 function ProductLogo({ className = "" }) {
-  return (
-    <svg viewBox="0 0 424 112" className={className} role="img" aria-label="MiOrdenGo · Gestión y Facturación">
-      <g transform="translate(-124 -50)">
-        <g transform="translate(210)">
-          <text transform="translate(0 110)" fill="#17345e" fontSize="62" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="700" letterSpacing="-0.016em"><tspan x="0" y="0">MiOrden</tspan><tspan y="0" fill="#00a4d3">Go</tspan></text>
-          <text transform="translate(3 148)" fill="#707372" fontSize="28" fontFamily="Montserrat, Helvetica, Arial, sans-serif" fontWeight="600" letterSpacing="-0.018em"><tspan x="0" y="0">Gestión y Facturación</tspan></text>
-        </g>
-        <g transform="translate(84 14.866)">
-          <rect width="79" height="14" rx="4" transform="translate(40 102.134)" fill="#17345e" />
-          <rect width="56" height="14" rx="4" transform="translate(40 121.134)" fill="#17345e" />
-          <path d="M40,79.393H79.187L106.618,45l5.8,14.041L90.943,87.991H40Z" transform="translate(0 8.299)" fill="#00a4d3" />
-          <path d="M110,40l28.961-3.824-3.166,29.619Z" transform="translate(-16.842 9)" fill="#00a4d3" />
-        </g>
-      </g>
-    </svg>
-  );
+  return <img src="/branding/miordengo-logo.png" alt="MiOrdenGo · Gestión y Facturación" className={className} />;
 }
 const Avatar = ({ user, size = 28 }) => {
   const photo = user?.settings?.photoDataUrl;
