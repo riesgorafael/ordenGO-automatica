@@ -1792,3 +1792,81 @@ export async function credentialPDF(user, branding = {}) {
 
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }
+
+// Variante "limpia" de la credencial: sin banda ni rótulo arriba, todo centrado. El espacio que
+// libera el título va al logo y a la foto, y el QR baja al pie junto a los datos. Comparte modelo,
+// token y reglas de identidad con credentialPDF; sólo cambia la disposición.
+export async function credentialCleanPDF(user, branding = {}) {
+  const doc = new jsPDF({ unit: "mm", format: [54, 85.6], orientation: "portrait" });
+  const W = 54, H = 85.6, M = 4, C = W / 2;
+  const accent = reportAccent(branding);
+  const ink = hexRgb(branding.headerColor || "#0B315F");
+  const s = user?.settings || {};
+  const company = companyProfile(branding);
+  const clip = (t, w) => { const l = doc.splitTextToSize(String(t), w); return l[0] + (l.length > 1 ? "…" : ""); };
+
+  const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
+  if (logoSource) {
+    let ratio = LOGO_RATIO;
+    try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
+    let lw = 30, lh = lw * ratio;
+    if (lh > 9) { lh = 9; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", C - lw / 2, 5, lw, lh, undefined, "FAST"); } catch {}
+  } else {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink);
+    doc.text(clip(company.name, W - M * 2), C, 11, { align: "center" });
+  }
+
+  // Foto centrada y grande: es el uso principal del espacio que libera el título.
+  const photoW = 27, photoH = 36, photoY = 17;
+  if (s.photoDataUrl) {
+    try { doc.addImage(s.photoDataUrl, "JPEG", C - photoW / 2, photoY, photoW, photoH, undefined, "FAST"); } catch {}
+  } else {
+    doc.setFillColor(233, 237, 241); doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(160, 170, 182);
+    doc.text("SIN FOTO", C, photoY + photoH / 2, { align: "center" });
+  }
+  doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
+  doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "S");
+
+  let y = photoY + photoH + 6;
+  let nameSize = 12, nameLines = [];
+  for (; nameSize >= 7; nameSize -= 0.5) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
+    nameLines = doc.splitTextToSize(String(user?.name || ""), W - M * 2);
+    if (nameLines.length <= 2) break;
+  }
+  doc.setTextColor(...ink);
+  nameLines.slice(0, 2).forEach((line) => { doc.text(line, C, y, { align: "center" }); y += nameSize * 0.42; });
+  if (s.position) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(100, 110, 124);
+    doc.text(clip(s.position, W - M * 2), C, y + 1.6, { align: "center" }); y += 4;
+  }
+  doc.setDrawColor(...accent); doc.setLineWidth(0.6);
+  doc.line(C - 8, y + 3, C + 8, y + 3); doc.setLineWidth(0.2);
+
+  // Pie: QR a la izquierda y datos a la derecha, en posiciones fijas ancladas al borde inferior.
+  const qrSide = 17, qrY = H - qrSide - 4;
+  const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
+  if (s.credentialToken) {
+    try {
+      const { default: QRCode } = await import("qrcode");
+      const url = `${window.location.origin}/?credencial=${encodeURIComponent(s.credentialToken)}`;
+      const qr = await QRCode.toDataURL(url, { margin: 0, width: 340, errorCorrectionLevel: "M" });
+      doc.addImage(qr, "PNG", M, qrY, qrSide, qrSide, undefined, "FAST");
+    } catch {}
+  }
+  const dx = M + qrSide + 4;
+  const pair = (label, value, ty) => {
+    if (!value) return;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(4.2); doc.setTextColor(140, 149, 160);
+    doc.text(String(label).toUpperCase(), dx, ty);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(5.6); doc.setTextColor(...ink);
+    doc.text(clip(value, W - dx - M), dx, ty + 3);
+  };
+  pair("Documento", s.documentId, qrY + 1);
+  pair("Vence", `31 / Dic / ${new Date().getFullYear()}`, qrY + 7.5);
+  pair("Tarjeta N°", cardId, qrY + 14);
+
+  doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
+}
