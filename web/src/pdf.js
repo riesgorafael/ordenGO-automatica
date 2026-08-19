@@ -108,6 +108,10 @@ function stampProductBranding(doc) {
     try { drawProductMark(doc, 94, 287.2, 3.6); } catch {}
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
     doc.text("MiOrdenGo", 99, 290, { align: "left" });
+    // El dominio va debajo de la marca, en gris y cuerpo menor: identifica de dónde salió el reporte
+    // sin competir con el nombre ni con el pie de la izquierda.
+    doc.setFont("helvetica", "normal"); doc.setFontSize(5.2); doc.setTextColor(150, 158, 168);
+    doc.text("www.miordengo.com", 99, 292.6, { align: "left" });
   }
   doc.setPage(Math.min(currentPage, pages));
 }

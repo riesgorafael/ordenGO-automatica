@@ -279,6 +279,9 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, br
     try { drawProductMark(doc, PAGE_W / 2 - 8, PAGE_H - 8, 3.6); } catch {}
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
     doc.text("MiOrdenGo", PAGE_W / 2 - 3, PAGE_H - 5.2);
+    // Mismo pie que el resto de los reportes: marca arriba y dominio debajo, en gris y cuerpo menor.
+    doc.setFont("helvetica", "normal"); doc.setFontSize(5.2); doc.setTextColor(150, 158, 168);
+    doc.text("www.miordengo.com", PAGE_W / 2 - 3, PAGE_H - 2.8);
   }
   doc.save(fileName || `Gantt_${projectName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }
