@@ -1777,7 +1777,7 @@ export default function App() {
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
       {editing !== undefined && <TaskModal task={editing} defaultProjectId={pProj === "all" ? "" : pProj} me={me} users={users.filter((u) => u.active && u.role !== "monitor_oficina")} projects={projects} canAssign={isMgr} canDelete={isMgr || (!isMonitor && !!editing && editing.assignee === me.id)} readOnly={isMonitor} nextId={nextTaskId} onClose={() => { setEditing(undefined); setPrefill(null); }} onSave={onSaveTask} onDelete={onDeleteTask} onComment={commentTask} onDuplicate={duplicateTask} prefill={prefill} />}
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
-      {profileOpen && <ProfileDialog user={me} onClose={() => setProfileOpen(false)} onErr={err} onChangePassword={() => { setProfileOpen(false); setPwOpen(true); }} onSave={async (profile) => {
+      {profileOpen && <ProfileDialog user={me} branding={branding} onClose={() => setProfileOpen(false)} onErr={err} onChangePassword={() => { setProfileOpen(false); setPwOpen(true); }} onSave={async (profile) => {
         // Se actualiza `me` con lo que devuelve el servidor, no con el formulario: así la foto que
         // queda en pantalla es la que realmente se guardó, ya saneada y recortada.
         try { const saved = await api.updateMyProfile(profile); setMe(saved); setUsers((items) => items.map((item) => item.id === saved.id ? { ...item, settings: saved.settings } : item)); setProfileOpen(false); toast("Ficha actualizada", "success"); }
@@ -7829,7 +7829,7 @@ function ChartBox({ data }) {
 /* Ficha personal: foto y datos de contacto que alimentan la credencial de empresa. La usa tanto el
    propio usuario (por PATCH /api/me/profile) como administración sobre un tercero (por PATCH
    /api/users/:id); quién guarda lo decide el llamador con onSave, el diálogo es el mismo. */
-function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
+function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePassword }) {
   useDialogOpenClass(onClose);
   const [form, setForm] = useState({
     photoDataUrl: user.settings?.photoDataUrl || "",
@@ -7894,6 +7894,25 @@ function ProfileDialog({ user, onClose, onSave, onErr, onChangePassword }) {
         </div>
         {/* El cambio de contraseña vive acá cuando es la ficha propia: es la otra acción de "mi
             cuenta" y este diálogo es el único lugar al que se llega desde el nombre en la barra. */}
+        {/* Descarga de la credencial desde la propia ficha: antes sólo estaba en Equipo, que es un
+            módulo de administración, así que un técnico no tenía forma de obtener la suya. Se pide
+            la ficha guardada, no el formulario en pantalla: el PDF debe reflejar lo que está en el
+            servidor, no cambios sin guardar. */}
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Credencial de acceso</div>
+          {!user.settings?.credentialToken ? (
+            <p className="mt-1.5 text-[11px] text-slate-400">Guardá la ficha una vez para habilitar la descarga.</p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[["credentialPDF", "Foto lateral"], ["credentialCleanPDF", "Centrado"]].map(([fn, label]) => (
+                <button key={fn} onClick={async () => { try { const mod = await pdfModule(); await mod[fn](user, branding); } catch (error) { onErr?.(error); } }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                  <Briefcase className="h-3.5 w-3.5" /> {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {onChangePassword && <button onClick={onChangePassword} className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:underline"><KeyRound className="h-3.5 w-3.5" /> Cambiar mi contraseña</button>}
         </div>
         <div className="flex shrink-0 gap-2 border-t border-slate-100 px-5 py-4">
@@ -9128,7 +9147,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
         <div className="space-y-2"><L label="Nombre"><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L><L label="Correo"><input type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} placeholder="correo@empresa.com" className="u-input" /></L><L label="Contraseña inicial"><input type="password" autoComplete="new-password" value={nf.password} onChange={(e) => setNf({ ...nf, password: e.target.value })} placeholder="Mínimo 8 caracteres" className="u-input" /></L><L label="Rol" help="Administrador: acceso total. Gerencia: gestión operativa y financiera. Técnico de campo: órdenes y tareas asignadas. Técnico de oficina: proyectos sin órdenes. Monitor: solo visualización."><select value={nf.role} onChange={(e) => setNf({ ...nf, role: e.target.value })} className="u-input">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></L>{nf.role === "monitor_oficina" && <L label="Nombre de la pantalla" help="Identifica esta cuenta cuando tengas varios televisores (ej. 'TV Recepción', 'TV Taller Norte')."><input value={nf.screenName} onChange={(e) => setNf({ ...nf, screenName: e.target.value })} placeholder="Ej. TV Recepción" className="u-input" /></L>}<button onClick={add} disabled={!nf.name.trim() || !nf.email.trim() || nf.password.length < 8} className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50"><UserPlus className="h-4 w-4" /> Crear perfil</button><p className="text-[11px] text-slate-400">La contraseña inicial es temporal y deberá cambiarse al ingresar. Los monitores son perfiles de solo visualización: no reciben tareas ni órdenes y no aparecen en métricas de carga.</p></div>
       </Panel></div>
     </div>
-    {fichaUser && <ProfileDialog user={fichaUser} onErr={onErr} onClose={() => setFichaUser(null)} onSave={async (profile) => { await wrap(onPatch)(fichaUser.id, profile); setFichaUser(null); }} />}
+    {fichaUser && <ProfileDialog user={fichaUser} branding={branding} onErr={onErr} onClose={() => setFichaUser(null)} onSave={async (profile) => { await wrap(onPatch)(fichaUser.id, profile); setFichaUser(null); }} />}
     {passwordUser && <PasswordResetDialog user={passwordUser} onClose={() => setPasswordUser(null)} onSave={async (password) => { await wrap(onPatch)(passwordUser.id, { password }); setPasswordUser(null); }} />}
     {pendingDelete && <ConfirmDialog title="Eliminar empleado" message={`Se eliminará el acceso de “${pendingDelete.name}”. Sus órdenes y tareas históricas no se borrarán.`} confirmLabel="Eliminar" danger onClose={() => setPendingDelete(null)} onConfirm={async () => { await wrap(onRemove)(pendingDelete.id); setPendingDelete(null); }} />}
     {tvScreenUser && <TvScreenDialog user={tvScreenUser} onClose={() => setTvScreenUser(null)} onSave={async (patch) => { await wrap(onPatch)(tvScreenUser.id, patch); setTvScreenUser(null); }} />}
