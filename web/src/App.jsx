@@ -7057,7 +7057,11 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
     if (action === "reopen") setStep(2);
     if (action === "finish") setStep(3);
     setTimelineNow(Date.now());
-    if (["start", "resume", "reopen", "pause", "finish"].includes(action)) void save("En proceso de ejecución", { stayOpen: true, technicalOverride: next });
+    // "arrival" también persiste. Antes quedaba fuera de esta lista: la llegada se veía en pantalla
+    // por setTechnical, pero nunca se guardaba, así que se perdía al cerrar la orden. Se registra sin
+    // cambiar el estado a "En proceso": llegar al sitio no es haber empezado a trabajar.
+    if (action === "arrival") void save(undefined, { stayOpen: true, technicalOverride: next });
+    else if (["start", "resume", "reopen", "pause", "finish"].includes(action)) void save("En proceso de ejecución", { stayOpen: true, technicalOverride: next });
   };
   const addPhoto = async (file, cat) => {
     if (!file) return;
