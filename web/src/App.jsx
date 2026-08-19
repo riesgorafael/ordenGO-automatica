@@ -6951,6 +6951,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const [contact, setContact] = useState(initial.contact || ""); const [tech, setTech] = useState(initial.tech || me.name);
   const [assignedTechs, setAssignedTechs] = useState(initial.assignedTechs || (me.role === "tecnico" ? [me.name] : []));
   const [assignedTechPick, setAssignedTechPick] = useState("");
+  // La lista de técnicos solo aparece con el campo enfocado o con texto escrito: visible siempre,
+  // ocupaba espacio permanente y empujaba el resto del formulario hacia abajo.
+  const [techPickFocus, setTechPickFocus] = useState(false);
   // El campo es texto libre: ocultar al responsable del datalist no basta, porque igual se puede
   // tipear su nombre. Se rechaza acá, que es por donde pasan tanto el botón como el Enter.
   const addAssignedTech = (name) => { const value = (name || "").trim(); if (!value || value.toLowerCase() === tech.trim().toLowerCase() || assignedTechs.some((t) => t.toLowerCase() === value.toLowerCase())) return; setAssignedTechs((current) => [...current, value]); setAssignedTechPick(""); };
@@ -7141,20 +7144,21 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
                 const q = assignedTechPick.trim().toLowerCase();
                 const first = fieldTechs.find((u) => u.name.toLowerCase() !== tech.trim().toLowerCase() && !assignedTechs.some((n) => n.toLowerCase() === u.name.toLowerCase()) && (!q || u.name.toLowerCase().includes(q)));
                 if (first) addAssignedTech(first.name);
-              }} placeholder="Buscar técnico para sumar" className="u-input w-full" />
+              }} onFocus={() => setTechPickFocus(true)} onBlur={() => setTechPickFocus(false)} onFocus={() => setTechPickFocus(true)} onBlur={() => setTechPickFocus(false)} placeholder="Buscar técnico para sumar" className="u-input w-full" />
             </div>
             {(() => {
               const query = assignedTechPick.trim().toLowerCase();
               const options = fieldTechs.filter((u) => u.name.toLowerCase() !== tech.trim().toLowerCase()
                 && !assignedTechs.some((name) => name.toLowerCase() === u.name.toLowerCase())
                 && (!query || u.name.toLowerCase().includes(query)));
+              if (!techPickFocus && !query) return null;
               if (!options.length) return query ? <p className="mt-1.5 text-[11px] text-slate-400">Ningún técnico coincide con “{assignedTechPick}”.</p> : null;
               return (
                 <div className="mt-1.5 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
                   {options.map((u) => (
-                    <button key={u.id} type="button" onClick={() => addAssignedTech(u.name)} className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-brand-50">
+                    <button key={u.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addAssignedTech(u.name)} className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-brand-50">
                       <Avatar user={u} size={24} />
-                      <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{u.name}</span>
+                      <span className="min-w-0 flex-1 truncate"><span className="block truncate text-sm text-slate-700">{u.name}</span><span className="block truncate text-[11px] text-slate-400">{ROLES[u.role]}</span></span>
                       <Plus className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                     </button>
                   ))}
