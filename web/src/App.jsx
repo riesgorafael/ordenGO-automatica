@@ -1009,6 +1009,9 @@ export default function App() {
 
   useEffect(() => {
     if (!me || !online || module !== "orders") return;
+    // Depende también de oView: al volver de "nueva orden" al listado no cambia el módulo, así que
+    // sin esto no se refrescaba y había que esperar al ciclo de 30 s. Si el alta llegó al servidor
+    // pero el cliente navegó antes de recibir la respuesta, la orden no aparecía en la lista.
     let cancelled = false;
     const refreshOrders = async () => {
       try {
@@ -1025,7 +1028,7 @@ export default function App() {
     document.addEventListener("visibilitychange", onVisibility);
     void refreshOrders();
     return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refreshOrders); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [me?.id, online, module]);
+  }, [me?.id, online, module, oView]);
 
   useEffect(() => {
     // Mientras se está viendo Proyectos, se refrescan las tareas periódicamente para reflejar
