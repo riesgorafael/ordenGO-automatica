@@ -1568,7 +1568,7 @@ export default function App() {
                 llave aparte en la barra; al sacarlo quedaba sin ningún acceso, porque era el único
                 lugar de toda la app donde cambiar la propia clave. Colgarlo del nombre es además
                 dónde se lo busca: es una acción de la cuenta, no una herramienta más de la barra. */}
-            <button onClick={() => setProfileOpen(true)} title="Mi ficha y contraseña" className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
+            <button onClick={() => (me.role === "cliente" || isMonitor ? setPwOpen(true) : setProfileOpen(true))} title={me.role === "cliente" || isMonitor ? "Cambiar contraseña" : "Mi ficha y contraseña"} className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en MiOrdenGo" aria-label="Buscar en MiOrdenGo" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
             <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
@@ -9117,7 +9117,10 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
   return <>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="lg:col-span-2"><Panel title={`Empleados (${users.length}) · directorio compartido`}>
-        <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
+        <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; // Cuenta de pantalla: sin credencial ni ficha.
+          // El cliente corporativo tampoco lleva credencial de acceso ni ficha personal: es personal de
+          // otra empresa, no del plantel propio, así que no se lo acredita ni se le cargan datos médicos.
+          const noBadge = isViewer || u.role === "cliente"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="truncate text-xs text-slate-500" title={u.email}>{u.email}</div>
@@ -9146,7 +9149,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
               {isTecRole(u.role) && <button onClick={() => setUserProjectsFor(u)} title="Asociar a proyectos" aria-label={`Asociar proyectos a ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Folder className="h-4 w-4" /></button>}
               {/* Una cuenta de monitor es una pantalla de TV, no una persona: no lleva credencial de
                   acceso ni ficha personal, así que no se ofrecen ni el PDF ni la carga de datos. */}
-              {!isViewer && <div className="relative">
+              {!noBadge && <div className="relative">
                 <button onClick={() => setCredentialFor(credentialFor === u.id ? null : u.id)} title="Descargar credencial de acceso" aria-label={`Descargar credencial de ${u.name}`} aria-expanded={credentialFor === u.id} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Briefcase className="h-4 w-4" /></button>
                 {credentialFor === u.id && <div className="absolute left-0 right-auto z-20 mt-1 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg sm:left-auto sm:right-0">
                   <div className="border-b border-slate-100 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Elegí el diseño</div>
@@ -9158,7 +9161,7 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
                   ))}
                 </div>}
               </div>}
-              {!isViewer && <button onClick={() => setFichaUser(u)} title="Editar ficha y foto" aria-label={`Editar ficha de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><FileText className="h-4 w-4" /></button>}
+              {!noBadge && <button onClick={() => setFichaUser(u)} title="Editar ficha y foto" aria-label={`Editar ficha de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><FileText className="h-4 w-4" /></button>}
               <button onClick={() => setPasswordUser(u)} title="Restablecer contraseña" aria-label={`Restablecer contraseña de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><KeyRound className="h-4 w-4" /></button>
               <button onClick={() => setPendingDelete(u)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
             </div>
