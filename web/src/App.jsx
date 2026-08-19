@@ -7134,9 +7134,14 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
                 admite imágenes, así que no había forma de mostrar la foto. Con la lista propia se
                 elige de un clic —sin pasar por el botón Agregar— y se reconoce a la persona por
                 la cara, que es más rápido que leer nombres parecidos. */}
-            <div className="flex gap-2">
-              <input value={assignedTechPick} onChange={(e) => setAssignedTechPick(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addAssignedTech(assignedTechPick); } }} placeholder="Buscar técnico para sumar" className="u-input flex-1" />
-              <button type="button" onClick={() => addAssignedTech(assignedTechPick)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Agregar</button>
+            <div>
+              <input value={assignedTechPick} onChange={(e) => setAssignedTechPick(e.target.value)} onKeyDown={(e) => { if (e.key !== "Enter") return; e.preventDefault(); // Enter suma el primer resultado de la lista, no el texto tipeado: sin el botón Agregar,
+                // escribir un nombre que no existe crearía un acompañante que no coincide con ningún
+                // usuario y quedaría fuera de las métricas de carga.
+                const q = assignedTechPick.trim().toLowerCase();
+                const first = fieldTechs.find((u) => u.name.toLowerCase() !== tech.trim().toLowerCase() && !assignedTechs.some((n) => n.toLowerCase() === u.name.toLowerCase()) && (!q || u.name.toLowerCase().includes(q)));
+                if (first) addAssignedTech(first.name);
+              }} placeholder="Buscar técnico para sumar" className="u-input w-full" />
             </div>
             {(() => {
               const query = assignedTechPick.trim().toLowerCase();
