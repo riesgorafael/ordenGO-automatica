@@ -1,24 +1,22 @@
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo.js";
-// El isotipo del pie se dibuja con primitivas vectoriales en vez de insertar un PNG: jsPDF no
-// admite SVG, y el símbolo son tres barras y una flecha, así que trazarlo sale nítido a cualquier
-// escala y evita arrastrar un mapa de bits que habría que reexportar con cada cambio de marca.
+// Isotipo del pie, trazado con primitivas: jsPDF no admite SVG. Las coordenadas salen del logo
+// oficial (logo_miordengo.svg), escaladas al lienzo de 512 del icono, así que el símbolo del PDF y
+// el de la app son la misma figura y no pueden divergir.
 export function drawProductMark(doc, x, y, size) {
-  const u = size / 512;
-  doc.setFillColor(22, 59, 107);
-  doc.roundedRect(x, y, size, size, 120 * u, 120 * u, "F");
-  doc.setLineCap("round");
-  doc.setLineWidth(42 * u);
-  doc.setDrawColor(53, 190, 232);
-  doc.line(x + 150 * u, y + 250 * u, x + 236 * u, y + 250 * u);
-  doc.line(x + 236 * u, y + 250 * u, x + 318 * u, y + 168 * u);
-  doc.setDrawColor(255, 255, 255);
-  doc.line(x + 150 * u, y + 320 * u, x + 286 * u, y + 320 * u);
-  doc.line(x + 150 * u, y + 386 * u, x + 250 * u, y + 386 * u);
-  doc.setLineWidth(0.2);
-  doc.setLineCap("butt");
-  doc.setFillColor(53, 190, 232);
-  doc.triangle(x + 300 * u, y + 130 * u, x + 380 * u, y + 116 * u, x + 356 * u, y + 196 * u, "F");
+  const k = size / 512;
+  const s = 3.33 * k;
+  const px = (mx) => x + (119.5 + mx * 3.33) * k;
+  const py = (my) => y + (72.6 + my * 3.33) * k;
+  doc.setFillColor(23, 52, 94);
+  doc.roundedRect(x, y, size, size, 120 * k, 120 * k, "F");
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(px(0), py(67), 79 * s, 14 * s, 4 * s, 4 * s, "F");
+  doc.roundedRect(px(0), py(86), 56 * s, 14 * s, 4 * s, 4 * s, "F");
+  doc.setFillColor(0, 164, 211);
+  // Flecha principal y punta, con los mismos vértices del SVG expresados como desplazamientos.
+  doc.lines([[39.187, 0], [27.431, -34.393], [5.8, 14.041], [-21.475, 28.95], [-50.943, 0]], px(0), py(52.558), [s, s], "F", true);
+  doc.lines([[28.961, -3.824], [-3.166, 29.619]], px(53.158), py(13.866), [s, s], "F", true);
 }
 import { billableHoursValue } from "../../shared/domainRules.js";
 import { reportCompanyLines, reportCompanyProfile } from "../../shared/brandingRules.js";

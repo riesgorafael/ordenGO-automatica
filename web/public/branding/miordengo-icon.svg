@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MiOrdenGo">
-  <rect width="512" height="512" rx="120" fill="#163B6B"/>
-  <g stroke-linecap="round" fill="none">
-    <path d="M150 250 H236 L330 156" stroke="#35BEE8" stroke-width="42"/>
-    <path d="M150 320 H286" stroke="#FFFFFF" stroke-width="42"/>
-    <path d="M150 386 H250" stroke="#FFFFFF" stroke-width="42"/>
+  <rect width="512" height="512" rx="120" fill="#17345e"/>
+  <g transform="translate(119.5 72.6) scale(3.33)">
+    <rect width="79" height="14" rx="4" y="67" fill="#ffffff"/>
+    <rect width="56" height="14" rx="4" y="86" fill="#ffffff"/>
+    <path d="M0,52.558 H39.187 L66.618,18.165 l5.8,14.041 L50.943,61.156 H0 Z" fill="#00a4d3"/>
+    <path d="M53.158,13.866 l28.961,-3.824 l-3.166,29.619 Z" fill="#00a4d3"/>
   </g>
-  <path d="M300 126 L392 112 L374 202 L348 172 L322 196 L282 156 L318 152 Z" fill="#35BEE8"/>
 </svg>
