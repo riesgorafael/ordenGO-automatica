@@ -1823,22 +1823,25 @@ export async function credentialCleanPDF(user, branding = {}) {
   const company = companyProfile(branding);
   const clip = (t, w) => { const l = doc.splitTextToSize(String(t), w); return l[0] + (l.length > 1 ? "…" : ""); };
 
+  // Banda del título arriba, en gris claro. El usuario la reincorporó al ajustar el diseño: sin
+  // ella la tarjeta no dice qué es hasta leer el pie.
+  doc.setFillColor(244, 246, 248); doc.rect(0, 0, W, 7, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(5.6); doc.setTextColor(100, 110, 124);
+  doc.text("CREDENCIAL DE ACCESO", C, 4.4, { align: "center", charSpace: 0.35 });
+
   const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
   if (logoSource) {
     let ratio = LOGO_RATIO;
     try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
-    let lw = 26, lh = lw * ratio;
-    if (lh > 7.5) { lh = 7.5; lw = lh / ratio; }
-    try { doc.addImage(logoSource, "PNG", C - lw / 2, 5, lw, lh, undefined, "FAST"); } catch {}
+    let lw = 24, lh = lw * ratio;
+    if (lh > 6) { lh = 6; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", C - lw / 2, 10.5, lw, lh, undefined, "FAST"); } catch {}
   } else {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink);
-    doc.text(clip(company.name, W - M * 2), C, 11, { align: "center" });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...ink);
+    doc.text(clip(company.name, W - M * 2), C, 15, { align: "center" });
   }
 
-  // Nombre de la empresa bajo el logo: un logo no identifica por sí solo. Quien no lo reconozca
-  // —un guardia de otra planta, quien la encuentre perdida— necesita leer de qué empresa es.
-  doc.setFont("helvetica", "bold"); doc.setFontSize(5); doc.setTextColor(120, 130, 145);
-  doc.text(clip(String(company.name).toUpperCase(), W - M * 2), C, 15.5, { align: "center", charSpace: 0.2 });
+  // Sin línea con el nombre de la empresa: el logo ya lo incluye, y repetirlo empujaba la foto.
 
   // Foto centrada y grande: es el uso principal del espacio que libera el título.
   // 24 x 32 y arrancando en 15: con 27 x 36 desde 17, el nombre y el cargo llegaban a los 65 mm y
@@ -1854,7 +1857,7 @@ export async function credentialCleanPDF(user, branding = {}) {
   doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
   doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "S");
 
-  let y = photoY + photoH + 3.5;
+  let y = photoY + photoH + 4;
   let nameSize = 12, nameLines = [];
   for (; nameSize >= 7; nameSize -= 0.5) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
@@ -1870,7 +1873,8 @@ export async function credentialCleanPDF(user, branding = {}) {
   doc.setDrawColor(...accent); doc.setLineWidth(0.6);
   // El subrayado va pegado al cargo, no tres milímetros más abajo: ahí caía sobre la etiqueta DNI
   // del bloque del pie, que tiene posición fija.
-  doc.line(C - 8, y - 1, C + 8, y - 1); doc.setLineWidth(0.2);
+  // Subrayado ancho y centrado, como en la referencia: acompaña el bloque nombre + cargo.
+  doc.line(C - 16, y + 1.5, C + 16, y + 1.5); doc.setLineWidth(0.2);
 
   // Pie: QR a la izquierda y datos a la derecha, en posiciones fijas ancladas al borde inferior.
   const qrSide = 17, qrY = H - qrSide - 4;
