@@ -1809,8 +1809,8 @@ export async function credentialCleanPDF(user, branding = {}) {
   if (logoSource) {
     let ratio = LOGO_RATIO;
     try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
-    let lw = 30, lh = lw * ratio;
-    if (lh > 9) { lh = 9; lw = lh / ratio; }
+    let lw = 26, lh = lw * ratio;
+    if (lh > 7.5) { lh = 7.5; lw = lh / ratio; }
     try { doc.addImage(logoSource, "PNG", C - lw / 2, 5, lw, lh, undefined, "FAST"); } catch {}
   } else {
     doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink);
@@ -1818,7 +1818,9 @@ export async function credentialCleanPDF(user, branding = {}) {
   }
 
   // Foto centrada y grande: es el uso principal del espacio que libera el título.
-  const photoW = 27, photoH = 36, photoY = 17;
+  // 24 x 32 y arrancando en 15: con 27 x 36 desde 17, el nombre y el cargo llegaban a los 65 mm y
+  // chocaban con el pie, que está anclado a los 64,6. El alto de la tarjeta no da para más foto.
+  const photoW = 24, photoH = 32, photoY = 15;
   if (s.photoDataUrl) {
     try { doc.addImage(s.photoDataUrl, "JPEG", C - photoW / 2, photoY, photoW, photoH, undefined, "FAST"); } catch {}
   } else {
@@ -1829,7 +1831,7 @@ export async function credentialCleanPDF(user, branding = {}) {
   doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
   doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "S");
 
-  let y = photoY + photoH + 6;
+  let y = photoY + photoH + 4;
   let nameSize = 12, nameLines = [];
   for (; nameSize >= 7; nameSize -= 0.5) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
