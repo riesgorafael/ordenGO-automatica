@@ -1,4 +1,15 @@
-import { jsPDF } from "jspdf";
+  // Banda del título arriba, en gris claro: el usuario la reincorporó al ajustar el diseño.
+  doc.setFillColor(244, 246, 248); doc.rect(0, 0, W, 7, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(5.6); doc.setTextColor(100, 110, 124);
+  doc.text("CREDENCIAL DE ACCESO", C, 4.4, { align: "center", charSpace: 0.35 });
+
+  const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
+  if (logoSource) {
+    let ratio = LOGO_RATIO;
+    try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
+    let lw = 24, lh = lw * ratio;
+    if (lh > 6) { lh = 6; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", C - lw / 2, 10.5, lw, lh, undefined, "FAST"); } catch {}import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo.js";
 import PRODUCT_MARK_DATA_URL from "./assets/ordengo-mark-192.png?inline";
 import { billableHoursValue } from "../../shared/domainRules.js";
