@@ -6644,7 +6644,22 @@ function OrderDetail({ ger, order, users = [], projects = [], branding = DEFAULT
   const mg = orderMargin({ ...order, rate, materials: mats, laborBillable, laborCost });
   const dirty = ger && (rate !== order.rate || laborBillable !== order.laborBillable || (order.laborCost || 0) !== Number(laborCost) || JSON.stringify(mats) !== JSON.stringify(order.materials));
   const savePrices = () => onUpdate(order.id, { rate: normalizedRate(rate), laborCost: wholeMoney(laborCost), materials: mats.map((m) => ({ ...m, price: wholeMoney(m.price), cost: wholeMoney(m.cost), qty: Number(m.qty) || 0 })), laborBillable });
-  const shareOrder = async () => { const text = `${order.id} · ${order.client}\n${order.site || ""}\n${order.service} · ${order.status}`; if (navigator.share) { try { await navigator.share({ title: `Orden ${order.id}`, text }); } catch {} } else { try { await navigator.clipboard.writeText(text); } catch {} } };
+  // Compartir adjunta el PDF, no un enlace: el cliente lo recibe en el chat sin necesitar acceso al
+  // sistema. Se comprueba canShare({ files }) porque no todos los navegadores lo admiten —Firefox de
+  // escritorio, por ejemplo— y en ese caso se cae al texto de siempre en vez de fallar en silencio.
+  const shareOrder = async () => {
+    const text = `${order.id} · ${order.client}\n${order.site || ""}\n${order.service} · ${order.status}`;
+    try {
+      const { orderReportFile } = await pdfModule();
+      const file = await orderReportFile(order, "client", projects?.find((p) => p.id === order.projectId) || null, branding);
+      if (navigator.canShare?.({ files: [file] })) { await navigator.share({ title: `Orden ${order.id}`, text, files: [file] }); return; }
+      // Sin soporte para archivos: se descarga el PDF y se comparte el texto, así el usuario lo
+      // adjunta a mano en lugar de quedarse sin nada.
+      downloadDataUrl(file.name, URL.createObjectURL(file));
+    } catch { /* si el PDF no se pudo generar, se comparte al menos el texto */ }
+    if (navigator.share) { try { await navigator.share({ title: `Orden ${order.id}`, text }); } catch {} }
+    else { try { await navigator.clipboard.writeText(text); } catch {} }
+  };
   const [reportBusy, setReportBusy] = useState("");
   const downloadReport = async (audience) => {
     if (reportBusy) return;

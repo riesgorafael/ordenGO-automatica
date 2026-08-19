@@ -1937,3 +1937,12 @@ export async function credentialCleanPDF(user, branding = {}) {
 
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }
+
+// Devuelve el reporte como File en lugar de descargarlo, para poder adjuntarlo con navigator.share.
+// Compartir el archivo y no un enlace importa en campo: el cliente recibe el PDF firmado en el chat,
+// sin depender de tener acceso al sistema ni de que el enlace siga vivo.
+export async function orderReportFile(order, audience = "client", project = null, branding = {}) {
+  const printable = await orderWithEmbeddedAssets(order);
+  const blob = buildOrderReceiptPDF(printable, audience, project, branding).output("blob");
+  return new File([blob], `${order.id}_${audience}.pdf`, { type: "application/pdf" });
+}
