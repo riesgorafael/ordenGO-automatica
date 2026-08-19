@@ -790,6 +790,8 @@ export default function App() {
   const [editing, setEditing] = useState(undefined);
   const [pwOpen, setPwOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // Señal para abrir el lienzo de dibujo desde la barra superior, fuera del módulo de Notas.
+  const [drawingSignal, setDrawingSignal] = useState(0);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
@@ -1576,7 +1578,7 @@ export default function App() {
                 está llena y Notas se alcanza desde el menú "Más". Se muestra únicamente si el
                 módulo está habilitado para el rol y la empresa, para no ofrecer un botón que
                 lleve a una pantalla vacía o sin permiso. */}
-            {allowedForCompany.has("whiteboard") && <button onClick={() => navigateModule("whiteboard")} title="Notas" aria-label="Ir a Notas" className={`hidden rounded-lg p-1.5 sm:block sm:p-2 ${activeModule === "whiteboard" ? "bg-ink-800 text-white" : "text-slate-300 hover:bg-ink-800"}`}><Pencil className="h-4 w-4" /></button>}
+            {allowedForCompany.has("whiteboard") && <button onClick={() => { navigateModule("whiteboard"); setDrawingSignal((v) => v + 1); }} title="Nuevo dibujo" aria-label="Nuevo dibujo" className={`hidden rounded-lg p-1.5 sm:block sm:p-2 ${activeModule === "whiteboard" ? "bg-ink-800 text-white" : "text-slate-300 hover:bg-ink-800"}`}><Pencil className="h-4 w-4" /></button>}
             <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en MiOrdenGo" aria-label="Buscar en MiOrdenGo" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
             <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
@@ -1778,7 +1780,7 @@ export default function App() {
             })()}
           </>
           ); })()}
-        {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
+        {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} drawingSignal={drawingSignal} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} branding={branding} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} branding={branding} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
@@ -8424,7 +8426,7 @@ const WHITEBOARD_MAX_CANVAS_DIM = 3200;
 const WHITEBOARD_NOTE_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#E5E7EB"];
 
 /* ===================================== PIZARRA: GALERÍA DE NOTAS ===================================== */
-function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave, onDelete, onErr }) {
+function Whiteboard({ notes, projects, users, me, initialProjectId = "", drawingSignal = 0, onSave, onDelete, onErr }) {
   const canWrite = me.role !== "monitor_oficina";
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState(initialProjectId);
@@ -8438,6 +8440,10 @@ function Whiteboard({ notes, projects, users, me, initialProjectId = "", onSave,
   const visible = notes.filter((n) => (!query || `${n.title} ${n.content || ""}`.toLowerCase().includes(query.toLowerCase())) && (!projectFilter || n.projectId === projectFilter));
   const emptyNote = (type) => ({ type, title: "", content: "", color: WHITEBOARD_NOTE_COLORS[0], projectId: "", imageDataUrl: "" });
   const startNew = (kind) => setEditorMode({ kind, note: emptyNote(kind) });
+  // El lápiz de la barra superior abre el lienzo directo, sin pasar por el listado. Se usa una
+  // señal incremental —el mismo patrón que el botón flotante de otros módulos— porque el disparo
+  // viene de afuera del componente y tiene que poder repetirse.
+  useEffect(() => { if (drawingSignal > 0) startNew("drawing"); }, [drawingSignal]); // eslint-disable-line react-hooks/exhaustive-deps
   const startEdit = (note) => setEditorMode({ kind: note.type, note });
   const startDuplicate = (note) => setEditorMode({ kind: note.type, note: { ...note, id: undefined, _updatedAt: undefined, sharedWith: [], title: `${note.title || "Sin título"} (copia)` } });
 
