@@ -944,6 +944,11 @@ const buildSettingsPatch = (body, current = {}) => {
   if (body.emergencyContact !== undefined) patch.emergencyContact = String(body.emergencyContact || "").trim().slice(0, 80);
   if (body.emergencyPhone !== undefined) patch.emergencyPhone = String(body.emergencyPhone || "").trim().slice(0, 40);
   if (body.bloodType !== undefined) patch.bloodType = String(body.bloodType || "").trim().slice(0, 10);
+  // Alcance del cliente corporativo: a qué empresa pertenece y, opcionalmente, a qué planta. Define
+  // QUÉ VE, así que queda fuera de PROFILE_SELF_FIELDS: sólo administración puede asignarlo. Planta
+  // vacía significa "todas las plantas de esa empresa".
+  if (body.clientId !== undefined) patch.clientId = String(body.clientId || "").trim().slice(0, 60);
+  if (body.clientSite !== undefined) patch.clientSite = String(body.clientSite || "").trim().slice(0, 80);
   if (!Object.keys(patch).length) return null;
   const merged = { ...current, ...patch };
   // Token de verificación de la credencial. Lo genera el servidor la primera vez que se guarda una
@@ -1606,6 +1611,23 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     .filter((client) => !tec || operationalClientIds.has(client.id) || operationalClientNames.has(String(client.name || "").trim().toLowerCase()))
     .map((client) => clientForRole(client, req.user.role)).filter(Boolean);
   res.json({
+  // Órdenes para el cliente corporativo: sólo las de su empresa y, si tiene planta asignada, sólo
+  // las de esa planta. La serialización deja fuera todo el dinero y el costo interno —precios,
+  // materiales, horas facturables, márgenes—: es el mismo criterio que la audiencia "cliente" de
+  // los reportes. Recortar acá y no en la interfaz es lo que impide leerlo llamando la API a mano.
+  const clientScopeId = String(me.rows[0]?.settings?.clientId || "");
+  const clientScopeSite = String(me.rows[0]?.settings?.clientSite || "").trim().toLowerCase();
+  const clientOrders = !client || !clientScopeId ? [] : visibleOrderRows
+    .map((r) => r.data)
+    .filter((o) => (o.clientId === clientScopeId || String(o.client || "").trim() === clientScopeId)
+      && (!clientScopeSite || String(o.site || "").trim().toLowerCase() === clientScopeSite))
+    .map((o) => ({
+      id: o.id, date: o.date, status: o.status, service: o.service, equipment: o.equipment,
+      client: o.client, site: o.site, tech: o.tech, assignedTechs: o.assignedTechs || [],
+      technical: { solicitud: o.technical?.solicitud || "", trabajo: o.technical?.trabajo || "", resultado: o.technical?.resultado || "",
+        arrivalAt: o.technical?.arrivalAt || "", completedAt: o.technical?.completedAt || "" },
+      photos: o.photos || [], signatureUrl: o.signatureUrl || "", signedBy: o.signedBy || "",
+    }));
     me: pubUser(me.rows[0]),
     users: u.rows.map((user) => directoryUser(user, req.user.role)),
     clients: visibleClients,
@@ -1617,7 +1639,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
       const count = Array.isArray(attachments) ? attachments.length : (attachmentUrl ? 1 : 0);
       return { ...summary, hasAttachment: count > 0, attachmentCount: count, _updatedAt: r.updated_at };
     }),
-    orders: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.orders === false) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
+    orders: client ? clientOrders : (req.user.role === "tecnico_oficina" || isMonitor(req.user.role) || companyProfile.features.orders === false) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
     tasks: companyProfile.features.projects === false ? [] : ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: notifRows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: client ? [] : pa.rows.map((r) => partOut(r.data)),
