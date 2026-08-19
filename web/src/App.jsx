@@ -9027,7 +9027,20 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
         <div className="space-y-2">{users.map((u) => { const isViewer = u.role === "monitor_oficina"; const load = tasks.filter((t) => t.assignee === u.id && t.status !== "Hecho").length; const ords = orders.filter((o) => o.tech === u.name).length; return (
           <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
             <Avatar user={u} size={38} />
-            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-words text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}{u.role === "tecnico_oficina" && ` · ${projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)`}</div></div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-words text-xs text-slate-500">{u.email}</div>
+              {/* La carga va en su propia línea y como etiquetas: encadenada al correo con puntos
+                  medios, al envolver partía los conteos ("11 ta / rea(s)") y quedaba ilegible.
+                  Separada, cada dato se lee entero y se ve de un vistazo quién tiene trabajo. */}
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                {isViewer ? (<>
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Solo visualización</span>
+                  {u.settings?.tvModeEnabled && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">Modo TV activo</span>}
+                </>) : (<>
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${load ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-400"}`}>{load} tarea(s)</span>
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${ords ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-400"}`}>{ords} orden(es)</span>
+                  {u.role === "tecnico_oficina" && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)</span>}
+                </>)}
+              </div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select title="Define los módulos, datos y acciones que puede utilizar este usuario." value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} title={u.id === me.id ? "No podés desactivar tu propio usuario: quedarías sin acceso al sistema" : u.active ? "Desactivar: pierde el acceso, su historial se conserva" : "Reactivar el acceso de esta persona"} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
