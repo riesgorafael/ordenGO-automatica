@@ -5,7 +5,9 @@ export const LOGO_RATIO = 0.2609;
 
 // La marca del producto es fija. `branding.logoDataUrl` corresponde al logo
 // de la empresa usuaria y se muestra como una identidad secundaria.
-export const PRODUCT_LOGO = "/branding/ordengo-logo.webp";
+// Logo del producto en SVG: se dibuja nítido en cualquier tamaño y no depende de exportar
+// mapas de bits por resolución. El PNG queda como respaldo para los PDF, que no aceptan SVG.
+export const PRODUCT_LOGO = "/branding/miordengo-logo.svg";
 export const PRODUCT_LOGO_PNG = "/branding/ordengo-logo.png";
 export const PRODUCT_MARK_192 = "/branding/ordengo-mark-192.png";
 export const PRODUCT_MARK_512 = "/branding/ordengo-mark-512.png";

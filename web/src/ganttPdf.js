@@ -8,7 +8,7 @@
 
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo";
-import PRODUCT_MARK_DATA_URL from "./assets/ordengo-mark-192.png?inline";
+import { drawProductMark } from "./pdf.js";
 
 // Trunca de verdad con "…" hasta que entra en el ancho disponible — a diferencia de
 // splitTextToSize(...)[0], que envuelve por palabra y puede devolver una primera línea que
@@ -276,7 +276,7 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, br
   const pages = doc.getNumberOfPages();
   for (let page = 1; page <= pages; page++) {
     doc.setPage(page);
-    try { doc.addImage(PRODUCT_MARK_DATA_URL, "PNG", PAGE_W / 2 - 8, PAGE_H - 8, 3.6, 3.6); } catch {}
+    try { drawProductMark(doc, PAGE_W / 2 - 8, PAGE_H - 8, 3.6); } catch {}
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
     doc.text("MiOrdenGo", PAGE_W / 2 - 3, PAGE_H - 5.2);
   }

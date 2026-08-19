@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MiOrdenGo">
+  <rect width="512" height="512" rx="120" fill="#163B6B"/>
+  <g stroke-linecap="round" fill="none">
+    <path d="M150 250 H236 L330 156" stroke="#35BEE8" stroke-width="42"/>
+    <path d="M150 320 H286" stroke="#FFFFFF" stroke-width="42"/>
+    <path d="M150 386 H250" stroke="#FFFFFF" stroke-width="42"/>
+  </g>
+  <path d="M300 126 L392 112 L374 202 L348 172 L322 196 L282 156 L318 152 Z" fill="#35BEE8"/>
+</svg>

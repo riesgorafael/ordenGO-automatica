@@ -1,6 +1,25 @@
 import { jsPDF } from "jspdf";
 import { LOGO, LOGO_RATIO } from "./logo.js";
-import PRODUCT_MARK_DATA_URL from "./assets/ordengo-mark-192.png?inline";
+// El isotipo del pie se dibuja con primitivas vectoriales en vez de insertar un PNG: jsPDF no
+// admite SVG, y el símbolo son tres barras y una flecha, así que trazarlo sale nítido a cualquier
+// escala y evita arrastrar un mapa de bits que habría que reexportar con cada cambio de marca.
+export function drawProductMark(doc, x, y, size) {
+  const u = size / 512;
+  doc.setFillColor(22, 59, 107);
+  doc.roundedRect(x, y, size, size, 120 * u, 120 * u, "F");
+  doc.setLineCap("round");
+  doc.setLineWidth(42 * u);
+  doc.setDrawColor(53, 190, 232);
+  doc.line(x + 150 * u, y + 250 * u, x + 236 * u, y + 250 * u);
+  doc.line(x + 236 * u, y + 250 * u, x + 318 * u, y + 168 * u);
+  doc.setDrawColor(255, 255, 255);
+  doc.line(x + 150 * u, y + 320 * u, x + 286 * u, y + 320 * u);
+  doc.line(x + 150 * u, y + 386 * u, x + 250 * u, y + 386 * u);
+  doc.setLineWidth(0.2);
+  doc.setLineCap("butt");
+  doc.setFillColor(53, 190, 232);
+  doc.triangle(x + 300 * u, y + 130 * u, x + 380 * u, y + 116 * u, x + 356 * u, y + 196 * u, "F");
+}
 import { billableHoursValue } from "../../shared/domainRules.js";
 import { reportCompanyLines, reportCompanyProfile } from "../../shared/brandingRules.js";
 
@@ -88,7 +107,7 @@ function stampProductBranding(doc) {
   const pages = doc.getNumberOfPages();
   for (let page = 1; page <= pages; page++) {
     doc.setPage(page);
-    try { doc.addImage(PRODUCT_MARK_DATA_URL, "PNG", 94, 287.2, 3.6, 3.6); } catch {}
+    try { drawProductMark(doc, 94, 287.2, 3.6); } catch {}
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(14, 165, 197);
     doc.text("MiOrdenGo", 99, 290, { align: "left" });
   }
