@@ -1680,6 +1680,16 @@ export function projectStatusReportPDF({
 // centrada, y nombre / cargo / empresa centrados debajo. Los datos de emergencia NO van impresos,
 // sólo se ven al escanear. Colores y logo salen de la identidad visual de cada empresa: la app es
 // multiempresa y clavar una paleta dejaría a las demás con la marca ajena.
+// Formatos compartidos por las dos credenciales, para que un cambio no quede aplicado en una sola.
+// El DNI con separadores de miles es como figura en el documento y como lo lee cualquiera acá; el
+// número de tarjeta agrupado en dos bloques se puede dictar por teléfono y comparar a ojo sin
+// equivocarse, cosa que ocho caracteres hexadecimales seguidos no permiten.
+const MESES_LARGOS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const credentialDni = (value) => { const d = String(value || "").replace(/D/g, ""); return d ? d.replace(/B(?=(d{3})+(?!d))/g, ".") : ""; };
+const credentialCardId = (token) => { const raw = String(token || "").replace(/-/g, "").slice(0, 8).toUpperCase(); return raw ? `${raw.slice(0, 4)}-${raw.slice(4)}` : ""; };
+// Mes y año: lo que importa es hasta cuándo vale, no el día exacto.
+const credentialExpiry = () => `${MESES_LARGOS[11]} ${new Date().getFullYear()}`;
+
 // Credencial de acceso: una sola carilla, CR80 vertical (54 x 85,6 mm). Jerarquía de lectura en vez
 // de todo centrado: la foto grande y el nombre a su lado son lo que se ve a un metro; documento,
 // vencimiento y número quedan en cuerpo chico para leer de cerca. El rótulo "CREDENCIAL DE ACCESO"
@@ -1762,11 +1772,11 @@ export async function credentialPDF(user, branding = {}) {
   };
   // Las tres filas arrancan a la misma altura que el QR y terminan con él: así las dos columnas
   // del bloque inferior quedan alineadas arriba y abajo en vez de desfasadas por unos milímetros.
-  pair("Documento", s.documentId, M, 53);
+  pair("DNI", credentialDni(s.documentId), M, 53);
   pair("Teléfono", s.phone, M, 61.5);
   // Vencimiento automático al 31/12 del año en curso: no se carga por empleado para que ninguna
   // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina.
-  pair("Vence", `31 / Dic / ${new Date().getFullYear()}`, M, 70);
+  pair("Vence", credentialExpiry(), M, 70);
   const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
 
   const qrSide = 20, qrX = W - M - qrSide, qrY = 50.5;
@@ -1777,7 +1787,8 @@ export async function credentialPDF(user, branding = {}) {
       const qr = await QRCode.toDataURL(url, { margin: 0, width: 360, errorCorrectionLevel: "M" });
       doc.addImage(qr, "PNG", qrX, qrY, qrSide, qrSide, undefined, "FAST");
       doc.setFont("helvetica", "normal"); doc.setFontSize(4.4); doc.setTextColor(140, 149, 160);
-      doc.text(`N° ${cardId}`, qrX + qrSide / 2, qrY + qrSide + 3, { align: "center" });
+      doc.text(`N° ${credentialCardId(s.credentialToken)}`, qrX + qrSide / 2, qrY + qrSide + 2.6, { align: "center" });
+      doc.setFontSize(3.9); doc.text("Escaneá para verificar vigencia", qrX + qrSide / 2, qrY + qrSide + 5.6, { align: "center" });
     } catch {}
   }
 
@@ -1817,10 +1828,15 @@ export async function credentialCleanPDF(user, branding = {}) {
     doc.text(clip(company.name, W - M * 2), C, 11, { align: "center" });
   }
 
+  // Nombre de la empresa bajo el logo: un logo no identifica por sí solo. Quien no lo reconozca
+  // —un guardia de otra planta, quien la encuentre perdida— necesita leer de qué empresa es.
+  doc.setFont("helvetica", "bold"); doc.setFontSize(5); doc.setTextColor(120, 130, 145);
+  doc.text(clip(String(company.name).toUpperCase(), W - M * 2), C, 15.5, { align: "center", charSpace: 0.2 });
+
   // Foto centrada y grande: es el uso principal del espacio que libera el título.
   // 24 x 32 y arrancando en 15: con 27 x 36 desde 17, el nombre y el cargo llegaban a los 65 mm y
   // chocaban con el pie, que está anclado a los 64,6. El alto de la tarjeta no da para más foto.
-  const photoW = 24, photoH = 32, photoY = 15;
+  const photoW = 24, photoH = 32, photoY = 18;
   if (s.photoDataUrl) {
     try { doc.addImage(s.photoDataUrl, "JPEG", C - photoW / 2, photoY, photoW, photoH, undefined, "FAST"); } catch {}
   } else {
@@ -1831,7 +1847,7 @@ export async function credentialCleanPDF(user, branding = {}) {
   doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
   doc.roundedRect(C - photoW / 2, photoY, photoW, photoH, 1.5, 1.5, "S");
 
-  let y = photoY + photoH + 4;
+  let y = photoY + photoH + 3.5;
   let nameSize = 12, nameLines = [];
   for (; nameSize >= 7; nameSize -= 0.5) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
@@ -1858,6 +1874,9 @@ export async function credentialCleanPDF(user, branding = {}) {
       doc.addImage(qr, "PNG", M, qrY, qrSide, qrSide, undefined, "FAST");
     } catch {}
   }
+  doc.setFont("helvetica", "normal"); doc.setFontSize(3.6); doc.setTextColor(150, 158, 168);
+  doc.text("Escaneá para verificar", M + qrSide / 2, qrY + qrSide + 2.4, { align: "center" });
+  if (company.website) doc.text(String(company.website), W - M, H - 2, { align: "right" });
   const dx = M + qrSide + 4;
   const pair = (label, value, ty) => {
     if (!value) return;
@@ -1866,9 +1885,9 @@ export async function credentialCleanPDF(user, branding = {}) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(5.6); doc.setTextColor(...ink);
     doc.text(clip(value, W - dx - M), dx, ty + 3);
   };
-  pair("Documento", s.documentId, qrY + 1);
-  pair("Vence", `31 / Dic / ${new Date().getFullYear()}`, qrY + 7.5);
-  pair("Tarjeta N°", cardId, qrY + 14);
+  pair("DNI", credentialDni(s.documentId), qrY + 1);
+  pair("Vence", credentialExpiry(), qrY + 7.5);
+  pair("Tarjeta N°", credentialCardId(s.credentialToken), qrY + 14);
 
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
 }
