@@ -1680,6 +1680,11 @@ export function projectStatusReportPDF({
 // centrada, y nombre / cargo / empresa centrados debajo. Los datos de emergencia NO van impresos,
 // sólo se ven al escanear. Colores y logo salen de la identidad visual de cada empresa: la app es
 // multiempresa y clavar una paleta dejaría a las demás con la marca ajena.
+// Credencial de acceso: una sola carilla, CR80 vertical (54 x 85,6 mm). Jerarquía de lectura en vez
+// de todo centrado: la foto grande y el nombre a su lado son lo que se ve a un metro; documento,
+// vencimiento y número quedan en cuerpo chico para leer de cerca. El rótulo "CREDENCIAL DE ACCESO"
+// va al pie: ocupaba 11 mm arriba para decir algo que el formato ya dice.
+// Colores y logo salen de la identidad visual de cada empresa; la app es multiempresa.
 export async function credentialPDF(user, branding = {}) {
   const doc = new jsPDF({ unit: "mm", format: [54, 85.6], orientation: "portrait" });
   const W = 54, H = 85.6, M = 4;
@@ -1687,123 +1692,100 @@ export async function credentialPDF(user, branding = {}) {
   const ink = hexRgb(branding.headerColor || "#0B315F");
   const s = user?.settings || {};
   const company = companyProfile(branding);
-  const center = W / 2;
-  const clip = (text, width) => { const lines = doc.splitTextToSize(String(text), width); return lines[0] + (lines.length > 1 ? "…" : ""); };
+  const clip = (t, w) => { const l = doc.splitTextToSize(String(t), w); return l[0] + (l.length > 1 ? "…" : ""); };
 
-  /* ---------- Banda del título ---------- */
-  doc.setFillColor(...accent); doc.rect(0, 0, W, 11, "F");
-  // El texto de la banda se elige por contraste: una empresa con corporativo claro dejaría el
-  // blanco ilegible. Se usa la misma regla de luminancia que decide el acento de los reportes.
-  const bandInk = relativeLuminance(accent) > 0.5 ? [17, 24, 39] : [255, 255, 255];
-  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...bandInk);
-  doc.text("CREDENCIAL DE ACCESO", center, 7, { align: "center", charSpace: 0.2 });
-
-  /* ---------- Logo ---------- */
-  // Igual que en los reportes: en la organización Automática el logo no viene en logoDataUrl sino
-  // del incorporado. Caja fija con ajuste por proporción, para no deformar logos de otras formas.
+  /* ---------- Encabezado ---------- */
   const logoSource = branding.logoDataUrl || (branding.builtInCompanyLogo === "automatica" ? LOGO : "");
-  let y = 13.5;
   if (logoSource) {
+    // Caja fija con ajuste por proporción: los logos varían entre apaisados, cuadrados y verticales.
     let ratio = LOGO_RATIO;
     try { const p = doc.getImageProperties(logoSource); if (p?.width && p?.height) ratio = p.height / p.width; } catch {}
-    let lw = 24, lh = lw * ratio;
-    if (lh > 6) { lh = 6; lw = lh / ratio; }
-    try { doc.addImage(logoSource, "PNG", center - lw / 2, y, lw, lh, undefined, "FAST"); y += lh + 2; } catch { y += 2; }
+    let lw = 20, lh = lw * ratio;
+    if (lh > 6.5) { lh = 6.5; lw = lh / ratio; }
+    try { doc.addImage(logoSource, "PNG", M, 4.5, lw, lh, undefined, "FAST"); } catch {}
   } else {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...ink);
-    doc.text(clip(company.name, W - M * 2), center, y + 4, { align: "center" }); y += 8;
+    doc.text(clip(company.name, 24), M, 9);
   }
+  // Ficha de la empresa a la derecha, en cuerpo chico. Sale de la misma configuración que encabeza
+  // los reportes, así que un cambio de CUIT o de web se refleja en los dos lados.
+  doc.setFont("helvetica", "bold"); doc.setFontSize(4.4); doc.setTextColor(...ink);
+  doc.text(clip(company.name, 22), W - M, 6.5, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setTextColor(130, 139, 150);
+  if (company.cuit) doc.text(`CUIT ${company.cuit}`, W - M, 10, { align: "right" });
 
-  /* ---------- Foto ---------- */
-  const photoW = 18, photoH = 24; // 3:4, la proporción en que el cliente recorta la foto
-  // Foto y QR lado a lado, centrados como par: en vertical no entraban los dos, y así el QR no
-  // agrega altura porque es más bajo que la foto.
-  const qrSide = 18, gap = 4;
-  const px = center - (photoW + gap + qrSide) / 2;
-  const qrX = px + photoW + gap;
+  /* ---------- Foto y nombre ---------- */
+  const photoW = 23, photoH = 30.5, photoY = 15;
   if (s.photoDataUrl) {
-    try { doc.addImage(s.photoDataUrl, "JPEG", px, y, photoW, photoH, undefined, "FAST"); } catch {}
+    try { doc.addImage(s.photoDataUrl, "JPEG", M, photoY, photoW, photoH, undefined, "FAST"); } catch {}
   } else {
-    doc.setFillColor(233, 237, 241); doc.roundedRect(px, y, photoW, photoH, 1.5, 1.5, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(148, 163, 184);
-    doc.text("SIN FOTO", center, y + photoH / 2, { align: "center" });
+    doc.setFillColor(233, 237, 241); doc.roundedRect(M, photoY, photoW, photoH, 1.5, 1.5, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(160, 170, 182);
+    doc.text("SIN FOTO", M + photoW / 2, photoY + photoH / 2, { align: "center" });
   }
-  doc.setDrawColor(...accent); doc.setLineWidth(0.5);
-  doc.roundedRect(px, y, photoW, photoH, 1.5, 1.5, "S"); doc.setLineWidth(0.2);
+  // Hairline gris, el mismo de la línea que separa los datos: sólo delimita la foto, no compite.
+  doc.setDrawColor(227, 230, 234); doc.setLineWidth(0.2);
+  doc.roundedRect(M, photoY, photoW, photoH, 1.5, 1.5, "S");
+
+  const colX = M + photoW + 3.5, colW = W - M - colX;
+  // El nombre baja de cuerpo hasta entrar en dos líneas: la nómina tiene nombres de una palabra y
+  // de tres, y un tamaño fijo obligaría a cortar los largos.
+  let nameSize = 11, nameLines = [];
+  for (; nameSize >= 6.5; nameSize -= 0.5) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
+    nameLines = doc.splitTextToSize(String(user?.name || ""), colW);
+    if (nameLines.length <= 2) break;
+  }
+  let ny = photoY + 5;
+  doc.setTextColor(...ink);
+  nameLines.slice(0, 2).forEach((line) => { doc.text(line, colX, ny); ny += nameSize * 0.42; });
+  if (s.position) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(100, 110, 124);
+    doc.text(doc.splitTextToSize(String(s.position), colW).slice(0, 2), colX, ny + 1.5);
+    ny += 6;
+  }
+  // Único trazo en color de marca del cuerpo: subraya el nombre y ata la credencial a la identidad.
+  doc.setDrawColor(...accent); doc.setLineWidth(0.6);
+  doc.line(colX, ny + 2, colX + Math.min(colW, 16), ny + 2);
+  doc.setLineWidth(0.2);
+
+  /* ---------- Datos ---------- */
+  // Posiciones fijas ancladas al pie, no flujo vertical: dejándolo fluir, el bloque se pasaba del
+  // alto de la tarjeta y terminaba impreso encima del pie.
+  const bandY = H - 11;
+  const pair = (label, value, x, ty, labelW = 13) => {
+    if (!value) return;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(4.4); doc.setTextColor(140, 149, 160);
+    doc.text(String(label).toUpperCase(), x, ty);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...ink);
+    doc.text(clip(value, labelW + 9), x, ty + 3.4);
+  };
+  pair("Documento", s.documentId, M, 52);
+  pair("Teléfono", s.phone, M, 61);
+  // Vencimiento automático al 31/12 del año en curso: no se carga por empleado para que ninguna
+  // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina.
+  pair("Vence", `31 / Dic / ${new Date().getFullYear()}`, M, 70);
+  const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
+
+  const qrSide = 20, qrX = W - M - qrSide, qrY = 50;
   if (s.credentialToken) {
     try {
       const { default: QRCode } = await import("qrcode");
       const url = `${window.location.origin}/?credencial=${encodeURIComponent(s.credentialToken)}`;
       const qr = await QRCode.toDataURL(url, { margin: 0, width: 360, errorCorrectionLevel: "M" });
-      doc.addImage(qr, "PNG", qrX, y, qrSide, qrSide, undefined, "FAST");
-      doc.setFont("helvetica", "normal"); doc.setFontSize(4); doc.setTextColor(150, 158, 168);
-      doc.text("Escaneá para verificar", qrX + qrSide / 2, y + qrSide + 2.6, { align: "center" });
+      doc.addImage(qr, "PNG", qrX, qrY, qrSide, qrSide, undefined, "FAST");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(4.4); doc.setTextColor(140, 149, 160);
+      doc.text(`N° ${cardId}`, qrX + qrSide / 2, qrY + qrSide + 3, { align: "center" });
     } catch {}
   }
-  y += photoH + 5;
 
-  /* ---------- Identidad ---------- */
-  // El nombre baja de cuerpo por pasos hasta entrar en dos líneas: la nómina tiene nombres de una
-  // y de tres palabras, y un tamaño fijo obligaría a cortar los largos.
-  const fullName = String(user?.name || "");
-  let nameSize = 11, nameLines = [];
-  for (; nameSize >= 7; nameSize -= 0.5) {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(nameSize);
-    nameLines = doc.splitTextToSize(fullName, W - M * 2);
-    if (nameLines.length <= 2) break;
-  }
-  doc.setTextColor(...ink);
-  nameLines.slice(0, 2).forEach((line) => { doc.text(line, center, y, { align: "center" }); y += nameSize * 0.42; });
-  if (s.position) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(91, 100, 114);
-    doc.text(clip(s.position, W - M * 2), center, y + 1.5, { align: "center" }); y += 5;
-  }
-  doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(120, 130, 145);
-  doc.text(clip(String(company.name).toUpperCase(), W - M * 2), center, y + 0.5, { align: "center", charSpace: 0.2 });
-  y += 5;
-
-  /* ---------- Datos ---------- */
-  // Sólo documento y teléfono. Los de emergencia quedan fuera del impreso a pedido: se ven al
-  // escanear el QR, donde además se pueden cambiar sin reimprimir las credenciales.
-  const rows = [["Documento", s.documentId], ["Teléfono", s.phone]].filter(([, v]) => v);
-  // El recuadro se ancla sobre la línea del pie en lugar de seguir el flujo vertical. Dejándolo
-  // fluir, la suma de banda + logo + foto + tres textos se pasaba del alto de la tarjeta y el
-  // bloque terminaba impreso encima de VENCE y del sitio web.
-  const footLineY = H - 12.5;
-  if (rows.length) {
-    const boxH = rows.length * 4.4 + 3;
-    // min, no max: el recuadro se ancla al pie siempre. Con max, cuando el flujo de arriba bajaba
-    // más de lo previsto, la última fila terminaba cruzada por la línea divisoria.
-    const boxY = Math.min(y, footLineY - 3 - boxH);
-    doc.setFillColor(246, 248, 251); doc.roundedRect(M, boxY, W - M * 2, boxH, 1.5, 1.5, "F");
-    let ry = boxY + 4.2;
-    rows.forEach(([label, value]) => {
-      doc.setFont("helvetica", "normal"); doc.setFontSize(5.6); doc.setTextColor(120, 130, 145);
-      doc.text(`${label}:`, M + 2.5, ry);
-      doc.setFont("helvetica", "bold"); doc.setTextColor(...ink);
-      doc.text(clip(value, W - M * 2 - 20), M + 15, ry);
-      ry += 4.4;
-    });
-    // y ya no avanza: el pie tiene posición fija propia.
-  }
-
-  /* ---------- Vigencia ---------- */
-  // Vencimiento automático al 31/12 del año en curso: no se carga por empleado para que ninguna
-  // credencial quede sin fecha por olvido. Reemitir en enero renueva a toda la nómina de una vez.
-  const cardId = String(s.credentialToken || "").replace(/-/g, "").slice(0, 8).toUpperCase();
-  const footY = H - 8;
-  doc.setDrawColor(227, 230, 234); doc.line(M, footLineY, W - M, footLineY);
-  doc.setFontSize(5.4);
-  doc.setFont("helvetica", "bold"); doc.setTextColor(...ink); doc.text("VENCE:", M, footY);
-  doc.setFont("helvetica", "normal"); doc.setTextColor(91, 100, 114);
-  doc.text(`31 / Dic / ${new Date().getFullYear()}`, M + 14, footY);
-  if (cardId) {
-    doc.setFont("helvetica", "bold"); doc.setTextColor(...ink); doc.text("TARJETA N°:", M, footY + 3.8);
-    doc.setFont("helvetica", "normal"); doc.setTextColor(91, 100, 114); doc.text(cardId, M + 14, footY + 3.8);
-  }
+  /* ---------- Pie ---------- */
+  doc.setFillColor(244, 246, 248); doc.rect(0, bandY, W, H - bandY, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.setTextColor(100, 110, 124);
+  doc.text("CREDENCIAL DE ACCESO", W / 2, bandY + 4.5, { align: "center", charSpace: 0.3 });
   if (company.website) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(4.2); doc.setTextColor(160, 168, 178);
-    doc.text(String(company.website), center, H - 1.8, { align: "center" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(4.2); doc.setTextColor(150, 158, 168);
+    doc.text(String(company.website), W / 2, bandY + 8.2, { align: "center" });
   }
 
   doc.save(`credencial_${String(user?.name || "empleado").trim().replace(/\s+/g, "_").toLowerCase()}.pdf`);
