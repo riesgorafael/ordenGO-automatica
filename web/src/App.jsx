@@ -6840,7 +6840,7 @@ function OrderEditDialog({ order, clients, users, parts, budgets = [], projects 
             </div>
             <p className="mb-2 text-[11px] text-slate-500">Corregí acá la evidencia de la orden si al técnico se le pasó una foto o subió una que no corresponde.</p>
             {(form.photos || []).length > 0 && <div className="mb-2 flex flex-wrap gap-2">{form.photos.map((p, index) => (<div key={index} className="relative">{p.kind === "document" ? <div title={p.name} className="grid h-16 w-16 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" />}<span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span><button type="button" onClick={() => removeEditPhoto(index)} aria-label="Quitar foto" className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200 hover:bg-rose-50"><X className="h-3 w-3 text-slate-500 hover:text-rose-500" /></button></div>))}</div>}
-            <div className="grid grid-cols-3 gap-2"><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addEditPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" onPick={addEditPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addEditPhoto} /></div>
+            <div className="grid grid-cols-3 gap-2"><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addEditPhoto} /><PhotoBtn icon={Camera} label="Hallazgo" cat="hallazgo" onPick={addEditPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addEditPhoto} /></div>
             <p className="mt-1 text-[11px] text-slate-400">Foto, PDF, Excel o CSV · máx. 5 MB por archivo</p>
           </section>
 
@@ -7245,10 +7245,23 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
         {step === 1 && (
         <Section title="Documentación del trabajo">
           <ReqLabel>Fotos de evidencia (mínimo 1)</ReqLabel>
-          <div className={`grid grid-cols-3 gap-2 rounded-lg ${errCls(photos.length === 0)}`}><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Durante" cat="durante" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addPhoto} /></div>
+          <div className={`grid grid-cols-3 gap-2 rounded-lg ${errCls(photos.length === 0)}`}><PhotoBtn icon={Camera} label="Antes" cat="antes" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Después" cat="después" onPick={addPhoto} /><PhotoBtn icon={Camera} label="Hallazgo" cat="hallazgo" onPick={addPhoto} /></div>
           <p className="mt-1 text-[11px] text-slate-400">Foto, PDF, Excel o CSV · máx. 5 MB por archivo</p>
           {analyzing && <div className="mt-2 flex items-center gap-2 text-xs text-brand-700"><Loader2 className="h-4 w-4 animate-spin" /> Procesando archivo…</div>}
-          {photos.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{photos.map((p, i) => (<div key={i} className="relative">{p.kind === "document" ? <div title={p.name} className="grid h-14 w-14 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" />}<span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span><button onClick={() => setPhotos((x) => x.filter((_, j) => j !== i))} className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200"><X className="h-3 w-3 text-slate-500" /></button></div>))}</div>}
+          {/* Cada adjunto lleva su epígrafe: es lo que convierte una foto suelta en una constancia
+              legible para el cliente ("filtro saturado", "borne flojo en bornera 3"). Va al lado de
+              la miniatura y no en un diálogo aparte para que se escriba en el momento de sacarla. */}
+          {photos.length > 0 && <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">{photos.map((p, i) => (
+            <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2">
+              <div className="relative shrink-0">
+                {p.kind === "document" ? <div title={p.name} className="grid h-14 w-14 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" />}
+                <span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span>
+              </div>
+              <input value={p.caption || ""} onChange={(e) => setPhotos((x) => x.map((item, j) => j === i ? { ...item, caption: e.target.value } : item))}
+                placeholder="Epígrafe (opcional)" maxLength={120} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
+              <button onClick={() => setPhotos((x) => x.filter((_, j) => j !== i))} aria-label="Quitar adjunto" className="shrink-0 rounded-full bg-white p-1 text-slate-500 shadow ring-1 ring-slate-200"><X className="h-3 w-3" /></button>
+            </div>
+          ))}</div>}
           {category && <div className="mt-2"><Chip className="bg-brand-50 text-brand-700 ring-brand-600/20"><Sparkles className="h-3 w-3" />{category}</Chip></div>}
           <ReqLabel>Síntoma</ReqLabel>
           <div className="mt-1 flex gap-1.5"><input value={sintoma} onChange={(e) => setSintoma(e.target.value)} placeholder={profile.symptom} className={`u-input ${errCls(!sintoma.trim())}`} /><MicButton value={sintoma} onChange={setSintoma} /></div>
