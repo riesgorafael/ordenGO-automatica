@@ -9013,6 +9013,9 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
   const [nf, setNf] = useState({ name: "", role: "tecnico", email: "", password: "", screenName: "" });
   const [passwordUser, setPasswordUser] = useState(null);
   const [fichaUser, setFichaUser] = useState(null);
+  // Menú de credenciales abierto, por empleado. Un solo botón con submenú en vez de un icono por
+  // diseño: con dos ya confundía en la fila, y con tres sería ilegible.
+  const [credentialFor, setCredentialFor] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [tvScreenUser, setTvScreenUser] = useState(null);
   const [userProjectsFor, setUserProjectsFor] = useState(null);
@@ -9027,11 +9030,21 @@ function Team({ users, tasks, orders, projects = [], me, branding = {}, companyP
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><EditableName user={u} onRename={(name) => wrap(onPatch)(u.id, { name })} />{u.id === me.id && <span className="text-[11px] text-slate-400">(tú)</span>}{isViewer && u.settings?.screenName && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{u.settings.screenName}</span>}</div><div className="break-all text-xs text-slate-500">{u.email}{isViewer ? ` · Solo visualización${u.settings?.tvModeEnabled ? " · Modo TV activo" : ""}` : ` · ${load} tarea(s) · ${ords} orden(es)`}{u.role === "tecnico_oficina" && ` · ${projects.filter((p) => (p.allowedUsers || []).includes(u.id)).length} proyecto(s)`}</div></div>
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-2 sm:w-auto sm:border-0 sm:pt-0">
               <select title="Define los módulos, datos y acciones que puede utilizar este usuario." value={u.role} onChange={(e) => wrap(onPatch)(u.id, { role: e.target.value })} disabled={u.id === me.id} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs disabled:opacity-60 sm:flex-none">{Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-              <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
+              <button onClick={() => wrap(onPatch)(u.id, { active: !u.active })} disabled={u.id === me.id} title={u.id === me.id ? "No podés desactivar tu propio usuario: quedarías sin acceso al sistema" : u.active ? "Desactivar: pierde el acceso, su historial se conserva" : "Reactivar el acceso de esta persona"} className={`min-h-9 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 ${u.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{u.active ? "Activo" : "Inactivo"}</button>
               {isViewer && <button onClick={() => setTvScreenUser(u)} title="Configurar pantalla TV" aria-label={`Configurar pantalla TV de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Maximize2 className="h-4 w-4" /></button>}
               {u.role === "tecnico_oficina" && <button onClick={() => setUserProjectsFor(u)} title="Asociar a proyectos" aria-label={`Asociar proyectos a ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Folder className="h-4 w-4" /></button>}
-              <button onClick={async () => { try { const { credentialCleanPDF } = await pdfModule(); await credentialCleanPDF(u, branding); } catch (e) { onErr(e); } }} title="Descargar credencial · diseño limpio centrado (PDF)" aria-label={`Descargar credencial limpia de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Sparkles className="h-4 w-4" /></button>
-              <button onClick={async () => { try { const { credentialPDF } = await pdfModule(); await credentialPDF(u, branding); } catch (e) { onErr(e); } }} title="Descargar credencial · diseño con foto lateral (PDF)" aria-label={`Descargar credencial de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Briefcase className="h-4 w-4" /></button>
+              <div className="relative">
+                <button onClick={() => setCredentialFor(credentialFor === u.id ? null : u.id)} title="Descargar credencial de acceso" aria-label={`Descargar credencial de ${u.name}`} aria-expanded={credentialFor === u.id} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><Briefcase className="h-4 w-4" /></button>
+                {credentialFor === u.id && <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                  <div className="border-b border-slate-100 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Elegí el diseño</div>
+                  {[["credentialPDF", "Foto lateral", "Foto a la izquierda y nombre al lado"], ["credentialCleanPDF", "Centrado", "Logo, foto y nombre centrados"]].map(([fn, label, hint]) => (
+                    <button key={fn} onClick={async () => { setCredentialFor(null); try { const mod = await pdfModule(); await mod[fn](u, branding); } catch (e) { onErr(e); } }} className="block w-full px-3 py-2 text-left hover:bg-slate-50">
+                      <span className="block text-sm font-medium text-slate-700">{label}</span>
+                      <span className="block text-[11px] text-slate-400">{hint}</span>
+                    </button>
+                  ))}
+                </div>}
+              </div>
               <button onClick={() => setFichaUser(u)} title="Editar ficha y foto" aria-label={`Editar ficha de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><FileText className="h-4 w-4" /></button>
               <button onClick={() => setPasswordUser(u)} title="Restablecer contraseña" aria-label={`Restablecer contraseña de ${u.name}`} className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-brand-50 hover:text-brand-600"><KeyRound className="h-4 w-4" /></button>
               <button onClick={() => setPendingDelete(u)} disabled={u.id === me.id} title="Eliminar empleado" aria-label="Eliminar empleado" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
