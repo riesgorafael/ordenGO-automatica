@@ -1957,7 +1957,17 @@ export function deliveryNotePDF(note, branding = {}) {
   const ink = hexRgb(branding.headerColor || "#0B315F");
   const company = companyProfile(branding);
 
-  drawCompanyHeader(doc, branding, M);
+  // Membrete propio del remito, no el genérico de los reportes: no repite el nombre de la empresa
+  // —el logo ya lo dice— y pone la localidad en renglón aparte, como en un papel membretado.
+  drawLogo(doc, M, 12, branding);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(110, 120, 132);
+  [
+    company.cuit ? `CUIT: ${company.cuit}` : "",
+    company.address,
+    company.locality,
+    company.phone,
+    company.website,
+  ].filter(Boolean).slice(0, 5).forEach((line, index) => doc.text(line, M, 30 + index * 3.6));
   doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...ink);
   doc.text("REMITO DE TRABAJO", W - M, 16, { align: "right" });
   doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...accent);

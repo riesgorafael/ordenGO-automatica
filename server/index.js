@@ -1,8 +1,4 @@
-      // Cantidad y unidad quedan vacías si no se cargaron: hay renglones que son conceptos
-      // —"Entrega documental de planimetría"— y no cosas contables. Forzar "0 u" imprimía una
-      // cantidad falsa en el remito que el cliente firma.
-      qty: String(item.qty || "").trim() === "" ? "" : Math.max(0, Math.min(99999, Number(item.qty) || 0)),
-      unit: text(item.unit, 12),import express from "express";
+import express from "express";
 import "express-async-errors";
 import cors from "cors";
 import compression from "compression";
@@ -148,6 +144,7 @@ const DEFAULT_BRANDING = {
   companyLegalName: "",
   companyIvaCondition: "",
   companyAddress: "",
+  companyLocality: "",
   companyPhone: "",
   companyEmail: "",
   companyWebsite: "",
@@ -217,6 +214,9 @@ const normalizeBranding = (value = {}) => ({
   companyLegalName: String(value.companyLegalName || "").trim().slice(0, 120),
   companyIvaCondition: IVA_CONDITIONS.includes(value.companyIvaCondition) ? value.companyIvaCondition : "",
   companyAddress: String(value.companyAddress || "").trim().slice(0, 160),
+  // Localidad en renglón propio: el membrete la muestra debajo de la calle, como en un papel
+  // membretado. Antes había que meterla dentro de la dirección y quedaba todo en una línea larga.
+  companyLocality: String(value.companyLocality || "").trim().slice(0, 120),
   companyPhone: String(value.companyPhone || "").trim().slice(0, 40),
   companyEmail: String(value.companyEmail || "").trim().slice(0, 120),
   companyWebsite: String(value.companyWebsite || "").trim().slice(0, 160),
