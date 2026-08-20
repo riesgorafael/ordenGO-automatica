@@ -283,7 +283,8 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, br
     const markW = doc.getTextWidth("MiOrdenGo");
     doc.setFont("helvetica", "normal"); doc.setFontSize(5.2); doc.setTextColor(150, 158, 168);
     // Sin "www.": ese subdominio no resuelve; el dominio raíz sí.
-    doc.text("miordengo.com", PAGE_W / 2 - 3 + markW + 1.8, PAGE_H - 5.2);
+    // Texto con "www." pero destino al dominio raíz, que es el que resuelve.
+    doc.textWithLink("www.miordengo.com", PAGE_W / 2 - 3 + markW + 1.8, PAGE_H - 5.2, { url: "https://miordengo.com/" });
   }
   doc.save(fileName || `Gantt_${projectName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }

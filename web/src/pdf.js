@@ -115,7 +115,10 @@ function stampProductBranding(doc) {
     doc.setFont("helvetica", "normal"); doc.setFontSize(5.2);
     doc.setTextColor(150, 158, 168);
     // Sin "www.": ese subdominio no está configurado en el DNS y el enlace del pie daba 404.
-    doc.text("miordengo.com", 99 + markW + 1.8, 290, { align: "left" });
+    // Se muestra con "www." pero el enlace apunta al dominio raíz, que es el que resuelve: el
+    // subdominio www no está configurado en el DNS y daba 404. Y va como textWithLink porque, sin
+    // un destino con protocolo, el visor de PDF interpreta el texto como una ruta de archivo local.
+    doc.textWithLink("www.miordengo.com", 99 + markW + 1.8, 290, { url: "https://miordengo.com/" });
   }
   doc.setPage(Math.min(currentPage, pages));
 }
