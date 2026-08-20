@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
 import { LOGO, LOGO_LIGHT } from "./logo";
+import { LANGUAGES, detectLanguage, saveLanguage, translator } from "./i18n";
 const pdfModule = () => import("./pdf");
 let REPORT_BRANDING = {};
 const withReportBranding = (args, expected) => args.length >= expected ? args : [...args, REPORT_BRANDING];
@@ -887,6 +888,7 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   // Señal para abrir el lienzo de dibujo desde la barra superior, fuera del módulo de Notas.
   const [drawingSignal, setDrawingSignal] = useState(0);
+// Idioma de la interfaz. Arranca por la configuración del sistema y queda fijado si el usuario  // elige uno: la preferencia explícita gana sobre la detección automática.  const [lang, setLang] = useState(detectLanguage);  const t = useMemo(() => translator(lang), [lang]);  const changeLanguage = useCallback((next) => { setLang(next); saveLanguage(next); }, []);  // El atributo lang del documento importa para lectores de pantalla y para la corrección  // ortográfica del navegador, que si no asume el idioma equivocado en todos los campos de texto.  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
@@ -1239,7 +1241,7 @@ export default function App() {
       <button onClick={() => { setBooting(true); void runBoot(); }} className="mt-4 w-full rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400">Reintentar</button>
     </div>
   </div>;
-  if (!me) return <Login branding={branding} onLogin={async (email, password) => { await api.login(email, password); setToken(true); await boot(); }} />;
+  if (!me) return <Login branding={branding} t={t} lang={lang} onChangeLanguage={changeLanguage} onLogin={async (email, password) => { await api.login(email, password); setToken(true); await boot(); }} />;
 
   const isMgr = me.role === "admin" || me.role === "gerente";
   const isAdmin = me.role === "admin";
@@ -1977,7 +1979,7 @@ export default function App() {
 
 /* ===================================== LOGIN ===================================== */
 const LAST_EMAIL_KEY = "og_last_email";
-function Login({ branding = DEFAULT_BRANDING, onLogin }) {
+function Login({ branding = DEFAULT_BRANDING, t = (text) => text, lang = "es", onChangeLanguage, onLogin }) {
   const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_KEY) || ""); const [pass, setPass] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState(null); const [busy, setBusy] = useState(false);
@@ -1988,14 +1990,24 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
     catch (e) { setErr({ message: e?.message || "No se pudo iniciar sesión", locked: e?.status === 429 }); setBusy(false); }
   };
   const bullets = [
-    { text: "Órdenes, proyectos y finanzas en un único flujo", icon: ClipboardList },
-    { text: "Seguimiento en tiempo real con trazabilidad completa", icon: Activity },
+    { text: t("Órdenes, proyectos y finanzas en un único flujo"), icon: ClipboardList },
+    { text: t("Seguimiento en tiempo real con trazabilidad completa"), icon: Activity },
     // Sin icono a propósito. El componente omite el recuadro cuando no hay uno, así la viñeta no
     // queda con un hueco donde antes iba la llave.
-    { text: "Acceso seguro según empresa, proyecto y rol" },
+    { text: t("Acceso seguro según empresa, proyecto y rol") },
   ];
   return (
-    <div className="grid min-h-screen grid-cols-1 bg-gradient-to-br from-slate-50 via-white to-cyan-50 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
+    <div className="relative grid min-h-screen grid-cols-1 bg-gradient-to-br from-slate-50 via-white to-cyan-50 lg:grid-cols-2" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
+      {/* Selector de idioma, flotante sobre la esquina superior derecha. El idioma ya se detecta
+          solo desde el sistema operativo; esto es para quien quiera forzar el otro — un equipo con
+          Windows en inglés compartido por gente que trabaja en castellano, por ejemplo. La elección
+          queda guardada y desde entonces pisa a la detección automática. */}
+      <div className="absolute right-3 top-3 z-10 flex gap-1 rounded-lg bg-white/70 p-0.5 shadow-sm ring-1 ring-slate-200 backdrop-blur">
+        {LANGUAGES.map((option) => (
+          <button key={option.id} onClick={() => onChangeLanguage?.(option.id)} aria-pressed={lang === option.id} title={option.label}
+            className={`rounded-md px-2 py-1 text-[11px] font-semibold ${lang === option.id ? "bg-brand-500 text-white" : "text-slate-500 hover:text-slate-700"}`}>{option.short}</button>
+        ))}
+      </div>
       {/* Panel de marca */}
       <div className="relative hidden overflow-hidden bg-[#07182E] lg:block">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(14,165,197,0.18),transparent_32%),linear-gradient(145deg,#07182E_0%,#0B315F_58%,#07182E_100%)]" />
@@ -2004,12 +2016,12 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
         <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 bg-cyan-400/10 blur-3xl" />
         <div className="relative flex h-full flex-col justify-center px-14 xl:px-20">
           <div className="mb-8 flex w-fit items-center rounded-2xl bg-white px-4 py-3 shadow-xl shadow-cyan-950/30 ring-1 ring-cyan-200/20"><ProductLogo className="h-14 w-auto max-w-80 object-contain" /></div>
-          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">Vos dirigís. Nosotros ordenamos.</h1>
+          <h1 className="max-w-md text-4xl font-bold leading-tight text-white xl:text-5xl">{t("Vos dirigís. Nosotros ordenamos.")}</h1>
           {/* Definición fija, no branding.subtitle: ese campo alimenta el título de la pestaña, donde
               una línea larga no entra. Tampoco repite lo de los bullets de abajo (órdenes, proyectos,
               trazabilidad, acceso seguro): antes los adelantaba y el bloque entero sonaba a relleno. */}
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">Software de gestión para empresas de servicios técnicos.</p>
-          <div className="mt-8 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">Una sola plataforma para</div>
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">{t("Software de gestión para empresas de servicios técnicos.")}</p>
+          <div className="mt-8 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">{t("Una sola plataforma para")}</div>
           <ul className="mt-3 space-y-2.5">
             {bullets.map(({ text, icon: Icon }) => (<li key={text} className="flex items-center gap-3 rounded-xl border border-cyan-200/10 bg-white/[0.035] px-3 py-2.5 text-sm text-slate-100">{Icon && <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><Icon className="h-4 w-4" /></span>}<span className="leading-snug">{text}</span></li>))}
           </ul>
@@ -2018,7 +2030,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
               Va con contacto porque también funciona como puerta de entrada comercial: quien vea
               la aplicación en casa de un cliente y la quiera para su empresa, sabe a dónde escribir. */}
           <div className="mt-10 border-t border-cyan-200/10 pt-4 text-[11px] leading-relaxed text-slate-400">
-            Desarrollado por <a href="https://www.automatica-arg.com.ar" target="_blank" rel="noreferrer" className="font-medium text-slate-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Automatica ARG</a>
+            {t("Desarrollado por")} <a href="https://www.automatica-arg.com.ar" target="_blank" rel="noreferrer" className="font-medium text-slate-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Automatica ARG</a>
             <span className="mx-1.5 text-slate-600">·</span>
             <a href="mailto:info@automatica-arg.com.ar" className="hover:text-slate-200">info@automatica-arg.com.ar</a>
           </div>
@@ -2032,11 +2044,11 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
           <div className="login-card overflow-hidden rounded-3xl shadow-2xl shadow-[#0B315F]/15">
             <div className="h-1 bg-gradient-to-r from-[#0B315F] via-[#0EA5C5] to-[#20C4DE]" />
             <div className="p-6 sm:p-8">
-              <div className="mb-5 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100"><KeyRound className="h-5 w-5" /></span><div><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-600">Acceso seguro</div><h2 className="text-2xl font-bold leading-tight text-slate-900">Iniciar sesión</h2><p className="mt-1 text-sm text-slate-500">Accedé a tu espacio de trabajo.</p></div></div>
+              <div className="mb-5 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100"><KeyRound className="h-5 w-5" /></span><div><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-600">{t("Acceso seguro")}</div><h2 className="text-2xl font-bold leading-tight text-slate-900">{t("Iniciar sesión")}</h2><p className="mt-1 text-sm text-slate-500">{t("Accedé a tu espacio de trabajo.")}</p></div></div>
               <div className="space-y-4">
-                <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">Correo electrónico</span>
+                <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">{t("Correo electrónico")}</span>
                   <div className="relative"><Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type="email" autoFocus autoComplete="email" placeholder="correo@empresa.com" className="login-field w-full rounded-xl py-3 pl-10 pr-3 text-sm text-slate-900 outline-none" /></div></label>
-                <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">Contraseña</span>
+                <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">{t("Contraseña")}</span>
                   <div className="relative">
                     <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} type={show ? "text" : "password"} autoComplete="current-password" placeholder="••••••••••" className="login-field w-full rounded-xl py-3 pl-10 pr-20 text-sm text-slate-900 outline-none" />
                     <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">{show ? "Ocultar" : "Mostrar"}</button>
@@ -2059,7 +2071,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
                 {/* Más corto y con la acción concreta: "contactá" no dice qué pedir, y el texto
                     anterior envolvía dejando "empresa." sola en el segundo renglón. El balance
                     equilibra el corte de línea en vez de dejar una palabra huérfana. */}
-                <p className="text-balance text-center text-[11px] leading-relaxed text-slate-400">¿Olvidaste tu contraseña? Pedile al administrador que la restablezca.</p>
+                <p className="text-balance text-center text-[11px] leading-relaxed text-slate-400">{t("¿Olvidaste tu contraseña? Pedile al administrador que la restablezca.")}</p>
               </div>
             </div>
           </div>
@@ -7571,14 +7583,14 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           {/* Cada adjunto lleva su epígrafe: es lo que convierte una foto suelta en una constancia
               legible para el cliente ("filtro saturado", "borne flojo en bornera 3"). Va al lado de
               la miniatura y no en un diálogo aparte para que se escriba en el momento de sacarla. */}
-          {photos.length > 0 && <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">{photos.map((p, i) => (
+          {photos.length > 0 && <div className="mt-2 space-y-2">{photos.map((p, i) => (
             <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2">
               <div className="relative shrink-0">
                 {p.kind === "document" ? <div title={p.name} className="grid h-14 w-14 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200"><FileText className="h-6 w-6 text-slate-500" /></div> : <img src={p.preview || p.url} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" />}
                 <span className="absolute bottom-0 left-0 right-0 rounded-b-lg bg-black/50 text-center text-[9px] text-white">{p.cat}</span>
               </div>
-              <input value={p.caption || ""} onChange={(e) => setPhotos((x) => x.map((item, j) => j === i ? { ...item, caption: e.target.value } : item))}
-                placeholder="Epígrafe (opcional)" maxLength={120} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
+              <input value={p.caption || ""} aria-label="Detalle de la foto" onChange={(e) => setPhotos((x) => x.map((item, j) => j === i ? { ...item, caption: e.target.value } : item))}
+                placeholder="Qué muestra la foto — ej. filtro saturado, borne flojo" maxLength={120} className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
               <button onClick={() => setPhotos((x) => x.filter((_, j) => j !== i))} aria-label="Quitar adjunto" className="shrink-0 rounded-full bg-white p-1 text-slate-500 shadow ring-1 ring-slate-200"><X className="h-3 w-3" /></button>
             </div>
           ))}</div>}
