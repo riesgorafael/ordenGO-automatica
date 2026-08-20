@@ -1597,6 +1597,13 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   const visibleProjects = allProjects.filter(canSeeProject);
   const allowedProjectIds = new Set(visibleProjects.map((p) => p.id));
   const visibleOrderRows = or.rows.filter((row) => !row.data.archivedAt && orderVisibleToUser(req.user, row.data));
+  // Tareas con un comentario que alguien todavía no leyó. Se calcula sobre las notificaciones, que
+  // ya registran el estado de lectura por persona: mientras quede una sin leer, el aviso sigue
+  // visible para todos; cuando el último la abre, desaparece solo. Es a nivel equipo y no personal
+  // a propósito: lo pedido es que el aviso dure hasta que todos lo hayan visto.
+  const pendingCommentTaskIds = new Set(
+    (await pool.query("SELECT DISTINCT link FROM notifications WHERE read=false AND link LIKE 'task:%'")).rows
+      .map((row) => String(row.link).slice(5)));
   const operationalClientIds = new Set(visibleProjects.map((project) => project.clientId).filter(Boolean));
   const operationalClientNames = new Set(visibleProjects.map((project) => String(project.client || "").trim().toLowerCase()).filter(Boolean));
   for (const row of visibleOrderRows) {
@@ -1640,7 +1647,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
       return { ...summary, hasAttachment: count > 0, attachmentCount: count, _updatedAt: r.updated_at };
     }),
     orders: client ? clientOrders : (req.user.role === "tecnico_oficina" || isMonitor(req.user.role) || companyProfile.features.orders === false) ? [] : visibleOrderRows.map((r) => ({ ...(tec ? stripMoney(r.data) : r.data), _updatedAt: r.updated_at })),
-    tasks: companyProfile.features.projects === false ? [] : ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
+    tasks: companyProfile.features.projects === false ? [] : ta.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at, _unreadComment: pendingCommentTaskIds.has(r.id) })).filter((t) => !scoped || allowedProjectIds.has(t.project)),
     notifications: notifRows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })),
     parts: client ? [] : pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || client || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
@@ -3410,7 +3417,12 @@ app.get("/api/tasks", auth, async (req, res) => {
   const { rows } = since
     ? await pool.query("SELECT data, updated_at FROM tasks WHERE updated_at>$1 AND organization_id=$2 ORDER BY updated_at", [since.toISOString(), req.user.organizationId])
     : await pool.query("SELECT data, updated_at FROM tasks WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
-  const tasks = rows.map((row) => ({ ...row.data, _updatedAt: row.updated_at }));
+  // Mismo cálculo que en /api/bootstrap: sin esto, el aviso de comentario nuevo quedaría congelado
+  // en el estado que tenía al abrir la app y no se apagaría al leerlo el resto del equipo.
+  const pendingCommentTaskIds = new Set(
+    (await pool.query("SELECT DISTINCT link FROM notifications WHERE read=false AND link LIKE 'task:%'")).rows
+      .map((row) => String(row.link).slice(5)));
+  const tasks = rows.map((row) => ({ ...row.data, _updatedAt: row.updated_at, _unreadComment: pendingCommentTaskIds.has(row.data?.id) }));
   // Igual que en /api/bootstrap: técnicos (campo u oficina) y monitores solo ven tareas de los
   // proyectos que el administrador les habilitó explícitamente (allowedUsers).
   if (!isProjectScoped(req.user.role)) return res.json(tasks);

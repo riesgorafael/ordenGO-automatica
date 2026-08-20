@@ -7430,12 +7430,12 @@ function TaskColumn({ status, tasks, projects = [], userById, onOpen, onMove, on
           const comments = (task.activity || []).filter((entry) => entry.type === "comment");
           if (!comments.length) return null;
           const last = comments[comments.length - 1];
-          // Un comentario de menos de 48 h se muestra como aviso, no como contador: es el que
-          // todavía nadie leyó o al que hay que responder. Pasado ese plazo baja a un número
-          // discreto, para que el tablero no quede lleno de avisos permanentes.
-          const isFresh = last.at && Date.now() - new Date(last.at).getTime() < 48 * 3600 * 1000;
+          // El aviso destacado dura mientras alguien del equipo tenga la notificación sin leer, dato
+          // que calcula el servidor sobre las notificaciones (_unreadComment). Cuando la última
+          // persona la abre, la tarjeta baja sola a contador. No se usa un plazo fijo porque
+          // "todos ya lo vieron" y "pasaron dos días" no son lo mismo.
           const detail = `${last.byName || "Alguien"} · ${String(last.text || "").slice(0, 80)}`;
-          return isFresh
+          return task._unreadComment
             ? <Chip className="shrink-0 whitespace-nowrap bg-sky-600 font-semibold text-white ring-sky-700/20" title={detail}><MessageSquare className="h-3 w-3" />Nuevo comentario</Chip>
             : <Chip className="shrink-0 whitespace-nowrap bg-sky-50 text-sky-700 ring-sky-600/20" title={detail}><MessageSquare className="h-3 w-3" />{comments.length}</Chip>;
         })()}</div><h4 className="mt-1.5 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{task.id}</span>{task.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{dueLabel(task.due)}</span>}{task.status !== "Hecho" && task._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "Actualizada hoy" : `Hace ${age}d`}</span>}</div></button>
