@@ -391,3 +391,15 @@ body.dialog-open .mobile-bottom-bar {
   }
   .tv-cycle-progress { width: 100%; }
 }
+
+/* Descripción de tarea con formato. El placeholder se dibuja con ::before porque un contenteditable
+   no tiene atributo placeholder propio, y las listas necesitan sus marcadores explícitos: el reset
+   de Tailwind se los quita a ul y ol. */
+.rich-text:empty::before {
+  content: attr(data-placeholder);
+  color: rgb(148 163 184);
+  pointer-events: none;
+}
+.rich-text ul { list-style: disc; padding-left: 1.25rem; }
+.rich-text ol { list-style: decimal; padding-left: 1.25rem; }
+.rich-text b, .rich-text strong { font-weight: 600; }

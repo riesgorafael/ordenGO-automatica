@@ -308,6 +308,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS suppliers ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS purchase_orders ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS material_lists ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS delivery_notes ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS whiteboard_notes ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS stock_movements (
       id text PRIMARY KEY, part_id text NOT NULL REFERENCES parts(id) ON DELETE RESTRICT,
@@ -343,7 +344,7 @@ async function initDb() {
       VALUES('org-automatica','automatica','AUTOMATICA ARG',$1)
       ON CONFLICT(id) DO NOTHING
   `, [DEFAULT_COMPANY_PROFILE]);
-  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
+  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
   for (const table of tenantTables) {
     await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS organization_id text DEFAULT '${DEFAULT_ORGANIZATION_ID}'; UPDATE ${table} SET organization_id='${DEFAULT_ORGANIZATION_ID}' WHERE organization_id IS NULL; ALTER TABLE ${table} ALTER COLUMN organization_id SET NOT NULL;`);
     await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='${table}_organization_fk') THEN ALTER TABLE ${table} ADD CONSTRAINT ${table}_organization_fk FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;`);
@@ -559,7 +560,7 @@ async function initDb() {
   `);
   const tenantEntityTables = [
     "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications",
-    "parts", "suppliers", "purchase_orders", "material_lists", "whiteboard_notes", "stock_movements",
+    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "whiteboard_notes", "stock_movements",
     "audit_log", "file_assets", "gantt_tasks",
   ];
   for (const table of tenantEntityTables) {
@@ -966,6 +967,35 @@ const directoryUser = (u, viewerRole) => viewerRole === "admin" ? pubUser(u) : (
   id: u.id, name: u.name, role: u.role, color: u.color, active: u.active,
   settings: { photoDataUrl: u.settings?.photoDataUrl || "", position: u.settings?.position || "" },
 });
+// Saneador del texto con formato de las descripciones. Se guarda HTML porque es lo que produce un
+// editor de texto enriquecido, y HTML sin filtrar guardado en base y devuelto al navegador es una
+// vía directa de inyección: bastaría con escribir una etiqueta de script en una descripción para
+// que se ejecutara en la sesión de cualquiera que abra esa tarea.
+//
+// El criterio es lista blanca, no lista negra: se descarta todo salvo las etiquetas de formato
+// permitidas, y de los atributos sólo sobrevive un color. Cualquier cosa no contemplada —scripts,
+// iframes, enlaces, eventos onclick, estilos con url()— se elimina en lugar de intentar corregirla.
+const RICH_TEXT_TAGS = new Set(["b", "strong", "i", "em", "u", "s", "br", "p", "ul", "ol", "li", "span"]);
+const sanitizeRichText = (value) => {
+  const raw = String(value || "");
+  if (!raw) return "";
+  // Se quitan primero los bloques cuyo contenido también es peligroso, no sólo su etiqueta.
+  let html = raw.replace(/<(script|style|iframe|object|embed)[\s\S]*?<\/\1>/gi, "");
+  html = html.replace(/<[^>]*>/g, (tag) => {
+    const match = /^<\s*(\/?)\s*([a-zA-Z0-9]+)([\s\S]*)>$/.exec(tag);
+    if (!match) return "";
+    const [, closing, nameRaw, attrs] = match;
+    const name = nameRaw.toLowerCase();
+    if (!RICH_TEXT_TAGS.has(name)) return "";
+    if (closing) return `</${name}>`;
+    // Único atributo admitido: un color en formato hexadecimal o nombre simple. Se descarta todo lo
+    // demás, incluidos los manejadores de eventos y cualquier estilo que no sea exactamente color.
+    const color = /(?:^|[\s;"'])color\s*:\s*(#[0-9a-fA-F]{3,6}|[a-zA-Z]{3,20})/.exec(attrs);
+    if (name === "span" && color) return `<span style="color:${color[1]}">`;
+    return `<${name}>`;
+  });
+  return html.slice(0, 20000);
+};
 const VALID_ROLES = new Set(["admin", "gerente", "tecnico", "tecnico_oficina", "monitor_oficina", "cliente"]);
 const timelineErrorsValue = (technical, now = Date.now()) => {
   const errors = [];
@@ -1289,7 +1319,7 @@ async function auth(req, res, next) {
     // de contraseña propio o forzado por un admin) — se rechaza aunque todavía no haya expirado.
     if ((claims.tokenVersion || 0) !== (current.token_version || 0)) return res.status(401).json({ error: "La sesión ya no es válida. Iniciá sesión de nuevo." });
     if (current.mustchangepassword && !["/api/bootstrap", "/api/me/password"].includes(req.path)) return res.status(403).json({ error: "Debes cambiar la contraseña temporal antes de continuar" });
-    const featureByPrefix = [["/api/budgets", "budgets"], ["/api/finances", "finances"], ["/api/finance-", "finances"], ["/api/orders", "orders"], ["/api/projects", "projects"], ["/api/tasks", "projects"], ["/api/gantt", "projects"], ["/api/clients", "clients"], ["/api/purchase-orders", "purchaseOrders"], ["/api/suppliers", "purchaseOrders"], ["/api/material-lists", "materialLists"], ["/api/parts", "inventory"], ["/api/stock", "inventory"], ["/api/whiteboard", "whiteboard"], ["/api/users", "team"], ["/api/audit-log", "team"]];
+    const featureByPrefix = [["/api/budgets", "budgets"], ["/api/finances", "finances"], ["/api/finance-", "finances"], ["/api/orders", "orders"], ["/api/projects", "projects"], ["/api/tasks", "projects"], ["/api/gantt", "projects"], ["/api/clients", "clients"], ["/api/purchase-orders", "purchaseOrders"], ["/api/suppliers", "purchaseOrders"], ["/api/material-lists", "materialLists"], ["/api/delivery-notes", "materialLists"], ["/api/parts", "inventory"], ["/api/stock", "inventory"], ["/api/whiteboard", "whiteboard"], ["/api/users", "team"], ["/api/audit-log", "team"]];
     const requiredFeature = featureByPrefix.find(([prefix]) => req.path.startsWith(prefix))?.[1];
     if (requiredFeature) {
       const profile = await loadCompanyProfile(current.organization_id);
@@ -1554,7 +1584,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   // puede filtrar desde el navegador ni leer llamando la API a mano.
   const client = isClient(req.user.role);
   const organizationId = req.user.organizationId;
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, wb] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, dn, wb] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1 AND organization_id=$2", [req.user.id, organizationId]),
     pool.query("SELECT * FROM users WHERE organization_id=$1 ORDER BY created_at", [organizationId]),
     pool.query("SELECT data FROM clients WHERE organization_id=$1", [organizationId]),
@@ -1570,6 +1600,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     pool.query("SELECT data FROM suppliers WHERE organization_id=$1 ORDER BY data->>'name'", [organizationId]),
     pool.query("SELECT data, updated_at FROM purchase_orders WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
     pool.query("SELECT data, updated_at FROM material_lists WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM delivery_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
     pool.query("SELECT data, updated_at FROM whiteboard_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
   ]);
   // Aviso de tareas por vencer (próximos 2 días): se genera una sola vez por tarea (id determinístico)
@@ -1652,6 +1683,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     parts: client ? [] : pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || client || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
     purchaseOrders: tec || client || isMonitor(req.user.role) || companyProfile.features.purchaseOrders === false ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    deliveryNotes: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : dn.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     materialLists: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     whiteboardNotes: companyProfile.features.whiteboard === false ? [] : wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     branding,
@@ -2383,6 +2415,69 @@ function normalizeMaterialList(input, previous = {}) {
   ml.totalItems = ml.sections.reduce((sum, section) => sum + section.items.length, 0);
   return ml;
 }
+
+/* ------------------------------------------------ Remitos de trabajo ------------------------------------------------ */
+// Un remito acredita la entrega de un trabajo ante el cliente: agrupa una o varias órdenes ya
+// ejecutadas, se firma y se envía. No lleva importes a propósito — eso va en la factura, y mezclar
+// ambas cosas en un mismo papel confunde lo que el cliente está firmando.
+const normalizeDeliveryNote = (body = {}) => {
+  const text = (value, max) => String(value || "").trim().slice(0, max);
+  return {
+    id: text(body.id, 40) || `RT-${crypto.randomUUID()}`,
+    number: text(body.number, 20),
+    date: text(body.date, 10) || new Date().toISOString().slice(0, 10),
+    clientId: text(body.clientId, 60),
+    client: text(body.client, 120),
+    site: text(body.site, 120),
+    purchaseOrder: text(body.purchaseOrder, 60),
+    // Los renglones se guardan tal como se firmaron, no como referencias a las órdenes: si mañana
+    // se edita una OT, el remito ya entregado no puede cambiar de contenido.
+    items: (Array.isArray(body.items) ? body.items : []).slice(0, 100).map((item) => ({
+      orderId: text(item.orderId, 40),
+      date: text(item.date, 10),
+      description: text(item.description, 400),
+      qty: Math.max(0, Math.min(99999, Number(item.qty) || 0)),
+      unit: text(item.unit, 12) || "u",
+    })),
+    notes: text(body.notes, 2000),
+    signedBy: text(body.signedBy, 120),
+    signatureUrl: /^data:image\/(png|jpeg|webp);base64,/i.test(String(body.signatureUrl || "")) ? String(body.signatureUrl) : "",
+    createdAt: body.createdAt || new Date().toISOString(),
+  };
+};
+app.get("/api/delivery-notes", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM delivery_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
+  res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+});
+app.post("/api/delivery-notes", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
+  const note = normalizeDeliveryNote(req.body);
+  if (!note.client) return res.status(400).json({ error: "El cliente es obligatorio" });
+  if (!note.items.length) return res.status(400).json({ error: "Agregá al menos un renglón al remito" });
+  // La numeración se asigna en el servidor y no en el navegador: dos personas emitiendo a la vez
+  // desde sus equipos generarían el mismo número si lo calculara cada cliente por su cuenta.
+  if (!note.number) {
+    const last = (await pool.query("SELECT data->>'number' AS number FROM delivery_notes WHERE organization_id=$1 ORDER BY (data->>'number') DESC LIMIT 1", [req.user.organizationId])).rows[0];
+    const next = Math.max(0, Number(String(last?.number || "").replace(/\D/g, "")) || 0) + 1;
+    note.number = `RT${String(next).padStart(5, "0")}`;
+  }
+  await pool.query("INSERT INTO delivery_notes(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id'))", [note.id, note]);
+  await auditChange({ entityType: "delivery_note", entityId: note.id, action: "create", user: req.user, afterData: { number: note.number, client: note.client, items: note.items.length } });
+  res.status(201).json(note);
+});
+app.patch("/api/delivery-notes/:id", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
+  const current = (await pool.query("SELECT data FROM delivery_notes WHERE id=$1", [req.params.id])).rows[0];
+  if (!current) return res.status(404).json({ error: "No existe" });
+  // Número y fecha de creación no se reescriben: identifican el documento entregado.
+  const merged = normalizeDeliveryNote({ ...current.data, ...req.body, id: current.data.id, number: current.data.number, createdAt: current.data.createdAt });
+  await pool.query("UPDATE delivery_notes SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  res.json(merged);
+});
+app.delete("/api/delivery-notes/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const deleted = await pool.query("DELETE FROM delivery_notes WHERE id=$1 RETURNING data", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  await auditChange({ entityType: "delivery_note", entityId: req.params.id, action: "delete", user: req.user, beforeData: { number: deleted.rows[0].data.number } });
+  res.status(204).end();
+});
 app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM material_lists WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   const materialLists = rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at }));
@@ -3432,6 +3527,7 @@ app.get("/api/tasks", auth, async (req, res) => {
 app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   const t = { ...(req.body || {}) }; if (!t.id) t.id = `T-${crypto.randomUUID()}`;
   t.title = String(t.title || "").trim();
+// La descripción admite formato (negrita, cursiva, listas, color) y se sanea acá: es el único  // punto por el que puede entrar, tanto del alta como de la edición.  if (t.desc !== undefined) t.desc = sanitizeRichText(t.desc);
   if (!t.title || !t.project) return res.status(400).json({ error: "Proyecto y título son obligatorios" });
   if (!(await tecCanProject(req.user, t.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   if (isTec(req.user.role)) t.assignee = req.user.id;
@@ -3463,6 +3559,8 @@ app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
   if (!rows[0]) return res.status(404).json({ error: "No existe" });
   const prev = rows[0].data; let patch = req.body || {};
   if (!(await tecCanProject(req.user, prev.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
+  // Misma sanitización que en el alta: la edición es la otra vía por la que entra HTML.
+  if (patch.desc !== undefined) patch.desc = sanitizeRichText(patch.desc);
   if (isTec(req.user.role)) patch = Object.fromEntries(Object.entries(patch).filter(([key]) => TECH_TASK_PATCH.has(key)));
   if (patch.project !== undefined && !(await tecCanProject(req.user, patch.project))) return res.status(403).json({ error: "Sin acceso al proyecto de destino" });
   if (patch.assignee !== undefined && !(await assigneeIsAllowed(patch.assignee))) return res.status(400).json({ error: "Monitor Oficina no puede ser responsable de tareas" });

@@ -38,9 +38,9 @@ const CUR = "USD ";
 let DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", cliente: "Cliente corporativo", monitor_oficina: "Monitor de oficina" };
 const DEFAULT_COMPANY_PROFILE = { locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD", pricing: { defaultHourlyRate: 0, defaultInternalHourlyCost: 0, minimumBillableHours: 0, targetMargin: 0, vatRate: 0 }, laborRoles: [{ name: "Técnico", cost: 0 }], features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true } };
-const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", team: "team" };
+const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", deliveryNotes: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", team: "team" };
 const allowedModulesForRole = (role, profile = DEFAULT_COMPANY_PROFILE) => {
-  const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+  const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists", "deliveryNotes"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
   return byRole.filter((moduleId) => !MODULE_FEATURE[moduleId] || profile.features?.[MODULE_FEATURE[moduleId]] !== false);
 };
 const ORDENGO_THEME = Object.freeze({ id: "ordengo", name: "MiOrdenGo", primaryColor: "#0EA5C5", headerColor: "#0B315F" });
@@ -411,6 +411,9 @@ function parsePaymentAdvice(text) {
   });
   return { rows, total };
 }
+// Texto plano de una descripción con formato, para buscar y para resúmenes. Sin esto, buscar
+// "span" o "color" traía tareas por sus etiquetas HTML en lugar de por su contenido.
+const plainText = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/s+/g, " ").trim();
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const localDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localMonthKey = (date = new Date()) => localDateKey(date).slice(0, 7);
@@ -642,6 +645,53 @@ function SearchSelect({ value, onChange, options, emptyLabel = "Sin asociar", pl
 function ProductLogo({ className = "" }) {
   return <img src="/branding/miordengo-logo.png" alt="MiOrdenGo · Gestión y Facturación" className={className} />;
 }
+/* Editor de texto con formato para la descripción de una tarea. Usa un contenteditable con
+   document.execCommand: la API está marcada como obsoleta pero la implementan todos los navegadores
+   y es la única forma de tener negrita, color y listas sin sumar una dependencia de editor, que en
+   este proyecto además chocaría con el lockfile desactualizado.
+
+   El valor viaja como HTML y el servidor lo sanea con lista blanca antes de guardarlo (ver
+   sanitizeRichText). Acá no se sanea: hacerlo sólo en el cliente sería decorativo, porque cualquiera
+   puede llamar la API directamente. */
+const RICH_COLORS = [["#0f172a", "Negro"], ["#dc2626", "Rojo"], ["#ea580c", "Naranja"], ["#0369a1", "Azul"], ["#15803d", "Verde"]];
+function RichTextEditor({ value, onChange, placeholder = "", disabled = false }) {
+  const ref = useRef(null);
+  // El HTML sólo se vuelca cuando cambia desde afuera. Reescribirlo en cada tecleo movería el cursor
+  // al principio: contenteditable pierde la posición si se le reemplaza el contenido.
+  useEffect(() => { if (ref.current && ref.current.innerHTML !== (value || "")) ref.current.innerHTML = value || ""; }, [value]);
+  const exec = (command, arg) => {
+    if (disabled) return;
+    ref.current?.focus();
+    document.execCommand(command, false, arg);
+    onChange(ref.current?.innerHTML || "");
+  };
+  const Btn = ({ cmd, arg, title, children }) => (
+    <button type="button" disabled={disabled} title={title} onMouseDown={(e) => e.preventDefault()} onClick={() => exec(cmd, arg)}
+      className="grid h-7 w-7 place-items-center rounded border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40">{children}</button>
+  );
+  return (
+    <div className={`rounded-lg border border-slate-200 ${disabled ? "bg-slate-50" : "bg-white"}`}>
+      {!disabled && <div className="flex flex-wrap items-center gap-1 border-b border-slate-100 p-1.5">
+        <Btn cmd="bold" title="Negrita"><b>N</b></Btn>
+        <Btn cmd="italic" title="Cursiva"><i>C</i></Btn>
+        <Btn cmd="underline" title="Subrayado"><u>S</u></Btn>
+        <span className="mx-0.5 h-5 w-px bg-slate-200" />
+        <Btn cmd="insertUnorderedList" title="Lista con viñetas">•</Btn>
+        <Btn cmd="insertOrderedList" title="Lista numerada">1.</Btn>
+        <span className="mx-0.5 h-5 w-px bg-slate-200" />
+        {RICH_COLORS.map(([hex, name]) => (
+          <button key={hex} type="button" title={name} onMouseDown={(e) => e.preventDefault()} onClick={() => exec("foreColor", hex)}
+            className="h-5 w-5 rounded-full ring-1 ring-slate-300" style={{ background: hex }} aria-label={`Color ${name}`} />
+        ))}
+        <span className="mx-0.5 h-5 w-px bg-slate-200" />
+        <Btn cmd="removeFormat" title="Quitar formato">✕</Btn>
+      </div>}
+      <div ref={ref} contentEditable={!disabled} suppressContentEditableWarning data-placeholder={placeholder}
+        onInput={() => onChange(ref.current?.innerHTML || "")}
+        className="rich-text min-h-24 px-3 py-2 text-sm text-slate-800 outline-none" />
+    </div>
+  );
+}
 const Avatar = ({ user, size = 28 }) => {
   const photo = user?.settings?.photoDataUrl;
   return (<div className="grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-white" style={{ width: size, height: size, background: user?.color || "#94a3b8", fontSize: size * 0.4 }} title={user?.name}>
@@ -765,6 +815,8 @@ export default function App() {
   const [suppliers, setSuppliers] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [materialLists, setMaterialLists] = useState([]);
+  const [deliveryNotes, setDeliveryNotes] = useState([]);
+  const [deliveryNoteCreateSignal, setDeliveryNoteCreateSignal] = useState(0);
   const [whiteboardNotes, setWhiteboardNotes] = useState([]);
   const orderSyncCursor = useRef("");
   const taskSyncCursor = useRef("");
@@ -942,7 +994,7 @@ export default function App() {
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING); setCompanyProfile(d.companyProfile || DEFAULT_COMPANY_PROFILE);
     orderSyncCursor.current = (d.orders || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
     taskSyncCursor.current = (d.tasks || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current);
-    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setWhiteboardNotes(d.whiteboardNotes || []);
+    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setDeliveryNotes(d.deliveryNotes || []); setWhiteboardNotes(d.whiteboardNotes || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedOrder = readPreference(tenantPreferenceKey("ordengo_order_filters", d.me), savedOrderFilters);
@@ -1514,6 +1566,7 @@ export default function App() {
     ...(isMgr ? [{ id: "clients", label: "Clientes", icon: Building2, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Administración" }] : []),
+    ...(isMgr || me.role === "tecnico" ? [{ id: "deliveryNotes", label: "Remitos", icon: FileText, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
     { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
@@ -1567,6 +1620,7 @@ export default function App() {
             {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "finances" && <button onClick={() => setFinanceCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Movimiento</button>}
             {activeModule === "purchaseOrders" && <button onClick={() => setPurchaseOrderCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden de compra</button>}
+            {activeModule === "deliveryNotes" && <button onClick={() => setDeliveryNoteCreateSignal((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Remito</button>}
             {activeModule === "materialLists" && <button onClick={() => setMaterialListCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Listado de materiales</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             {/* El bloque de identidad abre el cambio de contraseña. Antes eso vivía en un botón de
@@ -1768,7 +1822,7 @@ export default function App() {
                 : openSub ? projectWithDescendants(projects, openSub)
                 : subChildren.length ? new Set([pProj])
                 : projectWithDescendants(projects, pProj);
-              const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : scopeIds.has(t.project)) &&(!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${t.desc}`.toLowerCase().includes(pQ.toLowerCase())));
+              const vis = tasks.filter((t) => (pProj === "all" ? !finishedProjectIds.has(t.project) : scopeIds.has(t.project)) &&(!pMine || isMonitor || t.assignee === me.id) && (activeProjectView !== "board" || !pStale || isStale(t)) && (!pQ || `${t.id} ${t.title} ${plainText(t.desc)}`.toLowerCase().includes(pQ.toLowerCase())));
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} me={me} branding={branding} whiteboardNotes={whiteboardNotes} reportSignal={projectReportSignal} onConsumeReport={() => setProjectReportSignal(0)} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} branding={branding} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
@@ -1783,6 +1837,9 @@ export default function App() {
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} drawingSignal={drawingSignal} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} branding={branding} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
+        {activeModule === "deliveryNotes" && (isMgr || me.role === "tecnico") && <DeliveryNotesModule notes={deliveryNotes} orders={orders} clients={clients} branding={branding} createSignal={deliveryNoteCreateSignal} toast={toast} onErr={err}
+          onSave={async (payload) => { try { const saved = payload.id && deliveryNotes.some((n) => n.id === payload.id) ? await api.updateDeliveryNote(payload.id, payload) : await api.createDeliveryNote(payload); setDeliveryNotes((items) => { const rest = items.filter((n) => n.id !== saved.id); return [saved, ...rest]; }); return saved; } catch (e) { err(e); return null; } }}
+          onDelete={async (note) => { if (!window.confirm(`¿Eliminar el remito ${note.number}?`)) return; try { await api.deleteDeliveryNote(note.id); setDeliveryNotes((items) => items.filter((n) => n.id !== note.id)); toast("Remito eliminado", "success"); } catch (e) { err(e); } }} />}
         {activeModule === "materialLists" && (isMgr || me.role === "tecnico") && <MaterialListsModule materialLists={materialLists} projects={projects} clients={clients} me={me} branding={branding} isMgr={isMgr} createSignal={materialListCreateSignal} onConsumeCreate={() => setMaterialListCreateSignal(0)} onSave={saveMaterialList} onDelete={deleteMaterialList} onDuplicate={duplicateMaterialList} onErr={err} />}
         {activeModule === "team" && isAdmin && <Team users={users} tasks={tasks} orders={orders} clients={clients} projects={projects} me={me} branding={branding} companyProfile={companyProfile} onAdd={addUser} onPatch={patchUser} onRemove={removeUser} onSaveUserProjects={saveUserProjects} onErr={err} />}
         {activeModule === "settings" && isAdmin && <SettingsModule branding={branding} companyProfile={companyProfile} onSaveBranding={saveBranding} onSaveCompanyProfile={saveCompanyProfile} appearanceMode={appearanceMode} onAppearanceModeChange={setAppearanceMode} />}
@@ -2025,7 +2082,7 @@ function GlobalSearch({ orders, tasks, clients, parts, projects, budgets = [], f
     if (!q) return [];
     const found = [
       ...orders.filter((o) => `${o.id} ${o.client} ${o.site} ${o.equipo || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "order", item, title: `${item.id} · ${item.client}`, meta: `${item.site || "Sin sitio"} · ${item.status}`, icon: ClipboardList })),
-      ...tasks.filter((t) => `${t.id} ${t.title} ${t.desc || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "task", item, title: `${item.id} · ${item.title}`, meta: `${projectById(item.project)?.name || "Proyecto"} · ${item.status}`, icon: ListTodo })),
+      ...tasks.filter((t) => `${t.id} ${t.title} ${plainText(t.desc)}`.toLowerCase().includes(q)).map((item) => ({ kind: "task", item, title: `${item.id} · ${item.title}`, meta: `${projectById(item.project)?.name || "Proyecto"} · ${item.status}`, icon: ListTodo })),
       ...(isMgr ? budgets.filter((budget) => `${budget.number || budget.id} ${budget.title} ${budget.client} ${budget.site || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "budget", item, title: `${item.number || item.id} · ${item.title}`, meta: `Presupuesto · ${item.client} · ${budgetDisplayStage(item)}`, icon: FileText })) : []),
       ...(isMgr ? finances.filter((movement) => `${movement.id} ${movement.concept} ${movement.supplier || ""} ${movement.receiptNumber || ""}`.toLowerCase().includes(q)).map((item) => ({ kind: "finance", item, title: `${item.id} · ${item.concept}`, meta: `${item.kind === "invoice" ? "Factura" : item.kind === "income" ? "Cobro" : "Gasto"} · ${currencyAmount(item.amount, item.currency)}`, icon: DollarSign })) : []),
       ...(isMgr ? clients.filter((c) => `${c.name} ${c.site || ""} ${c.code || ""} ${clientSites(c).map((s) => `${s.name} ${s.code}`).join(" ")}`.toLowerCase().includes(q)).map((item) => ({ kind: "client", item, title: item.name, meta: `Cliente · ${clientSites(item).map((s) => s.name).join(", ") || "Sin ubicación"}`, icon: Building2 })) : []),
@@ -5745,6 +5802,159 @@ function MaterialListEditor({ materialList, projects, clients, onClose, onSave, 
   </div>;
 }
 
+
+/* ===================================== REMITOS DE TRABAJO ===================================== */
+/* Un remito agrupa órdenes ya ejecutadas para acreditar la entrega ante el cliente. Los renglones
+   se copian de las órdenes al armarlo y quedan congelados: si después se edita una OT, el remito
+   ya entregado no puede cambiar de contenido, porque es un documento firmado. */
+function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 0, onSave, onDelete, onErr, toast }) {
+  const [editing, setEditing] = useState(null);
+  const [query, setQuery] = useState("");
+  const blank = () => ({ date: todayStr(), clientId: "", client: "", site: "", purchaseOrder: "", items: [], notes: "", signedBy: "" });
+  useEffect(() => { if (createSignal > 0) setEditing(blank()); }, [createSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visible = notes.filter((n) => !query || `${n.number} ${n.client} ${n.site}`.toLowerCase().includes(query.toLowerCase()));
+  const download = async (note) => {
+    try { const { deliveryNotePDF } = await pdfModule(); deliveryNotePDF(note, branding); }
+    catch (error) { onErr?.(error); }
+  };
+
+  if (editing) return <DeliveryNoteEditor note={editing} orders={orders} clients={clients} onCancel={() => setEditing(null)}
+    onSave={async (payload) => { const saved = await onSave(payload); if (saved) { setEditing(null); toast?.(`Remito ${saved.number} guardado`, "success"); } }} />;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por número, cliente o sitio…" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+        <button onClick={() => setEditing(blank())} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Nuevo remito</button>
+      </div>
+      {visible.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+          <FileText className="mx-auto h-8 w-8 text-slate-300" />
+          <h3 className="mt-2 text-sm font-semibold text-slate-700">Sin remitos todavía</h3>
+          <p className="mt-1 text-xs text-slate-400">Agrupá las órdenes ejecutadas y entregale al cliente el detalle firmado.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">{visible.map((note) => (
+          <div key={note.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs font-semibold text-slate-700">{note.number}</span>
+                <span className="text-[11px] text-slate-400">{budgetDate(note.date)}</span>
+                {note.signedBy && <Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">Firmado</Chip>}
+              </div>
+              <div className="mt-1 truncate text-sm font-semibold text-slate-900">{note.client}</div>
+              <div className="truncate text-xs text-slate-500">{note.site || "Sin sitio"} · {(note.items || []).length} renglón(es)</div>
+            </div>
+            <div className="flex shrink-0 gap-1.5">
+              <button onClick={() => download(note)} title="Descargar PDF" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button>
+              <button onClick={() => setEditing(note)} title="Editar" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>
+              <button onClick={() => onDelete(note)} title="Eliminar" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          </div>
+        ))}</div>
+      )}
+    </div>
+  );
+}
+
+/* Editor de remito. Las órdenes se eligen de una lista filtrada por el cliente seleccionado y se
+   copian como renglones editables: lo que se firma es el texto del remito, no un vínculo vivo a la
+   orden. Por eso "Agregar" copia y no referencia. */
+function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave }) {
+  const [form, setForm] = useState(note);
+  const [saving, setSaving] = useState(false);
+  const set = (patch) => setForm((current) => ({ ...current, ...patch }));
+  const sites = clientSites(clients.find((c) => c.id === form.clientId));
+
+  // Sólo órdenes completadas o posteriores: un remito acredita trabajo entregado, y una orden en
+  // ejecución todavía no lo está. Se excluyen las ya incluidas para no duplicar renglones.
+  const included = new Set((form.items || []).map((item) => item.orderId));
+  const candidates = orders.filter((order) =>
+    ["Completada", "Aprobada", "Facturada"].includes(order.status)
+    && (!form.client || order.client === form.client)
+    && (!form.site || !order.site || order.site === form.site)
+    && !included.has(order.id));
+
+  const addOrder = (order) => set({ items: [...(form.items || []), {
+    orderId: order.id, date: order.date || "",
+    description: [order.service, order.equipment, order.technical?.solucion].filter(Boolean).join(" · ").slice(0, 400),
+    qty: 1, unit: "u",
+  }] });
+  const setItem = (index, patch) => set({ items: form.items.map((item, i) => i === index ? { ...item, ...patch } : item) });
+  const removeItem = (index) => set({ items: form.items.filter((_, i) => i !== index) });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <button onClick={onCancel} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ChevronLeft className="h-4 w-4" /></button>
+        <h3 className="text-base font-semibold text-slate-900">{form.number ? `Remito ${form.number}` : "Nuevo remito"}</h3>
+      </div>
+      <Box className="space-y-3 p-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <L label="Cliente" required>
+            <select value={form.clientId} onChange={(e) => { const c = clients.find((x) => x.id === e.target.value); set({ clientId: e.target.value, client: c?.name || "", site: "" }); }} className="u-input">
+              <option value="">Seleccionar cliente…</option>
+              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </L>
+          <L label="Sitio">
+            <select value={form.site} onChange={(e) => set({ site: e.target.value })} className="u-input">
+              <option value="">Todos los sitios</option>
+              {sites.map((s, i) => <option key={s?.code || s?.name || i} value={s?.name || ""}>{s?.name || "—"}</option>)}
+            </select>
+          </L>
+          <L label="Fecha"><input type="date" value={form.date} onChange={(e) => set({ date: e.target.value })} className="u-input" /></L>
+          <L label="Orden de compra del cliente"><input value={form.purchaseOrder} onChange={(e) => set({ purchaseOrder: e.target.value })} placeholder="Opcional" className="u-input" /></L>
+        </div>
+      </Box>
+
+      <Box className="p-4">
+        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Renglones del remito</h4>
+        {(form.items || []).length === 0 && <p className="mb-2 text-xs text-slate-400">Agregá órdenes desde la lista de abajo, o cargá un renglón manual.</p>}
+        <div className="space-y-2">{(form.items || []).map((item, index) => (
+          <div key={index} className="grid grid-cols-[minmax(0,1fr)_4.5rem_3.5rem_2.5rem] gap-2 rounded-lg border border-slate-200 p-2">
+            <div className="min-w-0">
+              <div className="mb-1 text-[11px] text-slate-400">{item.orderId || "Manual"}{item.date ? ` · ${budgetDate(item.date)}` : ""}</div>
+              <input value={item.description} onChange={(e) => setItem(index, { description: e.target.value })} placeholder="Detalle del trabajo" className="u-input" />
+            </div>
+            <input type="number" min="0" step="1" value={item.qty} onChange={(e) => setItem(index, { qty: e.target.value })} aria-label="Cantidad" className="u-input self-end" />
+            <input value={item.unit} onChange={(e) => setItem(index, { unit: e.target.value })} aria-label="Unidad" className="u-input self-end" />
+            <button onClick={() => removeItem(index)} aria-label="Quitar renglón" className="grid h-10 w-10 place-items-center self-end rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+          </div>
+        ))}</div>
+        <button onClick={() => set({ items: [...(form.items || []), { orderId: "", date: "", description: "", qty: 1, unit: "u" }] })} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><Plus className="h-3.5 w-3.5" /> Renglón manual</button>
+      </Box>
+
+      <Box className="p-4">
+        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Órdenes disponibles</h4>
+        {!form.client ? <p className="text-xs text-slate-400">Elegí un cliente para ver sus órdenes ejecutadas.</p>
+          : candidates.length === 0 ? <p className="text-xs text-slate-400">No hay órdenes ejecutadas pendientes de remitir para este cliente.</p>
+          : <div className="max-h-60 space-y-1.5 overflow-y-auto">{candidates.slice(0, 40).map((order) => (
+              <button key={order.id} onClick={() => addOrder(order)} className="flex w-full items-center gap-2 rounded-lg border border-slate-200 p-2 text-left hover:bg-brand-50">
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[11px] text-slate-500">{order.id} · {order.date}</div>
+                  <div className="truncate text-xs text-slate-700">{order.service}{order.equipment ? ` · ${order.equipment}` : ""}</div>
+                </div>
+                <Plus className="h-4 w-4 shrink-0 text-slate-400" />
+              </button>
+            ))}</div>}
+      </Box>
+
+      <Box className="space-y-2 p-4">
+        <L label="Observaciones"><textarea value={form.notes} onChange={(e) => set({ notes: e.target.value })} rows={3} placeholder="Aclaraciones para el cliente" className="u-input resize-none" /></L>
+        <L label="Conformidad — quién firma"><input value={form.signedBy} onChange={(e) => set({ signedBy: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L>
+      </Box>
+
+      <div className="flex gap-2">
+        <button onClick={onCancel} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+        <button onClick={async () => { setSaving(true); await onSave(form); setSaving(false); }} disabled={saving || !form.client || !(form.items || []).length}
+          className="flex-1 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50">{saving ? "Guardando…" : "Guardar remito"}</button>
+      </div>
+    </div>
+  );
+}
 function MaterialListsModule({ materialLists, projects, clients, me, branding, isMgr, createSignal, onConsumeCreate, onSave, onDelete, onDuplicate, onErr }) {
   const [editingMl, setEditingMl] = useState(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -7653,7 +7863,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
         <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">{editingExisting ? f.id : "Nueva tarea"}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="space-y-3">
           <input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={readOnly} placeholder="Título de la tarea" className="u-input text-sm font-medium disabled:bg-slate-50" />
-          <textarea value={f.desc} onChange={(e) => set({ desc: e.target.value })} disabled={readOnly} rows={3} placeholder="Descripción / criterios" className="u-input resize-none disabled:bg-slate-50" />
+          <RichTextEditor value={f.desc} onChange={(html) => set({ desc: html })} disabled={readOnly} placeholder="Descripción / criterios" />
           <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto" help={editingExisting ? "Podés mover la tarea a otro proyecto. Conserva su ID original." : undefined}><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
           <L label="Participantes (opcional)" help="Otras personas que colaboran en la tarea además del responsable.">
             <div className="flex flex-wrap gap-1.5">

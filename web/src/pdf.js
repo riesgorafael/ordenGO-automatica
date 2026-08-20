@@ -1946,3 +1946,96 @@ export async function orderReportFile(order, audience = "client", project = null
   const blob = buildOrderReceiptPDF(printable, audience, project, branding).output("blob");
   return new File([blob], `${order.id}_${audience}.pdf`, { type: "application/pdf" });
 }
+
+// Remito de trabajo: acredita ante el cliente qué se ejecutó y se entregó. Deliberadamente sin
+// importes — un remito no es un comprobante de cobro, y mezclar ambas cosas confunde lo que el
+// cliente está firmando. Los valores van en la factura.
+export function deliveryNotePDF(note, branding = {}) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const W = 210, M = 14;
+  const accent = reportAccent(branding);
+  const ink = hexRgb(branding.headerColor || "#0B315F");
+  const company = companyProfile(branding);
+
+  drawCompanyHeader(doc, branding, M);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...ink);
+  doc.text("REMITO DE TRABAJO", W - M, 16, { align: "right" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...accent);
+  doc.text(String(note.number || ""), W - M, 23, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(90, 100, 115);
+  doc.text(`Fecha: ${formatDate(note.date)}`, W - M, 29, { align: "right" });
+
+  let y = 48;
+  doc.setDrawColor(...accent); doc.setLineWidth(0.6); doc.line(M, y, W - M, y); doc.setLineWidth(0.2);
+  y += 7;
+  const field = (label, value, x, width) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(140, 149, 160);
+    doc.text(String(label).toUpperCase(), x, y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(30, 41, 59);
+    doc.text(doc.splitTextToSize(String(value || "—"), width).slice(0, 2), x, y + 4.5);
+  };
+  field("Cliente", note.client, M, 95);
+  field("Sitio", note.site, M + 100, 45);
+  field("Orden de compra", note.purchaseOrder, M + 148, 34);
+  y += 16;
+
+  // Tabla de renglones. El ancho de la columna de descripción se calcula por resta para que la
+  // tabla ocupe el ancho útil sin importar los márgenes.
+  const cols = [M, M + 24, M + 46, W - M - 24, W - M];
+  doc.setFillColor(244, 246, 248); doc.rect(M, y - 4.5, W - M * 2, 7, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...ink);
+  doc.text("ORDEN", cols[0] + 1.5, y); doc.text("FECHA", cols[1] + 1.5, y);
+  doc.text("DETALLE DEL TRABAJO", cols[2] + 1.5, y); doc.text("CANT.", cols[4] - 1.5, y, { align: "right" });
+  y += 7;
+
+  (note.items || []).forEach((item) => {
+    const lines = doc.splitTextToSize(String(item.description || "—"), cols[3] - cols[2] - 4);
+    const height = Math.max(6, lines.length * 4 + 2);
+    // Salto de página con repetición del encabezado de columnas: sin esto, la segunda hoja de un
+    // remito largo quedaba con renglones sueltos sin saber qué era cada columna.
+    if (y + height > 250) {
+      doc.addPage(); y = 24;
+      doc.setFillColor(244, 246, 248); doc.rect(M, y - 4.5, W - M * 2, 7, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...ink);
+      doc.text("ORDEN", cols[0] + 1.5, y); doc.text("FECHA", cols[1] + 1.5, y);
+      doc.text("DETALLE DEL TRABAJO", cols[2] + 1.5, y); doc.text("CANT.", cols[4] - 1.5, y, { align: "right" });
+      y += 7;
+    }
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(30, 41, 59);
+    doc.text(String(item.orderId || "—"), cols[0] + 1.5, y);
+    doc.text(item.date ? formatDate(item.date) : "—", cols[1] + 1.5, y);
+    doc.text(lines, cols[2] + 1.5, y);
+    doc.text(`${item.qty || 0} ${item.unit || "u"}`, cols[4] - 1.5, y, { align: "right" });
+    y += height;
+    doc.setDrawColor(233, 237, 241); doc.line(M, y - 3, W - M, y - 3);
+  });
+
+  if (note.notes) {
+    y += 6;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(140, 149, 160);
+    doc.text("OBSERVACIONES", M, y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(60, 70, 85);
+    const notes = doc.splitTextToSize(String(note.notes), W - M * 2);
+    doc.text(notes.slice(0, 8), M, y + 5);
+    y += 5 + Math.min(8, notes.length) * 4;
+  }
+
+  // Conformidad al pie de la última hoja, en posición fija: es lo que se firma y no debe quedar
+  // colgando a mitad de página según cuántos renglones haya.
+  const signY = 262;
+  doc.setDrawColor(150, 158, 168); doc.setLineWidth(0.3);
+  doc.line(M, signY, M + 70, signY); doc.line(W - M - 70, signY, W - M, signY);
+  doc.setLineWidth(0.2);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(100, 110, 124);
+  doc.text(`POR ${String(company.name || "").toUpperCase()}`, M, signY + 4);
+  doc.text("CONFORMIDAD DEL CLIENTE", W - M - 70, signY + 4);
+  if (note.signatureUrl) {
+    try { doc.addImage(note.signatureUrl, "PNG", W - M - 68, signY - 20, 50, 18, undefined, "FAST"); } catch {}
+  }
+  if (note.signedBy) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(60, 70, 85);
+    doc.text(`Firmó: ${note.signedBy}`, W - M - 70, signY + 8.5);
+  }
+
+  saveBrandedPdf(doc, `${note.number || "remito"}.pdf`);
+}

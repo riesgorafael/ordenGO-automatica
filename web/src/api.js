@@ -63,6 +63,11 @@ export const api = {
   deletePurchaseOrder: (id) => req("/purchase-orders/" + id, { method: "DELETE" }),
 
   createMaterialList: (ml) => req("/material-lists", { method: "POST", body: JSON.stringify(ml) }),
+
+  // Remitos de trabajo: acreditan la entrega ante el cliente, sin importes.
+  createDeliveryNote: (note) => req("/delivery-notes", { method: "POST", body: JSON.stringify(note) }),
+  updateDeliveryNote: (id, patch) => req("/delivery-notes/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteDeliveryNote: (id) => req("/delivery-notes/" + id, { method: "DELETE" }),
   updateMaterialList: (id, patch) => req("/material-lists/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteMaterialList: (id) => req("/material-lists/" + id, { method: "DELETE" }),
 
