@@ -1734,6 +1734,20 @@ app.get("/api/parts/:id/movements", auth, requireRole("admin", "gerente"), async
 app.get("/api/audit-log", auth, requireRole("admin"), async (req, res) => { const rows = (await pool.query("SELECT * FROM audit_log WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 300", [req.user.organizationId])).rows; res.json(rows); });
 
 /* ------------------------------------------------ Clientes ------------------------------------------------ */
+// Contactos del cliente: personas responsables por sitio y por área. Sirven para vincular a alguien
+// concreto en una orden o un remito, en lugar de escribir el nombre suelto cada vez y terminar con
+// tres grafías distintas de la misma persona.
+const normalizeClientContacts = (value) => (Array.isArray(value) ? value : []).slice(0, 60).map((contact) => ({
+  id: String(contact?.id || "").trim().slice(0, 40) || `ct-${crypto.randomUUID()}`,
+  name: String(contact?.name || "").trim().slice(0, 120),
+  // El sitio se guarda por nombre y no por código: es lo que se imprime y lo que el usuario elige
+  // en los desplegables, y los códigos de planta no siempre están cargados.
+  site: String(contact?.site || "").trim().slice(0, 120),
+  area: String(contact?.area || "").trim().slice(0, 80),
+  role: String(contact?.role || "").trim().slice(0, 80),
+  email: String(contact?.email || "").trim().slice(0, 120),
+  phone: String(contact?.phone || "").trim().slice(0, 40),
+})).filter((contact) => contact.name);
 app.post("/api/clients", auth, requireProjectWrite, async (req, res) => {
   const c = { ...(req.body || {}) };
   c.name = String(c.name || "").trim();
@@ -1742,6 +1756,7 @@ app.post("/api/clients", auth, requireProjectWrite, async (req, res) => {
   // Evita duplicados por nombre (reutiliza el existente)
   const dup = existing.find((x) => (x.name || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase());
   if (dup) return res.json(dup);
+  c.contacts = normalizeClientContacts(c.contacts);
   if (!c.id) c.id = `c-${crypto.randomUUID()}`;
   if (c.code) {
     const taken = new Set(existing.map((x) => x.code).filter(Boolean));
@@ -1762,6 +1777,7 @@ app.patch("/api/clients/:id", auth, requireRole("admin", "gerente"), async (req,
     if (code !== patch.code) return res.status(400).json({ error: "Ese código de cliente ya existe" });
   }
   const merged = { ...rows[0].data, ...patch, id: req.params.id };
+  if (patch.contacts !== undefined) merged.contacts = normalizeClientContacts(patch.contacts);
   merged.name = String(merged.name || "").trim();
   if (!merged.name) return res.status(400).json({ error: "El nombre del cliente es obligatorio" });
   const duplicateName = (await pool.query("SELECT 1 FROM clients WHERE id<>$1 AND lower(trim(data->>'name'))=lower($2) LIMIT 1", [req.params.id, merged.name])).rows[0];
@@ -2462,7 +2478,10 @@ app.post("/api/delivery-notes", auth, requireRole("admin", "gerente", "tecnico")
   // desde sus equipos generarían el mismo número si lo calculara cada cliente por su cuenta.
   if (!note.number) {
     const last = (await pool.query("SELECT data->>'number' AS number FROM delivery_notes WHERE organization_id=$1 ORDER BY (data->>'number') DESC LIMIT 1", [req.user.organizationId])).rows[0];
-    const next = Math.max(0, Number(String(last?.number || "").replace(/\D/g, "")) || 0) + 1;
+    // La serie arranca en 100 por pedido del usuario, para continuar la numeración que ya venía
+    // llevando fuera del sistema. El máximo con el último emitido evita que un remito borrado haga
+    // retroceder la serie y se repita un número ya entregado.
+    const next = Math.max(99, Number(String(last?.number || "").replace(/\D/g, "")) || 0) + 1;
     note.number = `RT${String(next).padStart(5, "0")}`;
   }
   await pool.query("INSERT INTO delivery_notes(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id'))", [note.id, note]);
