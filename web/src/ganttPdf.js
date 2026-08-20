@@ -282,7 +282,8 @@ export function exportGanttToPdf(tasks, { projectName = "Proyecto", fileName, br
     // Mismo criterio que el resto de los reportes: dominio a la derecha del nombre, medido.
     const markW = doc.getTextWidth("MiOrdenGo");
     doc.setFont("helvetica", "normal"); doc.setFontSize(5.2); doc.setTextColor(150, 158, 168);
-    doc.text("www.miordengo.com", PAGE_W / 2 - 3 + markW + 1.8, PAGE_H - 5.2);
+    // Sin "www.": ese subdominio no resuelve; el dominio raíz sí.
+    doc.text("miordengo.com", PAGE_W / 2 - 3 + markW + 1.8, PAGE_H - 5.2);
   }
   doc.save(fileName || `Gantt_${projectName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }

@@ -114,7 +114,8 @@ function stampProductBranding(doc) {
     const markW = doc.getTextWidth("MiOrdenGo");
     doc.setFont("helvetica", "normal"); doc.setFontSize(5.2);
     doc.setTextColor(150, 158, 168);
-    doc.text("www.miordengo.com", 99 + markW + 1.8, 290, { align: "left" });
+    // Sin "www.": ese subdominio no está configurado en el DNS y el enlace del pie daba 404.
+    doc.text("miordengo.com", 99 + markW + 1.8, 290, { align: "left" });
   }
   doc.setPage(Math.min(currentPage, pages));
 }

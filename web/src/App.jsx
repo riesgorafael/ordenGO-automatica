@@ -5879,7 +5879,7 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
         </div>
       ) : (
         <div className="space-y-2">{visible.map((note) => (
-          <div key={note.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+          <div key={note.id} onClick={() => setEditing(note)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") setEditing(note); }} title="Abrir el remito para editarlo" className="flex cursor-pointer flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-sm">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs font-semibold text-slate-700">{note.number}</span>
@@ -5889,7 +5889,9 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
               <div className="mt-1 truncate text-sm font-semibold text-slate-900">{note.client}</div>
               <div className="truncate text-xs text-slate-500">{note.site || "Sin sitio"} · {(note.items || []).length} renglón(es)</div>
             </div>
-            <div className="flex shrink-0 gap-1.5">
+            {/* Los botones frenan la propagación: sin esto, descargar o eliminar abriría además el
+                editor, porque el clic sube hasta la fila. */}
+            <div className="flex shrink-0 gap-1.5" onClick={(event) => event.stopPropagation()}>
               <button onClick={() => download(note)} title="Descargar PDF" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Download className="h-4 w-4" /></button>
               <button onClick={() => setEditing(note)} title="Editar" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button>
               <button onClick={() => onDelete(note)} title="Eliminar" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
