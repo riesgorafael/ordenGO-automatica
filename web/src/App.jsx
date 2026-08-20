@@ -2013,6 +2013,15 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
           <ul className="mt-3 space-y-2.5">
             {bullets.map(({ text, icon: Icon }) => (<li key={text} className="flex items-center gap-3 rounded-xl border border-cyan-200/10 bg-white/[0.035] px-3 py-2.5 text-sm text-slate-100">{Icon && <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-300/20"><Icon className="h-4 w-4" /></span>}<span className="leading-snug">{text}</span></li>))}
           </ul>
+          {/* Crédito de autoría al pie del panel, no junto al formulario: ese lado es para quien
+              necesita entrar, y mezclarle un crédito ahí le resta claridad a la ayuda de acceso.
+              Va con contacto porque también funciona como puerta de entrada comercial: quien vea
+              la aplicación en casa de un cliente y la quiera para su empresa, sabe a dónde escribir. */}
+          <div className="mt-10 border-t border-cyan-200/10 pt-4 text-[11px] leading-relaxed text-slate-400">
+            Desarrollado por <a href="https://www.automatica-arg.com.ar" target="_blank" rel="noreferrer" className="font-medium text-slate-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Automática ARG</a>
+            <span className="mx-1.5 text-slate-600">·</span>
+            <a href="mailto:info@automatica-arg.com.ar" className="hover:text-slate-200">info@automatica-arg.com.ar</a>
+          </div>
         </div>
       </div>
 
