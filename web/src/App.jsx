@@ -2056,7 +2056,10 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
                 <button onClick={submit} disabled={busy || !email || !pass} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B315F] to-[#087FA5] px-3 py-3.5 text-sm font-semibold text-white shadow-lg shadow-cyan-950/15 transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />} Ingresar</button>
               </div>
               <div className="login-help mt-6 border-t pt-4">
-                <p className="text-center text-[11px] leading-relaxed text-slate-400">¿Olvidaste tu contraseña? Contactá al administrador de tu empresa.</p>
+                {/* Más corto y con la acción concreta: "contactá" no dice qué pedir, y el texto
+                    anterior envolvía dejando "empresa." sola en el segundo renglón. El balance
+                    equilibra el corte de línea en vez de dejar una palabra huérfana. */}
+                <p className="text-balance text-center text-[11px] leading-relaxed text-slate-400">¿Olvidaste tu contraseña? Pedile al administrador que la restablezca.</p>
               </div>
             </div>
           </div>
