@@ -3478,8 +3478,29 @@ app.post("/api/tasks/:id/comment", auth, requireProjectWrite, async (req, res) =
   const merged = { ...rows[0].data, activity: [...(rows[0].data.activity || []), { type: "comment", text, by: req.user.id, byName: req.user.name, at: new Date().toISOString() }] };
   await pool.query("UPDATE tasks SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   await auditChange({ entityType: "task", entityId: req.params.id, action: "comment", user: req.user, afterData: { commentLength: text.length } });
-  // avisa al responsable si comenta otra persona
-  if (merged.assignee && merged.assignee !== req.user.id) await notify(merged.assignee, `Nuevo comentario en ${merged.id}`, "task:" + merged.id);
+  // Avisa a todo el equipo del proyecto, no sólo al responsable: un comentario suele ser una
+  // consulta o un hallazgo que alguien más tiene que ver, y limitarlo al responsable hacía que el
+  // resto se enterara sólo si entraba a la tarea por casualidad.
+  //
+  // Entran: responsable, participantes, quienes tengan el proyecto asignado (allowedUsers) y la
+  // administración, que ve todos los proyectos. Quedan fuera:
+  //  · quien comenta, que no necesita avisarse a sí mismo;
+  //  · los monitores, que son pantallas de TV y no leen notificaciones;
+  //  · los clientes corporativos, porque un comentario interno puede contener discusión del equipo
+  //    que no corresponde mostrarle a la empresa contratante.
+  const projectRow = (await pool.query("SELECT data FROM projects WHERE id=$1", [merged.project])).rows[0];
+  const candidates = new Set([
+    merged.assignee,
+    ...(Array.isArray(merged.participants) ? merged.participants : []),
+    ...(Array.isArray(projectRow?.data?.allowedUsers) ? projectRow.data.allowedUsers : []),
+  ].filter(Boolean));
+  const staff = (await pool.query("SELECT id, role FROM users WHERE active=true")).rows;
+  staff.forEach((user) => { if (["admin", "gerente"].includes(user.role)) candidates.add(user.id); });
+  const roleById = new Map(staff.map((user) => [user.id, user.role]));
+  const recipients = [...candidates].filter((id) => id !== req.user.id && roleById.has(id)
+    && !isMonitor(roleById.get(id)) && !isClient(roleById.get(id)));
+  const preview = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  for (const id of recipients) await notify(id, `${req.user.name} comentó en ${merged.id}: ${preview}`, "task:" + merged.id);
   res.json(merged);
 });
 app.delete("/api/tasks/:id", auth, requireRole("admin", "gerente", "tecnico", "tecnico_oficina"), async (req, res) => {
