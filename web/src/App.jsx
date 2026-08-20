@@ -413,7 +413,7 @@ function parsePaymentAdvice(text) {
 }
 // Texto plano de una descripción con formato, para buscar y para resúmenes. Sin esto, buscar
 // "span" o "color" traía tareas por sus etiquetas HTML en lugar de por su contenido.
-const plainText = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/s+/g, " ").trim();
+const plainText = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 const initials = (n) => (n || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
 const localDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localMonthKey = (date = new Date()) => localDateKey(date).slice(0, 7);
