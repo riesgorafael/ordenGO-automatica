@@ -1,4 +1,8 @@
-import express from "express";
+      // Cantidad y unidad quedan vacías si no se cargaron: hay renglones que son conceptos
+      // —"Entrega documental de planimetría"— y no cosas contables. Forzar "0 u" imprimía una
+      // cantidad falsa en el remito que el cliente firma.
+      qty: String(item.qty || "").trim() === "" ? "" : Math.max(0, Math.min(99999, Number(item.qty) || 0)),
+      unit: text(item.unit, 12),import express from "express";
 import "express-async-errors";
 import cors from "cors";
 import compression from "compression";
@@ -2452,8 +2456,11 @@ const normalizeDeliveryNote = (body = {}) => {
       orderId: text(item.orderId, 40),
       date: text(item.date, 10),
       description: text(item.description, 400),
-      qty: Math.max(0, Math.min(99999, Number(item.qty) || 0)),
-      unit: text(item.unit, 12) || "u",
+      // Cantidad y unidad quedan vacías si no se cargaron: hay renglones que son conceptos
+      // —"Entrega documental de planimetría"— y no cosas contables. Forzar "0 u" imprimía en el
+      // remito una cantidad falsa, en un documento que el cliente firma.
+      qty: String(item.qty ?? "").trim() === "" ? "" : Math.max(0, Math.min(99999, Number(item.qty) || 0)),
+      unit: text(item.unit, 12),
     })),
     notes: text(body.notes, 2000),
     signedBy: text(body.signedBy, 120),

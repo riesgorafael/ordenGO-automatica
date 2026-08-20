@@ -2000,7 +2000,11 @@ export function deliveryNotePDF(note, branding = {}) {
     if (y + height > 250) { doc.addPage(); y = 24; header(); }
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(30, 41, 59);
     doc.text(lines, descX, y);
-    doc.text(`${item.qty || 0} ${item.unit || "u"}`, qtyX, y, { align: "right" });
+    // Si el renglón no tiene cantidad, la columna queda en blanco. Un concepto como "entrega
+    // documental" no se cuenta, y escribir "0 u" en un documento que el cliente firma afirma algo
+    // que no es cierto.
+    const amount = [item.qty === 0 || item.qty ? String(item.qty) : "", item.unit || ""].filter(Boolean).join(" ");
+    if (amount) doc.text(amount, qtyX, y, { align: "right" });
     y += height;
     doc.setDrawColor(233, 237, 241); doc.line(M, y - 3, W - M, y - 3);
   });

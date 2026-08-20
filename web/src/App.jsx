@@ -714,6 +714,27 @@ function RichTextEditor({ value, onChange, placeholder = "", disabled = false })
     </div>
   );
 }
+/* Barrera de errores. Sin esto, cualquier excepción durante el render desmonta el árbol entero y la
+   pantalla queda en blanco, sin ninguna pista de qué falló — hay que abrir las herramientas del
+   navegador para enterarse. Con la barrera, el error se muestra en pantalla con su mensaje y su
+   traza, que es lo que hace falta para arreglarlo, y el resto de la aplicación sigue accesible. */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("Error de render:", error, info); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-rose-800"><AlertTriangle className="h-4 w-4" /> Se produjo un error en esta pantalla</div>
+        <p className="mt-1 text-xs text-rose-700">El resto de la aplicación sigue funcionando. Copiá este detalle para poder corregirlo:</p>
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-[11px] text-slate-700">{String(this.state.error?.message || this.state.error)}
+{String(this.state.error?.stack || "").split("\n").slice(0, 6).join("\n")}</pre>
+        <button onClick={() => this.setState({ error: null })} className="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100">Reintentar</button>
+      </div>
+    );
+  }
+}
 const Avatar = ({ user, size = 28 }) => {
   const photo = user?.settings?.photoDataUrl;
   return (<div className="grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-white" style={{ width: size, height: size, background: user?.color || "#94a3b8", fontSize: size * 0.4 }} title={user?.name}>
@@ -1642,7 +1663,6 @@ export default function App() {
             {activeModule === "budgets" && <button onClick={() => setBudgetCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Presupuesto</button>}
             {activeModule === "finances" && <button onClick={() => setFinanceCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Movimiento</button>}
             {activeModule === "purchaseOrders" && <button onClick={() => setPurchaseOrderCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Orden de compra</button>}
-            {activeModule === "deliveryNotes" && <button onClick={() => setDeliveryNoteCreateSignal((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Remito</button>}
             {activeModule === "materialLists" && <button onClick={() => setMaterialListCreateSignal((value) => value + 1)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Listado de materiales</button>}
             {activeModule === "projects" && !isMonitor && <button onClick={() => setEditing(null)} className="hidden items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 sm:inline-flex"><Plus className="h-4 w-4" /> Tarea</button>}
             {/* El bloque de identidad abre el cambio de contraseña. Antes eso vivía en un botón de
@@ -1746,7 +1766,7 @@ export default function App() {
       </header>
 
       {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online && offlineSyncFailed ? "bg-rose-600" : online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{!online ? <WifiOff className="h-4 w-4" /> : syncingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}{!online ? `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.` : offlineSyncFailed ? <><span>{offlineCount} cambio(s) pendientes por un error.</span><button type="button" onClick={() => setOfflineRetry((value) => value + 1)} className="inline-flex items-center gap-1 rounded border border-white/40 px-2 py-1 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button></> : `Sincronizando ${offlineCount} cambio(s)…`}</div>}
-      <main className={`mx-auto px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5 ${tvMode ? "max-w-none lg:px-7 lg:py-4" : "max-w-6xl"}`}>
+      <main className={`mx-auto px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5 ${tvMode ? "max-w-none lg:px-7 lg:py-4" : "max-w-6xl"}`}><ErrorBoundary key={activeModule}>
         <div key={activeModule} className="motion-page">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} projects={projects} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} onGoToProject={(projectId) => { navigateModule("projects"); setPTab("board"); setPProj(projectId); }} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} branding={branding} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
@@ -1868,7 +1888,7 @@ export default function App() {
 
         {!tvMode && <footer className="relative z-10 mt-10 border-t border-slate-200 bg-slate-50 pt-4 text-xs text-slate-500">Conectado al servidor · {me.name} ({ROLES[me.role]})</footer>}
         </div>
-      </main>
+      </ErrorBoundary></main>
 
       {oDetail && <OrderDetail ger={isMgr} users={users} projects={projects} branding={branding} onErr={err} order={orders.find((o) => o.id === oDetail.id) || oDetail} onClose={() => setODetail(null)} onUpdate={updateOrder} onAdvance={(id, st) => updateOrder(id, { status: st })} onExport={(o) => exportCSV([o], `${o.id}.csv`)} onDelete={deleteOrder} onComment={commentOrder} onDuplicate={duplicateOrder} onCreateTask={taskFromOrder} onContinue={["Borrador", "En progreso", "En proceso de ejecución"].includes((orders.find((o) => o.id === oDetail.id) || oDetail).status) ? continueOrder : null} onEdit={isAdmin ? setEditingOrder : null} me={me} />}
       {editingOrder && <OrderEditDialog order={orders.find((o) => o.id === editingOrder.id) || editingOrder} clients={clients} users={users} parts={parts} budgets={budgets} projects={projects} onClose={() => setEditingOrder(null)} onSave={async (patch) => { const saved = await updateOrder(editingOrder.id, patch); if (saved) { setEditingOrder(null); toast(`Orden ${editingOrder.id} actualizada`, "success"); } return saved; }} />}
@@ -5946,7 +5966,7 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) 
             <button onClick={() => removeItem(index)} aria-label="Quitar renglón" className="grid h-10 w-10 place-items-center self-end rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
           </div>
         ))}</div>
-        <button onClick={() => set({ items: [...(form.items || []), { orderId: "", date: "", description: "", qty: 1, unit: "u" }] })} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><Plus className="h-3.5 w-3.5" /> Renglón manual</button>
+        <button onClick={() => set({ items: [...(form.items || []), { orderId: "", date: "", description: "", qty: "", unit: "" }] })} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><Plus className="h-3.5 w-3.5" /> Renglón manual</button>
       </Box>
 
       <Box className="p-4">
