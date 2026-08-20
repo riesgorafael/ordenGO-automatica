@@ -1979,33 +1979,28 @@ export function deliveryNotePDF(note, branding = {}) {
   field("Orden de compra", note.purchaseOrder, M + 148, 34);
   y += 16;
 
-  // Tabla de renglones. El ancho de la columna de descripción se calcula por resta para que la
-  // tabla ocupe el ancho útil sin importar los márgenes.
-  const cols = [M, M + 24, M + 46, W - M - 24, W - M];
-  doc.setFillColor(244, 246, 248); doc.rect(M, y - 4.5, W - M * 2, 7, "F");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...ink);
-  doc.text("ORDEN", cols[0] + 1.5, y); doc.text("FECHA", cols[1] + 1.5, y);
-  doc.text("DETALLE DEL TRABAJO", cols[2] + 1.5, y); doc.text("CANT.", cols[4] - 1.5, y, { align: "right" });
-  y += 7;
+  // Sólo detalle y cantidad. Las columnas de orden y fecha se quitaron porque la mayoría de los
+  // renglones se cargan a mano y quedaban en blanco: una columna llena de guiones ocupa ancho que
+  // le hace falta a la descripción y no aporta nada.
+  const descX = M + 1.5, qtyX = W - M - 1.5, descWidth = W - M * 2 - 24;
+  const header = () => {
+    doc.setFillColor(244, 246, 248); doc.rect(M, y - 4.5, W - M * 2, 7, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...ink);
+    doc.text("DETALLE DEL TRABAJO", descX, y);
+    doc.text("CANT.", qtyX, y, { align: "right" });
+    y += 7;
+  };
+  header();
 
   (note.items || []).forEach((item) => {
-    const lines = doc.splitTextToSize(String(item.description || "—"), cols[3] - cols[2] - 4);
+    const lines = doc.splitTextToSize(String(item.description || "—"), descWidth);
     const height = Math.max(6, lines.length * 4 + 2);
-    // Salto de página con repetición del encabezado de columnas: sin esto, la segunda hoja de un
-    // remito largo quedaba con renglones sueltos sin saber qué era cada columna.
-    if (y + height > 250) {
-      doc.addPage(); y = 24;
-      doc.setFillColor(244, 246, 248); doc.rect(M, y - 4.5, W - M * 2, 7, "F");
-      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...ink);
-      doc.text("ORDEN", cols[0] + 1.5, y); doc.text("FECHA", cols[1] + 1.5, y);
-      doc.text("DETALLE DEL TRABAJO", cols[2] + 1.5, y); doc.text("CANT.", cols[4] - 1.5, y, { align: "right" });
-      y += 7;
-    }
+    // Salto de página repitiendo el encabezado: sin esto, la segunda hoja de un remito largo
+    // quedaba con renglones sueltos sin saber qué era cada columna.
+    if (y + height > 250) { doc.addPage(); y = 24; header(); }
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(30, 41, 59);
-    doc.text(String(item.orderId || "—"), cols[0] + 1.5, y);
-    doc.text(item.date ? formatDate(item.date) : "—", cols[1] + 1.5, y);
-    doc.text(lines, cols[2] + 1.5, y);
-    doc.text(`${item.qty || 0} ${item.unit || "u"}`, cols[4] - 1.5, y, { align: "right" });
+    doc.text(lines, descX, y);
+    doc.text(`${item.qty || 0} ${item.unit || "u"}`, qtyX, y, { align: "right" });
     y += height;
     doc.setDrawColor(233, 237, 241); doc.line(M, y - 3, W - M, y - 3);
   });
@@ -2029,13 +2024,17 @@ export function deliveryNotePDF(note, branding = {}) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(100, 110, 124);
   doc.text(`POR ${String(company.name || "").toUpperCase()}`, M, signY + 4);
   doc.text("CONFORMIDAD DEL CLIENTE", W - M - 70, signY + 4);
+  // Las dos firmas se dibujan sobre su línea, no debajo: es donde se firma en papel y donde el ojo
+  // las busca. Si la imagen falla, la línea queda igual para firmar a mano.
+  if (note.issuerSignatureUrl) {
+    try { doc.addImage(note.issuerSignatureUrl, "PNG", M + 2, signY - 20, 50, 18, undefined, "FAST"); } catch {}
+  }
   if (note.signatureUrl) {
     try { doc.addImage(note.signatureUrl, "PNG", W - M - 68, signY - 20, 50, 18, undefined, "FAST"); } catch {}
   }
-  if (note.signedBy) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(60, 70, 85);
-    doc.text(`Firmó: ${note.signedBy}`, W - M - 70, signY + 8.5);
-  }
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(60, 70, 85);
+  if (note.issuedBy) doc.text(note.issuedBy, M, signY + 8.5);
+  if (note.signedBy) doc.text(`Firmó: ${note.signedBy}`, W - M - 70, signY + 8.5);
 
   saveBrandedPdf(doc, `${note.number || "remito"}.pdf`);
 }

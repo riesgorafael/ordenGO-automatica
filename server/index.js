@@ -2442,6 +2442,11 @@ const normalizeDeliveryNote = (body = {}) => {
     notes: text(body.notes, 2000),
     signedBy: text(body.signedBy, 120),
     signatureUrl: /^data:image\/(png|jpeg|webp);base64,/i.test(String(body.signatureUrl || "")) ? String(body.signatureUrl) : "",
+    // Firma de la empresa emisora, aparte de la conformidad del cliente: un remito lo suscriben las
+    // dos partes. Se valida como imagen igual que la otra — es un data URL que termina insertado en
+    // el PDF, así que no puede entrar cualquier cadena.
+    issuedBy: text(body.issuedBy, 120),
+    issuerSignatureUrl: /^data:image\/(png|jpeg|webp);base64,/i.test(String(body.issuerSignatureUrl || "")) ? String(body.issuerSignatureUrl) : "",
     createdAt: body.createdAt || new Date().toISOString(),
   };
 };

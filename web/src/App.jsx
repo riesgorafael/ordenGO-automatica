@@ -5819,7 +5819,7 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
     catch (error) { onErr?.(error); }
   };
 
-  if (editing) return <DeliveryNoteEditor note={editing} orders={orders} clients={clients} onCancel={() => setEditing(null)}
+  if (editing) return <DeliveryNoteEditor note={editing} orders={orders} clients={clients} onErr={onErr} onCancel={() => setEditing(null)}
     onSave={async (payload) => { const saved = await onSave(payload); if (saved) { setEditing(null); toast?.(`Remito ${saved.number} guardado`, "success"); } }} />;
 
   return (
@@ -5862,7 +5862,7 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
 /* Editor de remito. Las órdenes se eligen de una lista filtrada por el cliente seleccionado y se
    copian como renglones editables: lo que se firma es el texto del remito, no un vínculo vivo a la
    orden. Por eso "Agregar" copia y no referencia. */
-function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave }) {
+function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) {
   const [form, setForm] = useState(note);
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((current) => ({ ...current, ...patch }));
@@ -5944,7 +5944,35 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave }) {
 
       <Box className="space-y-2 p-4">
         <L label="Observaciones"><textarea value={form.notes} onChange={(e) => set({ notes: e.target.value })} rows={3} placeholder="Aclaraciones para el cliente" className="u-input resize-none" /></L>
-        <L label="Conformidad — quién firma"><input value={form.signedBy} onChange={(e) => set({ signedBy: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <L label="Firma por nuestra empresa" help="Quién emite el remito. Su firma se imprime a la izquierda del pie."><input value={form.issuedBy || ""} onChange={(e) => set({ issuedBy: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L>
+          <L label="Conformidad — quién firma" help="Quién recibe por parte del cliente."><input value={form.signedBy} onChange={(e) => set({ signedBy: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L>
+        </div>
+        {/* La firma se importa como imagen y se guarda con el remito, no se dibuja en pantalla: en
+            un remito la firma del emisor suele ser siempre la misma —un escaneo o un sello— y
+            volver a trazarla en cada documento con el mouse daría un resultado distinto cada vez. */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
+          <div className="grid h-16 w-40 shrink-0 place-items-center rounded border border-dashed border-slate-300 bg-slate-50">
+            {form.issuerSignatureUrl
+              ? <img src={form.issuerSignatureUrl} alt="Firma de la empresa" className="max-h-full max-w-full object-contain" />
+              : <span className="text-[11px] text-slate-400">Sin firma</span>}
+          </div>
+          <div className="min-w-0 flex-1">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Upload className="h-3.5 w-3.5" /> {form.issuerSignatureUrl ? "Cambiar firma" : "Importar firma"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async (event) => {
+                const file = event.target.files?.[0]; event.target.value = "";
+                if (!file) return;
+                // Se reduce antes de guardar: la firma viaja dentro del remito y en el listado se
+                // cargan todos, así que un escaneo sin achicar multiplicaría el peso de la respuesta.
+                try { const { thumb } = await fileToImages(file); set({ issuerSignatureUrl: thumb }); }
+                catch { onErr?.(new Error("No se pudo leer la imagen de la firma.")); }
+              }} />
+            </label>
+            {form.issuerSignatureUrl && <button onClick={() => set({ issuerSignatureUrl: "" })} className="ml-2 text-xs text-rose-600 hover:underline">Quitar</button>}
+            <p className="mt-1.5 text-[11px] text-slate-400">PNG, JPG o WebP. Se imprime sobre la línea de firma del emisor.</p>
+          </div>
+        </div>
       </Box>
 
       <div className="flex gap-2">
