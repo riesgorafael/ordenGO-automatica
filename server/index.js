@@ -1650,7 +1650,13 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     // El cliente corporativo no ve la cartera del proveedor: sin esto recibía el listado completo
     // de clientes de la empresa, que es información comercial sensible y ajena.
     .filter(() => !client)
-    .filter((client) => !tec || operationalClientIds.has(client.id) || operationalClientNames.has(String(client.name || "").trim().toLowerCase()))
+    // El técnico de campo ve la nómina completa: es quien da de alta las órdenes y necesita poder
+    // elegir cualquier cliente, incluido uno al que todavía no fue. Antes sólo veía aquellos donde
+    // ya tenía trabajo previo, así que la primera visita a un cliente nuevo era imposible de cargar.
+    // No implica exponer información comercial: clientForRole ya recorta la ficha a nombre, código
+    // y plantas, sin CUIT, condiciones de pago ni contactos administrativos.
+    // El técnico de oficina sigue acotado, porque trabaja por proyecto y no crea órdenes.
+    .filter((client) => req.user.role !== "tecnico_oficina" || operationalClientIds.has(client.id) || operationalClientNames.has(String(client.name || "").trim().toLowerCase()))
     .map((client) => clientForRole(client, req.user.role)).filter(Boolean);
   // Órdenes para el cliente corporativo: sólo las de su empresa y, si tiene planta asignada, sólo
   // las de esa planta. La serialización deja fuera todo el dinero y el costo interno —precios,
