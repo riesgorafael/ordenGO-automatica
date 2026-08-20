@@ -888,7 +888,14 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   // Señal para abrir el lienzo de dibujo desde la barra superior, fuera del módulo de Notas.
   const [drawingSignal, setDrawingSignal] = useState(0);
-// Idioma de la interfaz. Arranca por la configuración del sistema y queda fijado si el usuario  // elige uno: la preferencia explícita gana sobre la detección automática.  const [lang, setLang] = useState(detectLanguage);  const t = useMemo(() => translator(lang), [lang]);  const changeLanguage = useCallback((next) => { setLang(next); saveLanguage(next); }, []);  // El atributo lang del documento importa para lectores de pantalla y para la corrección  // ortográfica del navegador, que si no asume el idioma equivocado en todos los campos de texto.  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
+  // Idioma de la interfaz. Arranca por la configuración del sistema operativo y queda fijado si el
+  // usuario elige uno: la preferencia explícita gana sobre la detección automática.
+  const [lang, setLang] = useState(detectLanguage);
+  const t = useMemo(() => translator(lang), [lang]);
+  const changeLanguage = useCallback((next) => { setLang(next); saveLanguage(next); }, []);
+  // El atributo lang del documento importa para lectores de pantalla y para el corrector
+  // ortográfico del navegador, que si no asume el idioma equivocado en todos los campos de texto.
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   const [notifs, setNotifs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
