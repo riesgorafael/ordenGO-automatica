@@ -2018,7 +2018,7 @@ function Login({ branding = DEFAULT_BRANDING, onLogin }) {
               Va con contacto porque también funciona como puerta de entrada comercial: quien vea
               la aplicación en casa de un cliente y la quiera para su empresa, sabe a dónde escribir. */}
           <div className="mt-10 border-t border-cyan-200/10 pt-4 text-[11px] leading-relaxed text-slate-400">
-            Desarrollado por <a href="https://www.automatica-arg.com.ar" target="_blank" rel="noreferrer" className="font-medium text-slate-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Automática ARG</a>
+            Desarrollado por <a href="https://www.automatica-arg.com.ar" target="_blank" rel="noreferrer" className="font-medium text-slate-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Automatica ARG</a>
             <span className="mx-1.5 text-slate-600">·</span>
             <a href="mailto:info@automatica-arg.com.ar" className="hover:text-slate-200">info@automatica-arg.com.ar</a>
           </div>
