@@ -3509,10 +3509,22 @@ app.post("/api/tasks/:id/comment", auth, requireProjectWrite, async (req, res) =
   const staff = (await pool.query("SELECT id, role FROM users WHERE active=true")).rows;
   staff.forEach((user) => { if (["admin", "gerente"].includes(user.role)) candidates.add(user.id); });
   const roleById = new Map(staff.map((user) => [user.id, user.role]));
+  // Menciones con @: quien es nombrado recibe aviso aunque no tenga la tarea ni el proyecto
+  // asignados. Es el sentido de mencionar a alguien — convocarlo a algo donde no estaba.
+  const named = new Set();
+  const namesRow = (await pool.query("SELECT id, name FROM users WHERE active=true")).rows;
+  namesRow.forEach((user) => {
+    // Se compara sobre el texto en minúsculas para que "@augusto roldan" y "@Augusto Roldan" valgan
+    // igual. El nombre completo evita que "@ana" enganche a "Ana" y a "Mariana" a la vez.
+    if (text.toLowerCase().includes(`@${String(user.name).toLowerCase()}`)) named.add(user.id);
+  });
+  named.forEach((id) => candidates.add(id));
   const recipients = [...candidates].filter((id) => id !== req.user.id && roleById.has(id)
     && !isMonitor(roleById.get(id)) && !isClient(roleById.get(id)));
   const preview = text.length > 60 ? `${text.slice(0, 60)}…` : text;
-  for (const id of recipients) await notify(id, `${req.user.name} comentó en ${merged.id}: ${preview}`, "task:" + merged.id);
+  // A quien fue mencionado se le dice explícitamente: en una bandeja con varios avisos, "te mencionó"
+  // separa lo que requiere su respuesta de lo que es sólo seguimiento del equipo.
+  for (const id of recipients) await notify(id, `${req.user.name} ${named.has(id) ? "te mencionó" : "comentó"} en ${merged.id}: ${preview}`, "task:" + merged.id);
   res.json(merged);
 });
 app.delete("/api/tasks/:id", auth, requireRole("admin", "gerente", "tecnico", "tecnico_oficina"), async (req, res) => {

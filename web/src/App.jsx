@@ -4722,7 +4722,7 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
       // negociación que ya no aplican: mostraban "Sin definir" ocupando media tarjeta. Se sustituyen
       // por los datos del cierre, que es lo que sí se consulta después de ganar.
       ? <><div><span className="block text-[10px] text-slate-400">Aprobado el</span><b>{budget.approvedAt ? budgetDate(budget.approvedAt) : "—"}</b></div><div><span className="block text-[10px] text-slate-400">Ciclo de venta</span><b>{salesCycleDays != null ? `${salesCycleDays} día(s)` : "—"}</b></div></>
-      : <><div><span className="block text-[10px] text-slate-400">Próxima acción</span><b>{budget.nextAction || "Sin definir"}</b></div><div><span className="block text-[10px] text-slate-400">Seguimiento</span><b className={followDue ? "text-rose-600" : ""}>{budgetDate(budget.nextFollowUp)}</b></div><div><span className="block text-[10px] text-slate-400">Válido hasta</span><b className={offerExpired ? "text-amber-600" : ""}>{budget.validUntil ? budgetDate(budget.validUntil) : "Sin definir"}</b></div></>}<div><span className="block text-[10px] text-slate-400">Plan previsto</span><b>{budgetDate(budget.plannedStart)}{budget.plannedEnd ? ` → ${budgetDate(budget.plannedEnd)}` : ""}</b></div><div><span className="block text-[10px] text-slate-400">Recursos</span><b>{budget.durationDays ? `${budget.teamSize || 1} persona(s) · ${budget.durationDays} días` : "Sin planificar"}</b></div><div><span className="block text-[10px] text-slate-400">Antigüedad</span><b className={ageDays >= 30 && !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) ? "text-amber-600" : ""}>{ageDays != null ? `${ageDays} día(s)` : "—"}</b></div></div><div className="mt-auto flex flex-wrap gap-2 border-t border-slate-100 pt-3" onClick={(event) => event.stopPropagation()}>{budget.projectId && <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"><Folder className="h-4 w-4" /> Proyecto {project?.key || "creado"}</span>}{billed > 0 && <span className="inline-flex items-center rounded-lg bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700">Facturado: {money(billed)}</span>}{collected > 0 && <span title={`Cobrado ${money(collected)} de ${money(billedGross)} facturados con IVA`} className={`inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium ${fullyPaid ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>Cobrado: {money(collected)}{!fullyPaid && ` de ${money(billedGross)}`}</span>}{billed < Number(budget.amount) && <button onClick={() => setBillingBudget(budget)} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700 hover:bg-sky-100"><FileText className="h-4 w-4" /> Registrar factura</button>}{["Aprobado", "Facturado"].includes(budget.stage) && <button onClick={() => setExecutionBudget(budget)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-400" title="Elegir cómo iniciar la ejecución del presupuesto"><ChevronRight className="h-4 w-4" /> Iniciar ejecución</button>}</div></Box>; })}</div>}
+      : <><div><span className="block text-[10px] text-slate-400">Próxima acción</span><b>{budget.nextAction || "Sin definir"}</b></div><div><span className="block text-[10px] text-slate-400">Seguimiento</span><b className={followDue ? "text-rose-600" : ""}>{budgetDate(budget.nextFollowUp)}</b></div><div><span className="block text-[10px] text-slate-400">Válido hasta</span><b className={offerExpired ? "text-amber-600" : ""}>{budget.validUntil ? budgetDate(budget.validUntil) : "Sin definir"}</b></div></>}<div><span className="block text-[10px] text-slate-400">Plan previsto</span><b>{budgetDate(budget.plannedStart)}{budget.plannedEnd ? ` → ${budgetDate(budget.plannedEnd)}` : ""}</b></div><div><span className="block text-[10px] text-slate-400">Recursos</span><b>{budget.durationDays ? `${budget.teamSize || 1} persona(s) · ${budget.durationDays} días` : "Sin planificar"}</b></div><div><span className="block text-[10px] text-slate-400">Antigüedad</span><b className={ageDays >= 30 && !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) ? "text-amber-600" : ""}>{ageDays != null ? `${ageDays} día(s)` : "—"}</b></div></div><div className="mt-auto flex flex-wrap gap-2 border-t border-slate-100 pt-3" onClick={(event) => event.stopPropagation()}>{budget.projectId && <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"><Folder className="h-4 w-4" /> Proyecto {project?.key || "creado"}</span>}{billed > 0 && <span className="inline-flex items-center rounded-lg bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700">Facturado: {money(payment.billedGross)}</span>}{collected > 0 && <span title={`Cobrado ${money(collected)} de ${money(billedGross)} facturados con IVA`} className={`inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium ${fullyPaid ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>Cobrado: {money(collected)}{!fullyPaid && ` de ${money(billedGross)}`}</span>}{billed < Number(budget.amount) && <button onClick={() => setBillingBudget(budget)} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700 hover:bg-sky-100"><FileText className="h-4 w-4" /> Registrar factura</button>}{["Aprobado", "Facturado"].includes(budget.stage) && <button onClick={() => setExecutionBudget(budget)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-400" title="Elegir cómo iniciar la ejecución del presupuesto"><ChevronRight className="h-4 w-4" /> Iniciar ejecución</button>}</div></Box>; })}</div>}
     {editorOpen && <BudgetEditor budget={editingBudget} clients={clients} parts={parts} orders={orders} branding={branding} onOpenOrder={onOpenOrder} me={me} onClose={() => setEditorOpen(false)} onSave={onSave} />}
     {billingBudget && <ProjectInvoiceModal budget={billingBudget} project={projects.find((project) => project.id === billingBudget.projectId)} onClose={() => setBillingBudget(null)} onSave={onInvoice} />}
     {executionBudget && <ExecutionChoiceModal budget={executionBudget} project={projects.find((project) => project.id === executionBudget.projectId)} recommendProject={projectRecommended(executionBudget)} onClose={() => setExecutionBudget(null)} onOrder={() => { setExecutionBudget(null); onCreateOrder(executionBudget); }} onProject={async () => { const result = await onConvert(executionBudget); if (result) setExecutionBudget(null); return result; }} />}
@@ -7571,7 +7571,7 @@ function WorkCalendar({ tasks, orders, projects, userById, onOpenTask, onOpenOrd
 }
 
 /* Sección reutilizable de actividad y comentarios */
-function ActivitySection({ entity, onSend, userById }) {
+function ActivitySection({ entity, onSend, userById, users = [] }) {
   const [act, setAct] = useState(entity.activity || []);
   const [text, setText] = useState(""); const [busy, setBusy] = useState(false);
   const send = async () => { const t = text.trim(); if (!t) return; setBusy(true); try { const upd = await onSend(t); setAct(upd.activity || []); setText(""); } catch {} finally { setBusy(false); } };
@@ -7587,8 +7587,33 @@ function ActivitySection({ entity, onSend, userById }) {
           </div>
         ))}
       </div>
+      {/* Menciones con @: se detecta el fragmento que se está escribiendo al final del texto y se
+          ofrece la lista filtrada. Al elegir, se reemplaza ese fragmento por el nombre completo y
+          se agrega un espacio, para que escribir "@aug" y tocar a Augusto deje "@Augusto Roldan ".
+          Sólo al final del texto a propósito: cubrir cualquier posición del cursor exigiría manejar
+          selectionStart y no aporta para el uso real, que es escribir de corrido. */}
+      {(() => {
+        const fragment = /(?:^|\s)@([\p{L}\s]*)$/u.exec(text);
+        if (!fragment) return null;
+        const query = fragment[1].trim().toLowerCase();
+        const matches = users.filter((u) => u.active !== false && u.name.toLowerCase().includes(query)).slice(0, 5);
+        if (!matches.length) return null;
+        return (
+          <div className="mb-1.5 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            {matches.map((u) => (
+              <button key={u.id} type="button" onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setText(`${text.slice(0, fragment.index + (fragment[0].startsWith("@") ? 0 : 1))}@${u.name} `)}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-brand-50">
+                <Avatar user={u} size={20} />
+                <span className="min-w-0 flex-1 truncate text-xs text-slate-700">{u.name}</span>
+                <span className="shrink-0 text-[10px] text-slate-400">{ROLES[u.role]}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
       <div className="flex gap-2">
-        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Escribe un comentario…" className="u-input flex-1" />
+        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Escribe un comentario… usá @ para mencionar" className="u-input flex-1" />
         <button onClick={send} disabled={busy || !text.trim()} className="rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">Enviar</button>
       </div>
     </div>
@@ -7662,7 +7687,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
             </div>
           </div>
         )}
-        {editingExisting && onComment && !readOnly && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} onSend={(text) => onComment(f.id, text)} /></div>}
+        {editingExisting && onComment && !readOnly && <div className="mt-4 border-t border-slate-100 pt-4"><ActivitySection entity={f} users={users} onSend={(text) => onComment(f.id, text)} /></div>}
         <div className="mt-5 flex gap-2">{editingExisting && canDelete && !readOnly && <button onClick={() => onDelete(f.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}<button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">{readOnly ? "Cerrar" : "Cancelar"}</button>{!readOnly && <button onClick={save} disabled={!f.title.trim()} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:opacity-50">{editingExisting ? "Guardar" : "Crear"}</button>}</div>
       </div>
     </div>
