@@ -312,6 +312,28 @@ function fileToProfilePhoto(file) {
     reader.onerror = reject; reader.readAsDataURL(file);
   });
 }
+// Firma escaneada: se reduce pero se conserva en PNG. fileToImages convierte a JPEG, que no admite
+// transparencia y rellena de negro los píxeles transparentes — una firma recortada quedaba como un
+// rectángulo negro. PNG mantiene el canal alfa y jsPDF lo respeta al insertarla en el remito.
+function fileToSignature(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const scale = Math.min(1, 600 / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        // Sin fondo: el canvas arranca transparente y así se queda.
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      image.onerror = reject; image.src = reader.result;
+    };
+    reader.onerror = reject; reader.readAsDataURL(file);
+  });
+}
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const rd = new FileReader();
@@ -5965,7 +5987,7 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) 
                 if (!file) return;
                 // Se reduce antes de guardar: la firma viaja dentro del remito y en el listado se
                 // cargan todos, así que un escaneo sin achicar multiplicaría el peso de la respuesta.
-                try { const { thumb } = await fileToImages(file); set({ issuerSignatureUrl: thumb }); }
+                try { set({ issuerSignatureUrl: await fileToSignature(file) }); }
                 catch { onErr?.(new Error("No se pudo leer la imagen de la firma.")); }
               }} />
             </label>
