@@ -7425,9 +7425,9 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const setTechnicalField = (field, value) => setTechnical((current) => ({ ...current, [field]: value }));
   const [scannerOpen, setScannerOpen] = useState(false);
   const assetHistory = useMemo(() => {
-    const tag = (technical.assetTag || "").trim().toLowerCase();
+    const tag = tagKey(technical.assetTag);
     if (!tag) return [];
-    return knownOrders.filter((o) => o.id !== currentOrderId && (o.technical?.assetTag || "").trim().toLowerCase() === tag).sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 5);
+    return knownOrders.filter((o) => o.id !== currentOrderId && tagKey(o.technical?.assetTag) === tag).sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 5);
   }, [technical.assetTag, knownOrders, currentOrderId]);
   const [signerRoleChoice, setSignerRoleChoice] = useState(() => SIGNER_ROLES.includes(initial.technical?.signerRole) ? initial.technical.signerRole : (initial.technical?.signerRole ? "Otro" : ""));
   const [photos, setPhotos] = useState(initial.photos || []); const [analyzing, setAnalyzing] = useState(false);
@@ -7522,6 +7522,40 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
     }, () => setGeoMsg("No se pudo acceder a la ubicación. Revisá el permiso del navegador."), { timeout: 8000 });
   };
   const clientCode = clientMode === "existing" ? (client?.code || "—") : "auto";
+  /* Sugerencias de TAG para no escribir de memoria. Se arman con dos fuentes: los equipos dados de
+     alta en el registro y los TAG que ya aparecieron en órdenes de este mismo cliente. La segunda
+     importa tanto como la primera — el parque real siempre le lleva ventaja al registro, y forzar
+     el alta previa dejaría al técnico sin sugerencia justo cuando más escribe. */
+  const tagSuggestions = useMemo(() => {
+    if (!clientId) return [];
+    const byKey = new Map();
+    const put = (tag, extra) => {
+      const key = tagKey(tag);
+      if (!key) return;
+      const current = byKey.get(key) || { tag: String(tag).trim(), count: 0, registered: false, last: null, name: "" };
+      byKey.set(key, { ...current, ...extra, count: current.count + (extra.count || 0), registered: current.registered || !!extra.registered });
+    };
+    for (const a of assets) {
+      if (a.clientId !== clientId || a.status === "Dado de baja" || !a.tag) continue;
+      put(a.tag, { registered: true, name: a.name || "" });
+    }
+    for (const o of knownOrders) {
+      if (o.clientId !== clientId && String(o.client || "") !== String(client?.name || "")) continue;
+      const tag = o.technical?.assetTag;
+      if (!tag) continue;
+      put(tag, { count: 1, last: o.date || null, name: byKey.get(tagKey(tag))?.name || o.equipo || "" });
+    }
+    return [...byKey.values()].sort((a, b) => (b.count - a.count) || a.tag.localeCompare(b.tag)).slice(0, 60);
+  }, [assets, knownOrders, clientId, client?.name]);
+
+  // Cuando el TAG escrito coincide con uno ya conocido, la ficha técnica se completa desde la última
+  // intervención: son datos del equipo, no de la orden, y volver a tipearlos solo agrega variantes.
+  const knownTag = useMemo(() => {
+    const key = tagKey(technical.assetTag);
+    if (!key) return null;
+    return tagSuggestions.find((t) => tagKey(t.tag) === key) || null;
+  }, [technical.assetTag, tagSuggestions]);
+  const suggestRegister = knownTag && !knownTag.registered && knownTag.count >= 3;
   const folioPreview = `OT-${clientCode}-${new Date().getFullYear()}-###`;
   const preview = orderTotals({ laborHours: automaticLaborHours, billableHours: projectedBillableHours, technicians, rate, laborBillable, materials, technical });
   const chronologyErrors = timelineErrors(technical, timelineNow);
@@ -7672,7 +7706,32 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           <ReqLabel>Equipo / sistema intervenido</ReqLabel>
           <input value={equipo} onChange={(e) => setEquipo(e.target.value)} placeholder="Ej. Tablero principal, línea 2" className={`u-input mt-1 ${errCls(!(equipo || technical.assetTag))}`} />
           <L label="Categoría" help="Etiqueta corta y libre para agrupar el tipo de falla o intervención (ej. Sobrecalentamiento, Falla eléctrica, Programación)."><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Sobrecalentamiento" className="u-input mt-1" /></L>
-          <div className="mt-2 grid grid-cols-2 gap-2"><L label="TAG del activo"><div className="flex gap-1.5"><input value={technical.assetTag} onChange={(e) => setTechnicalField("assetTag", e.target.value)} placeholder="Ej. VFD-L2-03" className="u-input" /><button type="button" onClick={() => setScannerOpen(true)} title="Escanear código del equipo" aria-label="Escanear código del equipo" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div></L><L label="Fabricante"><input value={technical.manufacturer} onChange={(e) => setTechnicalField("manufacturer", e.target.value)} className="u-input" /></L><L label="Modelo"><input value={technical.model} onChange={(e) => setTechnicalField("model", e.target.value)} className="u-input" /></L><L label="N° de serie"><input value={technical.serial} onChange={(e) => setTechnicalField("serial", e.target.value)} className="u-input" /></L></div>
+          <div className="mt-2 grid grid-cols-2 gap-2"><L label="TAG del activo" help="Escribí dos o tres caracteres y elegí de la lista: así el mismo equipo queda siempre con el mismo código y su historial no se parte."><div className="flex gap-1.5"><input value={technical.assetTag} list="og-asset-tags" onChange={(e) => {
+            const value = e.target.value;
+            setTechnicalField("assetTag", value);
+            // Al reconocer un TAG ya visto se completa la ficha del equipo desde su última
+            // intervención, sin pisar lo que el técnico ya haya escrito en esta orden.
+            const match = tagSuggestions.find((t) => tagKey(t.tag) === tagKey(value));
+            if (!match) return;
+            const previous = knownOrders.filter((o) => tagKey(o.technical?.assetTag) === tagKey(value)).sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+            const source = assets.find((a) => tagKey(a.tag) === tagKey(value) && a.clientId === clientId) || previous?.technical || {};
+            if (!equipo && (match.name || previous?.equipo)) setEquipo(match.name || previous.equipo);
+            for (const field of ["manufacturer", "model", "serial"]) {
+              if (!technical[field] && source[field]) setTechnicalField(field, source[field]);
+            }
+          }} placeholder="Ej. VFD-L2-03" className="u-input" /><button type="button" onClick={() => setScannerOpen(true)} title="Escanear código del equipo" aria-label="Escanear código del equipo" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button></div>
+            <datalist id="og-asset-tags">
+              {tagSuggestions.map((t) => <option key={t.tag} value={t.tag}>{[t.name, t.registered ? "en el registro" : (t.count > 0 ? t.count + " intervención(es)" : "")].filter(Boolean).join(" · ")}</option>)}
+            </datalist>
+          </L><L label="Fabricante"><input value={technical.manufacturer} onChange={(e) => setTechnicalField("manufacturer", e.target.value)} className="u-input" /></L><L label="Modelo"><input value={technical.model} onChange={(e) => setTechnicalField("model", e.target.value)} className="u-input" /></L><L label="N° de serie"><input value={technical.serial} onChange={(e) => setTechnicalField("serial", e.target.value)} className="u-input" /></L></div>
+          {/* Un TAG que ya volvió varias veces y sigue fuera del registro es justo el equipo que
+              conviene dar de alta: es donde el historial y el stock de seguridad rinden. */}
+          {suggestRegister && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Este equipo ya se intervino {knownTag.count} veces y no está en el registro de activos. Darlo de alta te deja seguir su historial y asociarle repuestos críticos.</span>
+            </div>
+          )}
           {assetHistory.length > 0 && (
             <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3">
               <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-sky-800"><ClipboardList className="h-3.5 w-3.5" /> Historial de este activo ({assetHistory.length})</h4>
@@ -8496,6 +8555,10 @@ const CRITICALITY_STYLE = {
    equipos que lo declararon crítico y que siguen en uso. Es el número que justifica un mínimo de
    stock —sale de la criticidad del equipo, no del criterio de quien cargó la ficha— y por eso se
    recalcula desde los activos en lugar de guardarse suelto en el repuesto. */
+/* Clave con la que se decide si dos TAG son el mismo equipo. Se ignoran mayúsculas y todo lo que
+   no sea letra o número: los separadores son la fuente habitual de duplicados al escribir a mano. */
+const tagKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
 function requiredStockByPart(assets) {
   const required = new Map();
   for (const asset of assets) {
