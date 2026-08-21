@@ -572,9 +572,13 @@ async function initDb() {
     ALTER TABLE material_lists DROP CONSTRAINT IF EXISTS material_lists_client_fk;
     ALTER TABLE material_lists DROP CONSTRAINT IF EXISTS material_lists_project_fk;
   `);
+  // push_subscriptions queda fuera a propósito: no tiene columna "id" y su clave es el endpoint,
+  // que el servicio de push del navegador genera único a nivel mundial. Sumarla acá haría que el
+  // bucle intentara una PK (organization_id,id) sobre una columna inexistente. El aislamiento por
+  // organización lo sigue dando RLS, que sí la cubre en tenantTables.
   const tenantEntityTables = [
     "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications",
-    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "push_subscriptions", "whiteboard_notes", "stock_movements",
+    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "whiteboard_notes", "stock_movements",
     "audit_log", "file_assets", "gantt_tasks",
   ];
   for (const table of tenantEntityTables) {
