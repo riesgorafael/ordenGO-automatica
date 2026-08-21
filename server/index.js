@@ -309,8 +309,8 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS users(
       id text PRIMARY KEY, name text NOT NULL, email text UNIQUE NOT NULL,
       password_hash text NOT NULL, role text NOT NULL DEFAULT 'tecnico',
-    CREATE TABLE IF NOT EXISTS push_subscriptions ( endpoint text PRIMARY KEY, user_id text, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
       color text DEFAULT '#0ea5e9', active boolean DEFAULT true, created_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS push_subscriptions ( endpoint text PRIMARY KEY, user_id text, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS clients ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS projects( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS budgets ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
