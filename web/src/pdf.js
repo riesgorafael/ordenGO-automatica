@@ -334,7 +334,7 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null,
   const fotos = (order.photos || []).filter((p) => p && p.url && p.kind !== "document");
   if (fotos.length) {
     section("Registro fotográfico");
-    const gap = 5, cols = 2, frameW = (W - 2 * M - gap) / cols, frameH = 50, rowH = 61;
+    const gap = 5, cols = 2, frameW = (W - 2 * M - gap) / cols, frameH = 50, rowH = 68; // +7 mm para el epígrafe bajo cada imagen
     for (let i = 0; i < fotos.length; i += cols) {
       brk(rowH);
       fotos.slice(i, i + cols).forEach((p, offset) => {
@@ -350,6 +350,13 @@ export function buildOrderReceiptPDF(order, audience = "client", project = null,
         const stamp = p.ts ? formatStamp(p.ts) : "";
         doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(71, 85, 105);
         doc.text(`IMAGEN ${i + offset + 1} - ${String(p.cat || "EVIDENCIA").toUpperCase()}`, x, y + frameH + 4);
+        // Epígrafe debajo del rótulo: es lo que explica qué se está mirando. Sin esto, el cliente
+        // veía una foto de un tablero sin saber qué había que observar en ella. Dos líneas como
+        // máximo, que es lo que entra sin invadir la fila siguiente.
+        if (p.caption) {
+          doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(71, 85, 105);
+          doc.text(doc.splitTextToSize(String(p.caption), frameW).slice(0, 2), x, y + frameH + 8);
+        }
         if (stamp) { doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139); doc.text(stamp, x + frameW, y + frameH + 4, { align: "right" }); }
       });
       y += rowH;

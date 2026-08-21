@@ -6078,7 +6078,9 @@ function MaterialListsModule({ materialLists, projects, clients, me, branding, i
 }
 
 function ActionCenter({ orders, tasks, parts, budgets = [], onGo }) {
-  const pendingBilling = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada").length;
+  // Mismo criterio que el filtro y el aviso de Órdenes: no alcanza con el estado, tiene que haber
+  // importe a cobrar.
+  const pendingBilling = orders.filter((o) => (o.status === "Completada" || o.status === "Aprobada") && orderTotals(o).total > 0).length;
   const overdue = tasks.filter(isOverdue).length;
   const stale = tasks.filter(isStale).length;
   const low = parts.filter((p) => Number(p.stock) <= Number(p.minStock)).length;
@@ -6113,7 +6115,8 @@ function Dashboard({ orders, users, tasks, parts, budgets = [], branding = DEFAU
   const prevEnd = startOf;
   const prevBilled = facturadas.filter((o) => { const d = new Date(o.date + "T00:00:00"); return d >= prevStart && d < prevEnd; }).reduce((s, o) => s + tot(o), 0);
   const variation = prevBilled ? Math.round(((periodBilled - prevBilled) / prevBilled) * 100) : null;
-  const pending = real.filter((o) => o.status === "Completada" || o.status === "Aprobada");
+  // "Por facturar" también exige importe: una orden sin nada que cobrar no es un pendiente.
+  const pending = real.filter((o) => (o.status === "Completada" || o.status === "Aprobada") && orderTotals(o).total > 0);
   const pendingTotal = pending.reduce((s, o) => s + tot(o), 0);
   const oldestPending = pending.reduce((max, o) => Math.max(max, daysSince((o.date || "") + "T00:00:00")), 0);
   const periodOrders = real.filter(inPeriod);
@@ -6709,7 +6712,9 @@ function OrderRow({ order: o, ger, projects = [], branding = DEFAULT_BRANDING, o
 function OrdersHome({ orders, ger, projects = [], branding = DEFAULT_BRANDING, onErr, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
   const [oUrgent, setOUrgent] = useState(false);
   const [view, setView] = useState("lista"); // "lista" | "estado"
-  const pendingBill = orders.filter((o) => o.status === "Completada" || o.status === "Aprobada");
+  // Mismo criterio que el filtro "Facturables": lista y con algo que cobrar. Con solo el estado,
+  // el aviso contaba órdenes no facturables y mandaba a un filtro que después no mostraba ninguna.
+  const pendingBill = orders.filter((o) => (o.status === "Completada" || o.status === "Aprobada") && orderTotals(o).total > 0);
   const unsigned = orders.filter((o) => o.status === "Completada" && !o.signatureUrl && !o.noSignReason);
   const overdueResponse = orders.filter(isResponseOverdue);
   const monthKey = localMonthKey();
