@@ -8910,6 +8910,15 @@ const CRITICALITY_STYLE = {
    equipos que lo declararon crítico y que siguen en uso. Es el número que justifica un mínimo de
    stock —sale de la criticidad del equipo, no del criterio de quien cargó la ficha— y por eso se
    recalcula desde los activos en lugar de guardarse suelto en el repuesto. */
+/* Tamaños de etiqueta. El QR lleva la URL completa: con corrección alta son 37x37 módulos, así
+   que el milimetraje por módulo es lo que decide si un lector la toma. Por debajo de 0,4 mm falla
+   con la etiqueta sucia o despegada, que es su estado habitual en planta. */
+const ASSET_LABEL_SIZES = [
+  { id: "grande", label: "Grande", cols: 4, rows: 6, perSheet: 24, qrMm: 34, note: "Para equipos grandes o ambientes sucios." },
+  { id: "mediana", label: "Mediana", cols: 5, rows: 8, perSheet: 40, qrMm: 22.6, note: "La recomendada: se lee sin esfuerzo y rinde la hoja." },
+  { id: "chica", label: "Chica", cols: 6, rows: 10, perSheet: 60, qrMm: 15.7, note: "Para equipos pequeños. Necesita impresión nítida: queda en el mínimo legible." },
+];
+
 /* Clave con la que se decide si dos TAG son el mismo equipo. Se ignoran mayúsculas y todo lo que
    no sea letra o número: los separadores son la fuente habitual de duplicados al escribir a mano. */
 const tagKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -9007,7 +9016,8 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
   const [critFilter, setCritFilter] = useState("");
   const [scanning, setScanning] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
-  const [labelCount, setLabelCount] = useState(32);
+  const [labelCount, setLabelCount] = useState(40);
+  const [labelSize, setLabelSize] = useState("mediana");
   const [scanMsg, setScanMsg] = useState("");
   const mouseDownOnBackdrop = useRef(false);
 
@@ -9129,13 +9139,35 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
             <L label="Cuántas etiquetas">
               <input type="number" min="1" max="480" value={labelCount} onChange={(e) => setLabelCount(e.target.value)} className="u-input" />
             </L>
-            <p className="mt-1.5 text-[11px] text-slate-400">Entran 24 por hoja A4. Los códigos se generan al momento: si imprimís de más, las sobrantes quedan disponibles para otro día.</p>
+            {/* El QR de una etiqueta lleva la URL completa y usa 37x37 módulos con corrección alta.
+                De ahí sale el límite de abajo: por debajo de ~0,4 mm por módulo el lector empieza a
+                fallar justo cuando la calcomanía está rayada o sucia, que es su estado normal. */}
+            <div className="mt-3">
+              <span className="mb-1 block text-[11px] font-medium text-slate-500">Tamaño</span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {ASSET_LABEL_SIZES.map((size) => (
+                  <button key={size.id} type="button" onClick={() => setLabelSize(size.id)}
+                    className={`rounded-lg border px-2 py-2 text-center text-[11px] font-medium ${labelSize === size.id ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                    {size.label}
+                    <span className="mt-0.5 block text-[10px] font-normal text-slate-400">{size.perSheet}/hoja</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="mt-1.5 text-[11px] leading-snug text-slate-400">
+              {(() => {
+                const size = ASSET_LABEL_SIZES.find((s) => s.id === labelSize) || ASSET_LABEL_SIZES[1];
+                return `QR de ${size.qrMm} mm, ${size.perSheet} por hoja A4. ${size.note}`;
+              })()}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-400">Los códigos se generan al momento: si imprimís de más, las sobrantes quedan disponibles para otro día.</p>
             <div className="mt-4 flex gap-2">
               <button onClick={() => setLabelsOpen(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
               <button onClick={async () => {
                 const count = Math.max(1, Math.min(480, Number(labelCount) || 1));
                 const tokens = Array.from({ length: count }, () => newAssetToken(branding.companyName));
-                try { await assetLabelsPDF(tokens, branding, { cols: 4, rows: 6 }); setLabelsOpen(false); }
+                const size = ASSET_LABEL_SIZES.find((item) => item.id === labelSize) || ASSET_LABEL_SIZES[1];
+                try { await assetLabelsPDF(tokens, branding, { cols: size.cols, rows: size.rows }); setLabelsOpen(false); }
                 catch (e) { onErr?.(e); }
               }} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-400">Generar PDF</button>
             </div>
