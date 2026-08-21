@@ -129,10 +129,15 @@ function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30) {
   // partir de cuántas líneas haya: con pocas queda aireado y con siete se compacta para entrar sin
   // pisar la sección siguiente. Antes el paso era fijo en 3,8 mm y la última línea se cortaba.
   doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139);
+  // La línea separadora del encabezado está en y=49 en los tres reportes, así que el bloque tiene
+  // que cerrar antes. Con siete renglones se arranca más arriba y se comprime el paso: 27 + 6×3 = 45,
+  // cuatro milímetros de aire. Antes, con paso fijo, el último renglón caía justo sobre la línea.
   const lines = companyLines(branding).slice(0, 7);
-  const step = lines.length > 5 ? 3.2 : 3.8;
-  doc.setFontSize(lines.length > 5 ? 6.6 : 7.2);
-  lines.forEach((line, index) => doc.text(line, M, linesY + index * step));
+  const dense = lines.length > 5;
+  const step = dense ? 3 : 3.8;
+  const top = dense ? linesY - 3 : linesY;
+  doc.setFontSize(dense ? 6.4 : 7.2);
+  lines.forEach((line, index) => doc.text(line, M, top + index * step));
 }
 
 function drawServiceSummaryPage(doc, order, valued = false, project = null, branding = {}) {
@@ -159,8 +164,13 @@ function drawServiceSummaryPage(doc, order, valued = false, project = null, bran
   };
   const field = (label, value, x, y, width = 70) => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(71, 85, 105); doc.text(`${label}:`, x, y);
-    doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
-    doc.text(clampLines(value, width, 2), x + 31, y);
+    doc.setFont("helvetica", "normal");
+    // Un campo vacío se marca con un guion en gris en lugar de dejar el rótulo colgando sin nada.
+    // En un documento que el cliente firma, un espacio en blanco es ambiguo: no se sabe si el dato
+    // falta o si no corresponde. El guion dice que se miró y no había.
+    const empty = !String(value ?? "").trim();
+    doc.setTextColor(...(empty ? [148, 163, 184] : [15, 23, 42]));
+    doc.text(empty ? "—" : clampLines(value, width, 2), x + 31, y);
   };
 
   heading("Cliente y servicio", 58);
