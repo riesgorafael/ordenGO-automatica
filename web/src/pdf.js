@@ -126,7 +126,8 @@ function saveBrandedPdf(doc, fileName) { stampProductBranding(doc); doc.save(fil
 function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30) {
   drawLogo(doc, M, logoY, branding);
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
-  companyLines(branding).slice(0, 5).forEach((line, index) => doc.text(line, M, linesY + index * 3.8));
+  // 7 líneas: con la localidad en renglón propio, un tope de 5 dejaba fuera el correo y la web.
+  companyLines(branding).slice(0, 7).forEach((line, index) => doc.text(line, M, linesY + index * 3.8));
 }
 
 function drawServiceSummaryPage(doc, order, valued = false, project = null, branding = {}) {
