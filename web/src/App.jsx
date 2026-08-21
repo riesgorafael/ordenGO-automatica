@@ -5952,9 +5952,18 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) 
     && (!form.site || !order.site || order.site === form.site)
     && !included.has(order.id));
 
+  // El renglón cita la orden y trae el detalle del trabajo. Antes leía order.equipment y
+  // order.technical.solucion, campos que no existen —son order.equipo y order.solucion— así que
+  // sólo quedaba el nombre del servicio y el remito no decía qué se hizo.
+  // La orden se nombra dentro del texto porque el remito ya no tiene columna propia para el folio,
+  // y el cliente necesita poder cruzar el renglón con la constancia de servicio que firmó.
   const addOrder = (order) => set({ items: [...(form.items || []), {
     orderId: order.id, date: order.date || "",
-    description: [order.service, order.equipment, order.technical?.solucion].filter(Boolean).join(" · ").slice(0, 400),
+    description: [
+      `OT ${order.id}${order.service ? ` · ${order.service}` : ""}`,
+      order.equipo ? `Equipo: ${order.equipo}` : "",
+      order.solucion || "",
+    ].filter(Boolean).join("\n").slice(0, 400),
     qty: 1, unit: "u",
   }] });
   const setItem = (index, patch) => set({ items: form.items.map((item, i) => i === index ? { ...item, ...patch } : item) });
@@ -5992,7 +6001,7 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) 
           <div key={index} className="grid grid-cols-[minmax(0,1fr)_4.5rem_3.5rem_2.5rem] gap-2 rounded-lg border border-slate-200 p-2">
             <div className="min-w-0">
               <div className="mb-1 text-[11px] text-slate-400">{item.orderId || "Manual"}{item.date ? ` · ${budgetDate(item.date)}` : ""}</div>
-              <input value={item.description} onChange={(e) => setItem(index, { description: e.target.value })} placeholder="Detalle del trabajo" className="u-input" />
+              <textarea value={item.description} onChange={(e) => setItem(index, { description: e.target.value })} rows={3} placeholder="Detalle del trabajo" className="u-input resize-none" />
             </div>
             <input type="number" min="0" step="1" value={item.qty} onChange={(e) => setItem(index, { qty: e.target.value })} aria-label="Cantidad" className="u-input self-end" />
             <input value={item.unit} onChange={(e) => setItem(index, { unit: e.target.value })} aria-label="Unidad" className="u-input self-end" />
