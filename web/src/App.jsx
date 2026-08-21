@@ -8865,9 +8865,23 @@ function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePa
 /* Código de una etiqueta QR. Se usa un alfabeto sin I, O, 0 ni 1: la etiqueta también se lee y se
    teclea a mano cuando el QR está dañado, y esos cuatro caracteres son los que se confunden. */
 const ASSET_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-function newAssetToken() {
+
+/* Prefijo de la etiqueta, derivado del nombre de la empresa. Sirve para que quien encuentra una
+   calcomanía en planta sepa de quién es sin tener que escanear nada: en un sitio donde trabajan
+   varios proveedores, "MOG-" no distinguía a nadie. Se usan las iniciales de las palabras cuando
+   alcanzan, y si no las primeras letras del nombre. */
+function assetTokenPrefix(companyName) {
+  // Las primeras cuatro letras del nombre, no las iniciales: "AUTO" se reconoce de un vistazo y
+  // "AA" no. El código se lee a un metro de distancia, pegado a un equipo, y muchas veces por
+  // alguien que no trabaja en la empresa que lo puso.
+  const limpio = String(companyName || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return limpio.slice(0, 4) || "MOG";
+}
+
+function newAssetToken(companyName) {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
-  return "MOG-" + [...bytes].map((b) => ASSET_TOKEN_ALPHABET[b % ASSET_TOKEN_ALPHABET.length]).join("");
+  const cuerpo = [...bytes].map((b) => ASSET_TOKEN_ALPHABET[b % ASSET_TOKEN_ALPHABET.length]).join("");
+  return assetTokenPrefix(companyName) + "-" + cuerpo;
 }
 
 /* Lo que devuelve el lector puede ser la URL completa de la etiqueta o sólo el código, según se haya
@@ -8878,7 +8892,9 @@ function assetTokenFrom(scanned) {
   const fromUrl = raw.match(/[?&]activo=([^&\s]+)/i);
   const value = fromUrl ? decodeURIComponent(fromUrl[1]) : raw;
   const token = value.trim().toUpperCase();
-  return /^MOG-[0-9A-Z]{4,20}$/.test(token) ? token : "";
+  // Prefijo de 2 a 4 caracteres: el de la empresa, o el "MOG" de las etiquetas emitidas antes de
+  // que el prefijo existiera. Esas siguen siendo válidas y no hay que reimprimir nada.
+  return /^[A-Z0-9]{2,4}-[0-9A-Z]{4,20}$/.test(token) ? token : "";
 }
 
 const ASSET_CRITICALITY = ["Alta", "Media", "Baja"];
@@ -9113,13 +9129,13 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
             <L label="Cuántas etiquetas">
               <input type="number" min="1" max="480" value={labelCount} onChange={(e) => setLabelCount(e.target.value)} className="u-input" />
             </L>
-            <p className="mt-1.5 text-[11px] text-slate-400">Entran 32 por hoja A4. Los códigos se generan al momento: si imprimís de más, las sobrantes quedan disponibles para otro día.</p>
+            <p className="mt-1.5 text-[11px] text-slate-400">Entran 24 por hoja A4. Los códigos se generan al momento: si imprimís de más, las sobrantes quedan disponibles para otro día.</p>
             <div className="mt-4 flex gap-2">
               <button onClick={() => setLabelsOpen(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
               <button onClick={async () => {
                 const count = Math.max(1, Math.min(480, Number(labelCount) || 1));
-                const tokens = Array.from({ length: count }, newAssetToken);
-                try { await assetLabelsPDF(tokens, branding, { cols: 4, rows: 8 }); setLabelsOpen(false); }
+                const tokens = Array.from({ length: count }, () => newAssetToken(branding.companyName));
+                try { await assetLabelsPDF(tokens, branding, { cols: 4, rows: 6 }); setLabelsOpen(false); }
                 catch (e) { onErr?.(e); }
               }} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-400">Generar PDF</button>
             </div>

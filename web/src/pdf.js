@@ -2091,15 +2091,19 @@ export function deliveryNotePDF(note, branding = {}) {
    El QR lleva una URL y no sólo el código: así también sirve la cámara del teléfono, sin la app. */
 export async function assetLabelsPDF(tokens, branding = {}, options = {}) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const W = 210, H = 297;
+  const W = 210, H = 297, M = 10;
   const cols = Math.max(1, Math.min(6, Number(options.cols) || 4));
-  const rows = Math.max(1, Math.min(12, Number(options.rows) || 8));
-  const M = 10;
+  const rows = Math.max(1, Math.min(12, Number(options.rows) || 6));
   const cellW = (W - M * 2) / cols;
   const cellH = (H - M * 2) / rows;
-  // El QR manda sobre el tamaño de la celda: por debajo de ~15 mm el lector empieza a fallar
-  // cuando la etiqueta está sucia o mal pegada, que es la condición normal en planta.
-  const qrSide = Math.min(cellW, cellH) - 9;
+
+  // Reparto vertical de la celda: nombre de la empresa arriba, QR al medio, código abajo. El QR toma
+  // lo que sobra. Antes el nombre se dibujaba por debajo del código, fuera del alto de la celda, y
+  // no aparecía en ninguna etiqueta impresa.
+  const nombreH = 3.4, codigoH = 4.2, aire = 2.2;
+  const qrSide = Math.max(12, Math.min(cellW - 8, cellH - nombreH - codigoH - aire * 2));
+
+  const empresa = String(branding.companyName || "").trim();
   const origin = (typeof window !== "undefined" && window.location?.origin) || "https://miordengo.com";
   let QRCode = null;
   try { ({ default: QRCode } = await import("qrcode")); } catch { QRCode = null; }
@@ -2107,31 +2111,35 @@ export async function assetLabelsPDF(tokens, branding = {}, options = {}) {
   for (let index = 0; index < tokens.length; index++) {
     const slot = index % (cols * rows);
     if (index > 0 && slot === 0) doc.addPage();
-    const col = slot % cols;
-    const row = Math.floor(slot / cols);
-    const x = M + col * cellW;
-    const y = M + row * cellH;
+    const x = M + (slot % cols) * cellW;
+    const y = M + Math.floor(slot / cols) * cellH;
+    const centro = x + cellW / 2;
 
-    // Marco de corte tenue: se imprime en hoja común y se recorta a mano.
     doc.setDrawColor(210, 216, 224); doc.setLineWidth(0.15);
     doc.rect(x + 1, y + 1, cellW - 2, cellH - 2);
 
-    const token = tokens[index];
+    // Quién emitió la etiqueta, arriba y legible. Es lo primero que se lee al encontrar la
+    // calcomanía pegada a un equipo, y en una planta donde trabajan varios proveedores es lo que
+    // permite saber a quién llamar sin escanear nada.
+    let cursor = y + aire + 1.4;
+    if (empresa) {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); doc.setTextColor(30, 41, 59);
+      doc.text(doc.splitTextToSize(empresa, cellW - 4)[0], centro, cursor, { align: "center" });
+    }
+    cursor = y + aire + nombreH;
+
     if (QRCode) {
       try {
-        const url = `${origin}/?activo=${encodeURIComponent(token)}`;
-        // Corrección alta: una etiqueta en planta se raya, se ensucia y se despega en una esquina.
-        const qr = await QRCode.toDataURL(url, { margin: 0, width: 420, errorCorrectionLevel: "H" });
-        doc.addImage(qr, "PNG", x + (cellW - qrSide) / 2, y + 3.5, qrSide, qrSide, undefined, "FAST");
-      } catch { /* sin QR se imprime igual: el código escrito permite el alta a mano */ }
+        const url = `${origin}/?activo=${encodeURIComponent(tokens[index])}`;
+        // Corrección alta: una etiqueta en planta se raya, se ensucia y se despega de una esquina.
+        const qr = await QRCode.toDataURL(url, { margin: 0, width: 460, errorCorrectionLevel: "H" });
+        doc.addImage(qr, "PNG", centro - qrSide / 2, cursor, qrSide, qrSide, undefined, "FAST");
+      } catch { /* sin QR se imprime igual: con el código escrito se puede dar de alta a mano */ }
     }
-    doc.setFont("courier", "bold"); doc.setFontSize(7.5); doc.setTextColor(30, 41, 59);
-    doc.text(token, x + cellW / 2, y + 3.5 + qrSide + 3.4, { align: "center" });
-    const name = String(branding.companyName || "").trim();
-    if (name) {
-      doc.setFont("helvetica", "normal"); doc.setFontSize(4.6); doc.setTextColor(148, 157, 170);
-      doc.text(name.slice(0, 34), x + cellW / 2, y + 3.5 + qrSide + 6.4, { align: "center" });
-    }
+
+    doc.setFont("courier", "bold"); doc.setFontSize(8); doc.setTextColor(15, 23, 42);
+    doc.text(tokens[index], centro, cursor + qrSide + 3.4, { align: "center" });
   }
   doc.save(`etiquetas-activos-${tokens.length}.pdf`);
 }
+
