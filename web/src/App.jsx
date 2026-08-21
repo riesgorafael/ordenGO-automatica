@@ -8760,7 +8760,13 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onDelete
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const client = clients.find((c) => c.id === form.clientId);
   const sites = clientSites(client);
-  const history = (orders || []).filter((o) => o.assetId === form.id).slice(0, 8);
+  const history = useMemo(() => {
+    const key = tagKey(form.tag);
+    return (orders || [])
+      .filter((o) => (form.id && o.assetId === form.id) || (key && tagKey(o.technical?.assetTag) === key))
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, 8);
+  }, [orders, form.id, form.tag]);
   // La justificación se exige sólo en criticidad alta: es la que inmoviliza stock y ordena la
   // prioridad de atención, así que es la que alguien va a pedir que expliquen.
   const needsReason = form.criticality === "Alta" && !form.criticalityReason.trim();
@@ -8856,13 +8862,28 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onDelete
 
       {history.length > 0 && (
         <Box className="p-4">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Últimas intervenciones</h4>
-          <div className="space-y-1.5">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Últimas intervenciones ({history.length})</h4>
+          <div className="space-y-2">
             {history.map((o) => (
-              <div key={o.id} className="flex items-center gap-2 text-xs">
-                <span className="font-mono text-slate-400">{o.id}</span>
-                <span className="min-w-0 flex-1 truncate text-slate-700">{o.service || o.sintoma || "—"}</span>
-                <span className="shrink-0 text-slate-400">{o.date}</span>
+              <div key={o.id} className="rounded-lg border border-slate-200 p-2.5">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-mono text-[11px] font-medium text-slate-500">{o.id}</span>
+                  {o.status && <Chip className={(O_STYLE[o.status] || O_STYLE.Borrador) + " ring-1"}>{o.status}</Chip>}
+                  {o.urgent && <Chip className="bg-rose-50 text-rose-700 ring-1 ring-rose-200">Urgente</Chip>}
+                  <span className="ml-auto text-[11px] text-slate-400">{o.date}</span>
+                </div>
+                <div className="mt-1 text-sm font-medium text-slate-800">{o.service || "Intervención"}</div>
+                {/* Síntoma y solución son el contenido real de la visita: sin ellos la lista repetía
+                    el tipo de servicio y no se distinguía una intervención de otra. */}
+                {o.sintoma && <p className="mt-1 text-xs text-slate-600"><span className="font-medium text-slate-500">Falla:</span> {o.sintoma}</p>}
+                {o.solucion && <p className="mt-0.5 text-xs text-slate-600"><span className="font-medium text-slate-500">Se hizo:</span> {o.solucion}</p>}
+                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+                  {o.tech && <span>Técnico: {o.tech}</span>}
+                  {o.site && <span>{o.site}</span>}
+                  {Number(o.laborHours) > 0 && <span>{round2(o.laborHours)} h</span>}
+                  {(o.materials || []).length > 0 && <span>{o.materials.length} material(es)</span>}
+                  {!o.assetId && <span className="text-amber-600">Vinculada por TAG</span>}
+                </div>
               </div>
             ))}
           </div>
