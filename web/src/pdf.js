@@ -125,9 +125,14 @@ function stampProductBranding(doc) {
 function saveBrandedPdf(doc, fileName) { stampProductBranding(doc); doc.save(fileName); }
 function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30) {
   drawLogo(doc, M, logoY, branding);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.2); doc.setTextColor(100, 116, 139);
-  // 7 líneas: con la localidad en renglón propio, un tope de 5 dejaba fuera el correo y la web.
-  companyLines(branding).slice(0, 7).forEach((line, index) => doc.text(line, M, linesY + index * 3.8));
+  // El bloque tiene un alto fijo asignado en el encabezado, así que el interlineado se calcula a
+  // partir de cuántas líneas haya: con pocas queda aireado y con siete se compacta para entrar sin
+  // pisar la sección siguiente. Antes el paso era fijo en 3,8 mm y la última línea se cortaba.
+  doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139);
+  const lines = companyLines(branding).slice(0, 7);
+  const step = lines.length > 5 ? 3.2 : 3.8;
+  doc.setFontSize(lines.length > 5 ? 6.6 : 7.2);
+  lines.forEach((line, index) => doc.text(line, M, linesY + index * step));
 }
 
 function drawServiceSummaryPage(doc, order, valued = false, project = null, branding = {}) {
