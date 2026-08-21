@@ -2780,7 +2780,10 @@ function FinanceEntryModal({
     if (saved) onClose();
   };
   const mouseDownOnBackdrop = useRef(false);
-  return (
+  // Portal al body: dentro del árbol de la app, un ancestro con transform o will-change convierte
+  // el position:fixed en relativo a ese ancestro y el diálogo aparece recortado por arriba. Es el
+  // mismo motivo por el que la ficha de empleado necesitó portal.
+  return createPortal((
     <div
       className="motion-backdrop fixed inset-0 z-[70] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4"
       onMouseDown={(event) => {
@@ -3803,7 +3806,7 @@ function FinanceEntryModal({
         />
       )}
     </div>
-  );
+  ), document.body);
 }
 
 function FinanceModule({ movements, projects, budgets, clients, purchaseOrders = [], branding, me, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
@@ -4629,7 +4632,9 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpe
   // Trazabilidad: qué OTs se generaron a partir de este presupuesto (por vínculo directo, o por
   // compatibilidad con OTs viejas que solo guardaron el número de presupuesto en quoteNumber).
   const linkedOrders = form.id ? orders.filter((o) => o.budgetId === form.id || (form.number && (o.quoteNumber === form.number || o.budgetNumber === form.number))).sort((a, b) => (b.date || "").localeCompare(a.date || "")) : [];
-  return <div className="motion-backdrop fixed inset-0 z-[60] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
+  // Portal al body: un ancestro con transform o will-change rompe el position:fixed y el diálogo
+  // queda recortado por arriba. Mismo motivo que en la ficha de empleado y el alta de movimiento.
+  return createPortal(<div className="motion-backdrop fixed inset-0 z-[60] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
     <div role="dialog" aria-modal="true" aria-labelledby="budget-dialog-title" className="modal-frame mobile-dialog mobile-sheet-content flex h-[100dvh] w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 bg-white px-4 py-3 sm:px-5"><div className="min-w-0"><h2 id="budget-dialog-title" className="text-lg font-semibold text-slate-900">{form.id ? `Editar ${form.number || form.id}` : "Nuevo presupuesto"}</h2><p className="text-xs text-slate-500">Estimación técnica, comercial y planificación preliminar</p></div><div className="flex shrink-0 items-center gap-1.5">{form.id && <><button onClick={() => exportPdf("cliente")} title="Exportar PDF para el cliente" className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> PDF cliente</button><button onClick={() => exportPdf("interno")} title="Exportar PDF interno (con costo y margen)" className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><FileText className="h-4 w-4" /> PDF interno</button></>}<button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div></div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
@@ -4714,7 +4719,7 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpe
       </div>
       <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600">Cancelar</button><button disabled={saving || invalidAdditionalCost || !form.client || !form.title.trim() || (["Aprobado", "Facturado"].includes(form.stage) && !form.purchaseOrderNumber?.trim()) || (form.stage === "Facturado" && (!form.invoicedAt || !form.invoiceNumber?.trim())) || (margin < 0 && ["Aprobado", "Facturado"].includes(form.stage) && !form.negativeMarginReason?.trim())} onClick={submit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Guardar presupuesto</button></div>
     </div>
-  </div>;
+  </div>, document.body);
 }
 
 function ProjectInvoiceModal({ budget, project, onClose, onSave }) {
@@ -4967,7 +4972,9 @@ function PurchaseOrderEditor({
     }
   };
   const mouseDownOnBackdrop = useRef(false);
-  return (
+  // Portal al body: mismo motivo que en los otros diálogos — un ancestro con transform convierte
+  // el position:fixed en relativo y el encabezado del modal queda fuera de la vista.
+  return createPortal((
     <div
       className="motion-backdrop fixed inset-0 z-[60] flex items-end justify-center overflow-hidden bg-slate-900/60 sm:items-center sm:p-4"
       onMouseDown={(event) => {
@@ -5388,7 +5395,7 @@ function PurchaseOrderEditor({
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 function PurchaseOrdersModule({

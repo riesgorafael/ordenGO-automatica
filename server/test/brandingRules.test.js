@@ -4,7 +4,8 @@ import { reportCompanyLines, reportCompanyProfile } from "../../shared/brandingR
 
 test("un reporte sin datos corporativos no hereda datos de otra empresa", () => {
   assert.deepEqual(reportCompanyProfile({ companyName: "REFRIGEN" }), {
-    name: "REFRIGEN", cuit: "", address: "", phone: "", email: "", website: "",
+    name: "REFRIGEN", cuit: "", address: "", locality: "", city: "", province: "", country: "",
+    phone: "", email: "", website: "",
   });
   assert.deepEqual(reportCompanyLines({ companyName: "REFRIGEN" }), ["REFRIGEN"]);
 });
