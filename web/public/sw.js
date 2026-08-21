@@ -25,3 +25,36 @@ self.addEventListener("fetch", (event) => {
     return response;
   }).catch(() => caches.match(request).then((cached) => cached || caches.match("/"))));
 });
+
+// ---------------------------------------------------------------------------------------------
+// Notificaciones push. El navegador despierta al service worker aunque la aplicación esté cerrada;
+// por eso el aviso se muestra desde acá y no desde la página.
+self.addEventListener("push", (event) => {
+  // El servidor manda JSON, pero si algo llegara como texto plano se muestra igual en lugar de
+  // descartar la notificación en silencio.
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; }
+  catch { payload = { body: event.data ? event.data.text() : "" }; }
+  const title = payload.title || "MiOrdenGo";
+  event.waitUntil(self.registration.showNotification(title, {
+    body: payload.body || "",
+    icon: "/branding/ordengo-mark-192.png",
+    badge: "/branding/ordengo-mark-192.png",
+    // tag agrupa: varios avisos de la misma tarea reemplazan al anterior en lugar de apilarse.
+    tag: payload.tag || undefined,
+    data: { url: payload.url || "/" },
+  }));
+});
+
+// Al tocar la notificación se reutiliza la pestaña abierta si la hay, en lugar de abrir una nueva
+// cada vez y dejar al usuario con cinco copias de la aplicación.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || "/";
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+    for (const client of windows) {
+      if (client.url.includes(self.location.origin)) return client.focus().then(() => client.navigate(target));
+    }
+    return self.clients.openWindow(target);
+  }));
+});

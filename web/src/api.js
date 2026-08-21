@@ -111,6 +111,12 @@ export const api = {
   companyProfile: () => req("/settings/company-profile"),
   updateCompanyProfile: (profile) => req("/settings/company-profile", { method: "PUT", body: JSON.stringify(profile) }),
 
+  // Push: la clave pública identifica la aplicación ante el servicio del navegador; la suscripción
+  // es la dirección única a la que ese servicio entregará los avisos.
+  pushKey: () => req("/push/key"),
+  pushSubscribe: (subscription) => req("/push/subscribe", { method: "POST", body: JSON.stringify({ subscription }) }),
+  pushUnsubscribe: (endpoint) => req("/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) }),
+
   notifications: () => req("/notifications"),
   readNotification: (id) => req("/notifications/" + id + "/read", { method: "POST" }),
   readAllNotifications: () => req("/notifications/read-all", { method: "POST" }),

@@ -309,6 +309,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS users(
       id text PRIMARY KEY, name text NOT NULL, email text UNIQUE NOT NULL,
       password_hash text NOT NULL, role text NOT NULL DEFAULT 'tecnico',
+    CREATE TABLE IF NOT EXISTS push_subscriptions ( endpoint text PRIMARY KEY, user_id text, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
       color text DEFAULT '#0ea5e9', active boolean DEFAULT true, created_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS clients ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS projects( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
@@ -357,7 +358,7 @@ async function initDb() {
       VALUES('org-automatica','automatica','AUTOMATICA ARG',$1)
       ON CONFLICT(id) DO NOTHING
   `, [DEFAULT_COMPANY_PROFILE]);
-  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
+  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "push_subscriptions", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
   for (const table of tenantTables) {
     await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS organization_id text DEFAULT '${DEFAULT_ORGANIZATION_ID}'; UPDATE ${table} SET organization_id='${DEFAULT_ORGANIZATION_ID}' WHERE organization_id IS NULL; ALTER TABLE ${table} ALTER COLUMN organization_id SET NOT NULL;`);
     await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='${table}_organization_fk') THEN ALTER TABLE ${table} ADD CONSTRAINT ${table}_organization_fk FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;`);
@@ -573,7 +574,7 @@ async function initDb() {
   `);
   const tenantEntityTables = [
     "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications",
-    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "whiteboard_notes", "stock_movements",
+    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "push_subscriptions", "whiteboard_notes", "stock_movements",
     "audit_log", "file_assets", "gantt_tasks",
   ];
   for (const table of tenantEntityTables) {
@@ -1042,8 +1043,55 @@ async function notify(userId, text, link) {
   const id = crypto.randomUUID();
   try { await pool.query("INSERT INTO notifications(id,user_id,text,link,organization_id) VALUES($1,$2,$3,$4,$5)", [id, userId, text, link || null, organizationId]); }
   catch (error) { console.error("No se pudo crear la notificación:", error.message); }
+  // El aviso al teléfono es un extra: si falla, la notificación dentro de la aplicación ya quedó.
+  await sendPush(userId, text, link).catch((error) => console.error("No se pudo enviar el push:", error.message));
 }
 
+
+// Envío push a los dispositivos suscritos. La librería web-push se carga a demanda: si no está
+// instalada, o si faltan las claves VAPID, todo el bloque queda inerte y la notificación sigue
+// viviendo dentro de la aplicación como hasta ahora. Nunca debe romper la operación que la disparó.
+let webPushModule = null;
+let webPushReady = null;
+async function getWebPush() {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return null;
+  if (webPushModule) return webPushModule;
+  if (!webPushReady) {
+    webPushReady = import("web-push").then((mod) => {
+      const wp = mod.default || mod;
+      // El "subject" es el contacto que el servicio de push usa si hay un problema con los envíos.
+      wp.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:soporte@miordengo.com", process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+      webPushModule = wp;
+      return wp;
+    }).catch((error) => {
+      console.warn("web-push no está instalado; las notificaciones al teléfono quedan desactivadas:", error.message);
+      return null;
+    });
+  }
+  return webPushReady;
+}
+
+async function sendPush(userId, text, link) {
+  const wp = await getWebPush();
+  if (!wp) return;
+  let rows = [];
+  try { ({ rows } = await pool.query("SELECT endpoint, data FROM push_subscriptions WHERE user_id=$1", [userId])); }
+  catch (error) { console.error("No se pudieron leer las suscripciones push:", error.message); return; }
+  const payload = JSON.stringify({ title: "MiOrdenGo", body: text, url: "/" });
+  await Promise.all(rows.map(async (row) => {
+    try {
+      await wp.sendNotification(row.data, payload);
+    } catch (error) {
+      // 404/410 = el navegador dio de baja la suscripción. Se borra: reintentarla no sirve y deja
+      // basura acumulándose por cada teléfono reinstalado.
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        await pool.query("DELETE FROM push_subscriptions WHERE endpoint=$1", [row.endpoint]).catch(() => {});
+      } else {
+        console.error("Falló el envío push:", error.statusCode || error.message);
+      }
+    }
+  }));
+}
 // Envío de correo de notificación de asignación de tareas. Se configura por variables de
 // entorno (SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS) — nunca hardcodear credenciales acá.
 // Si no está configurado, se omite en silencio (no debe romper la asignación de tareas).
@@ -1736,6 +1784,41 @@ app.put("/api/settings/company-profile", auth, requireRole("admin"), async (req,
 });
 
 /* ------------------------------------------------ Notificaciones ------------------------------------------------ */
+
+/* ------------------------------------------------ Notificaciones push ------------------------------------------------ */
+// Cada navegador que acepta recibir avisos deja acá su suscripción. Se guarda por usuario y no por
+// sesión: una misma persona puede tener el teléfono y la computadora, y ambos deben recibir.
+// El endpoint es la URL única que el navegador entrega; sirve de clave natural para no duplicar.
+app.post("/api/push/subscribe", auth, async (req, res) => {
+  const subscription = req.body?.subscription;
+  const endpoint = String(subscription?.endpoint || "");
+  if (!/^https:\/\//.test(endpoint)) return res.status(400).json({ error: "Suscripción inválida" });
+  const stored = {
+    endpoint,
+    keys: { p256dh: String(subscription?.keys?.p256dh || ""), auth: String(subscription?.keys?.auth || "") },
+    userId: req.user.id,
+    userAgent: String(req.get("user-agent") || "").slice(0, 200),
+    createdAt: new Date().toISOString(),
+  };
+  if (!stored.keys.p256dh || !stored.keys.auth) return res.status(400).json({ error: "Suscripción incompleta" });
+  await pool.query(
+    `INSERT INTO push_subscriptions(endpoint,user_id,data,organization_id)
+     VALUES($1,$2,$3,current_setting('app.organization_id'))
+     ON CONFLICT(endpoint) DO UPDATE SET user_id=$2, data=$3, updated_at=now()`,
+    // El conflicto se resuelve por endpoint solo: esa URL la genera el servicio de push del
+    // navegador y es única en el mundo, así que no puede repetirse entre dos empresas.
+    [endpoint, req.user.id, stored]);
+  res.status(201).json({ ok: true });
+});
+// Baja explícita: el navegador avisa cuando el usuario revoca el permiso o cierra sesión.
+app.post("/api/push/unsubscribe", auth, async (req, res) => {
+  const endpoint = String(req.body?.endpoint || "");
+  if (endpoint) await pool.query("DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2", [endpoint, req.user.id]);
+  res.status(204).end();
+});
+// La clave pública VAPID identifica a esta aplicación ante el servicio de push del navegador. Es
+// pública por diseño —viaja al cliente para suscribirse—; la privada nunca sale del servidor.
+app.get("/api/push/key", auth, (_req, res) => res.json({ key: process.env.VAPID_PUBLIC_KEY || "" }));
 app.get("/api/notifications", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM notifications WHERE user_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 50", [req.user.id, req.user.organizationId]);
   res.json(rows.map((n) => ({ id: n.id, text: n.text, link: n.link, read: n.read, at: n.created_at })));

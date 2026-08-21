@@ -13,6 +13,7 @@ import {
   Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity, Sun, Moon, Monitor,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
+import { pushState as pushSubscriptionState, enablePush, disablePush } from "./push";
 import { LOGO, LOGO_LIGHT } from "./logo";
 import { LANGUAGES, detectLanguage, saveLanguage, translator } from "./i18n";
 const pdfModule = () => import("./pdf");
@@ -5925,7 +5926,7 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs font-semibold text-slate-700">{note.number}</span>
                 <span className="text-[11px] text-slate-400">{budgetDate(note.date)}</span>
-                {note.signedBy && <Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">Firmado</Chip>}
+                {(note.signatureUrl || note.signedBy) && <Chip className="bg-emerald-50 text-emerald-700 ring-emerald-200">Firmado</Chip>}
               </div>
               <div className="mt-1 truncate text-sm font-semibold text-slate-900">{note.client}</div>
               <div className="truncate text-xs text-slate-500">{note.site || "Sin sitio"} · {(note.items || []).length} renglón(es)</div>
@@ -5959,6 +5960,50 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
 /* Editor de remito. Las órdenes se eligen de una lista filtrada por el cliente seleccionado y se
    copian como renglones editables: lo que se firma es el texto del remito, no un vínculo vivo a la
    orden. Por eso "Agregar" copia y no referencia. */
+/* Campo de firma de un remito. A diferencia de la OT —donde siempre se firma en pantalla— el emisor
+   suele tener un escaneo o un sello que es siempre el mismo, así que ahí se admiten las dos vías. El
+   cliente, que firma delante del técnico, entra por el mismo camino que en una orden de trabajo. */
+function NoteSignatureField({ label, hint, value, onChange, allowImport = false, onErr }) {
+  // El modo dibujo se sostiene hasta que la persona da por terminada la firma: SignaturePad avisa al
+  // levantar el dedo, y si se saliera con el primer trazo el lienzo desaparecería a mitad de la firma.
+  const [drawing, setDrawing] = useState(false);
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <div className="text-[11px] font-medium text-slate-500">{label}</div>
+      {drawing ? (
+        <div className="mt-2">
+          <SignaturePad onChange={(dataUrl) => onChange(dataUrl || "")} />
+          <button type="button" onClick={() => setDrawing(false)} className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700">Listo</button>
+        </div>
+      ) : value ? (
+        <div className="mt-2 flex items-center gap-3">
+          <div className="grid h-16 min-w-0 flex-1 place-items-center rounded border border-dashed border-slate-300 bg-slate-50">
+            <img src={value} alt={label} className="max-h-full max-w-full object-contain" />
+          </div>
+          <button type="button" onClick={() => onChange("")} className="shrink-0 text-xs font-medium text-rose-600 hover:underline">Quitar</button>
+        </div>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" onClick={() => setDrawing(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"><FileSignature className="h-3.5 w-3.5" /> Firmar acá</button>
+          {allowImport && (
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Upload className="h-3.5 w-3.5" /> Importar imagen
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async (event) => {
+                const file = event.target.files?.[0]; event.target.value = "";
+                if (!file) return;
+                // Se reduce antes de guardar: la firma viaja dentro del remito y el listado los trae
+                // todos, así que un escaneo sin achicar multiplicaría el peso de la respuesta.
+                try { onChange(await fileToSignature(file)); }
+                catch { onErr?.(new Error("No se pudo leer la imagen de la firma.")); }
+              }} />
+            </label>
+          )}
+        </div>
+      )}
+      <p className="mt-1.5 text-[11px] leading-snug text-slate-400">{hint}</p>
+    </div>
+  );
+}
 function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) {
   const [form, setForm] = useState(note);
   const [saving, setSaving] = useState(false);
@@ -6054,30 +6099,10 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) 
           <L label="Firma por nuestra empresa" help="Quién emite el remito. Su firma se imprime a la izquierda del pie."><input value={form.issuedBy || ""} onChange={(e) => set({ issuedBy: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L>
           <L label="Conformidad — quién firma" help="Quién recibe por parte del cliente."><input value={form.signedBy} onChange={(e) => set({ signedBy: e.target.value })} placeholder="Nombre y apellido" className="u-input" /></L>
         </div>
-        {/* La firma se importa como imagen y se guarda con el remito, no se dibuja en pantalla: en
-            un remito la firma del emisor suele ser siempre la misma —un escaneo o un sello— y
-            volver a trazarla en cada documento con el mouse daría un resultado distinto cada vez. */}
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
-          <div className="grid h-16 w-40 shrink-0 place-items-center rounded border border-dashed border-slate-300 bg-slate-50">
-            {form.issuerSignatureUrl
-              ? <img src={form.issuerSignatureUrl} alt="Firma de la empresa" className="max-h-full max-w-full object-contain" />
-              : <span className="text-[11px] text-slate-400">Sin firma</span>}
-          </div>
-          <div className="min-w-0 flex-1">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
-              <Upload className="h-3.5 w-3.5" /> {form.issuerSignatureUrl ? "Cambiar firma" : "Importar firma"}
-              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async (event) => {
-                const file = event.target.files?.[0]; event.target.value = "";
-                if (!file) return;
-                // Se reduce antes de guardar: la firma viaja dentro del remito y en el listado se
-                // cargan todos, así que un escaneo sin achicar multiplicaría el peso de la respuesta.
-                try { set({ issuerSignatureUrl: await fileToSignature(file) }); }
-                catch { onErr?.(new Error("No se pudo leer la imagen de la firma.")); }
-              }} />
-            </label>
-            {form.issuerSignatureUrl && <button onClick={() => set({ issuerSignatureUrl: "" })} className="ml-2 text-xs text-rose-600 hover:underline">Quitar</button>}
-            <p className="mt-1.5 text-[11px] text-slate-400">PNG, JPG o WebP. Se imprime sobre la línea de firma del emisor.</p>
-          </div>
+        {/* Las dos partes suscriben el remito, así que cada una tiene su campo. */}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <NoteSignatureField label="Firma del emisor" hint="Se imprime sobre la línea de firma de la izquierda. Podés importar un escaneo o sello." value={form.issuerSignatureUrl || ""} onChange={(value) => set({ issuerSignatureUrl: value })} allowImport onErr={onErr} />
+          <NoteSignatureField label="Firma de conformidad" hint="La firma de quien recibe, trazada con el dedo o el mouse." value={form.signatureUrl || ""} onChange={(value) => set({ signatureUrl: value })} onErr={onErr} />
         </div>
       </Box>
 
@@ -8282,6 +8307,40 @@ function ChartBox({ data }) {
   return (<div style={{ width: "100%", height: 220 }}><ResponsiveContainer debounce={1} minWidth={200} minHeight={200}><BarChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} /><RechartsBar dataKey="value" radius={[5, 5, 0, 0]} isAnimationActive={false}>{data.map((d, i) => <Cell key={i} fill={d.fill} />)}</RechartsBar></BarChart></ResponsiveContainer></div>);
 }
 
+
+/* Interruptor de notificaciones al teléfono. Sólo se muestra en la ficha propia: una suscripción
+   push pertenece a este navegador concreto, así que nadie puede activársela a otra persona. */
+function PushToggle() {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { let alive = true; pushSubscriptionState().then((s) => { if (alive) setState(s); }).catch(() => { if (alive) setState({ supported: false, reason: "No se pudo consultar el estado de las notificaciones.", enabled: false }); }); return () => { alive = false; }; }, []);
+  if (!state) return null;
+  const toggle = async () => {
+    setBusy(true); setError("");
+    try {
+      if (state.enabled) await disablePush(); else await enablePush();
+      setState(await pushSubscriptionState());
+    } catch (e) { setError(e.message || "No se pudo cambiar la configuración."); }
+    setBusy(false);
+  };
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-slate-800">Avisos en este dispositivo</div>
+          <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{state.supported ? "Recibí las notificaciones aunque tengas la aplicación cerrada." : state.reason}</p>
+        </div>
+        {state.supported && (
+          <button type="button" onClick={toggle} disabled={busy} className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${state.enabled ? "border border-slate-200 text-slate-600 hover:bg-slate-50" : "bg-brand-500 text-white hover:bg-brand-400"}`}>
+            {busy ? "…" : state.enabled ? "Desactivar" : "Activar"}
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-2 text-[11px] text-rose-600">{error}</p>}
+    </div>
+  );
+}
 /* Ficha personal: foto y datos de contacto que alimentan la credencial de empresa. La usa tanto el
    propio usuario (por PATCH /api/me/profile) como administración sobre un tercero (por PATCH
    /api/users/:id); quién guarda lo decide el llamador con onSave, el diálogo es el mismo. */
@@ -8370,6 +8429,9 @@ function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePa
           )}
         </div>
         {onChangePassword && <button onClick={onChangePassword} className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:underline"><KeyRound className="h-3.5 w-3.5" /> Cambiar mi contraseña</button>}
+        {/* onChangePassword sólo llega cuando el usuario edita su propia ficha, así que sirve de
+            señal de "esta soy yo" para mostrar el interruptor de avisos. */}
+        {onChangePassword && <PushToggle />}
         </div>
         <div className="flex shrink-0 gap-2 border-t border-slate-100 px-5 py-4">
           <button onClick={onClose} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
