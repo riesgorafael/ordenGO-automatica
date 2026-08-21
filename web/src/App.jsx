@@ -5977,8 +5977,11 @@ function NoteSignatureField({ label, hint, value, onChange, allowImport = false,
         </div>
       ) : value ? (
         <div className="mt-2 flex items-center gap-3">
-          <div className="grid h-16 min-w-0 flex-1 place-items-center rounded border border-dashed border-slate-300 bg-slate-50">
-            <img src={value} alt={label} className="max-h-full max-w-full object-contain" />
+          {/* La altura la fija el contenedor y object-contain encaja la firma dentro sin deformarla.
+              Con max-h-full la imagen desbordaba: el alto del contenedor crecía con su propio
+              contenido, así que el porcentaje nunca llegaba a limitarla. */}
+          <div className="h-20 min-w-0 flex-1 overflow-hidden rounded border border-dashed border-slate-300 bg-slate-50">
+            <img src={value} alt={label} className="h-full w-full object-contain" />
           </div>
           <button type="button" onClick={() => onChange("")} className="shrink-0 text-xs font-medium text-rose-600 hover:underline">Quitar</button>
         </div>
