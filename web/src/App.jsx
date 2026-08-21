@@ -8692,7 +8692,8 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
           {filtered.map((a) => {
             const interventions = (orders || []).filter((o) => o.assetId === a.id).length;
             return (
-              <button key={a.id} onClick={() => setEditing(a)} className="flex w-full items-center gap-3 p-3 text-left hover:bg-slate-50">
+              <div key={a.id} className="flex items-stretch hover:bg-slate-50">
+              <button onClick={() => setEditing(a)} className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {a.tag && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{a.tag}</span>}
@@ -8707,6 +8708,11 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
                 </div>
                 <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
               </button>
+              {isMgr && (
+                <button onClick={() => onDelete(a)} title={"Eliminar " + (a.name || "activo")} aria-label={"Eliminar " + (a.name || "activo")}
+                  className="grid w-11 shrink-0 place-items-center text-slate-300 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+              )}
+              </div>
             );
           })}
         </div>
