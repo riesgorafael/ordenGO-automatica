@@ -1444,6 +1444,7 @@ app.get("/api/files/:id", auth, async (req, res) => {
   const asset = (await pool.query("SELECT * FROM file_assets WHERE id=$1 AND organization_id=$2", [req.params.id, req.user.organizationId])).rows[0];
   if (!asset) return res.status(404).json({ error: "El archivo no existe" });
   let allowed = ["admin", "gerente"].includes(req.user.role);
+  if (!allowed && asset.entity_type === "asset") allowed = !isMonitor(req.user.role);
   if (!allowed && asset.entity_type === "order" && req.user.role === "tecnico") {
     const order = (await pool.query("SELECT data FROM orders WHERE id=$1", [asset.entity_id])).rows[0]?.data;
     allowed = Boolean(order && orderVisibleToUser(req.user, order));
@@ -2662,6 +2663,8 @@ const normalizeAsset = (body = {}) => {
     criticalityReason: text(body.criticalityReason, 600),
     status: pick(body.status, ASSET_STATUS, "En servicio"),
     commissionedAt: text(body.commissionedAt, 10),
+    // Valor de reposición: base para avisar cuando lo gastado en reparar se acerca a reemplazarlo.
+    replacementValue: Math.max(0, Math.min(999999999, Number(body.replacementValue) || 0)),
     // Repuestos que el equipo exige tener disponibles, con la cantidad mínima que justifica su
     // criticidad. De acá sale el stock de seguridad que el inventario compara contra la existencia.
     criticalParts: (Array.isArray(body.criticalParts) ? body.criticalParts : []).slice(0, 50).map((item) => ({
@@ -2669,10 +2672,25 @@ const normalizeAsset = (body = {}) => {
       qtyRequired: Math.max(0, Math.min(9999, Number(item.qtyRequired) || 0)),
       note: text(item.note, 200),
     })).filter((item) => item.partId),
+    documents: (Array.isArray(body.documents) ? body.documents : []).slice(0, 30).map((doc) => ({
+      url: text(doc.url, 300),
+      name: text(doc.name, 180),
+      kind: text(doc.kind, 40),
+    })).filter((doc) => doc.url),
     notes: text(body.notes, 2000),
     createdAt: body.createdAt || new Date().toISOString(),
   };
 };
+
+// Los documentos llegan como data URL la primera vez y ya como ruta cuando el activo se reedita.
+// storeDataAsset devuelve el valor sin tocar si no es un data URL, así que reenviar no duplica.
+async function persistAssetDocuments(asset, userId) {
+  const out = [];
+  for (const doc of asset.documents) {
+    out.push({ ...doc, url: await storeDataAsset(doc.url, { entityType: "asset", entityId: asset.id, fieldName: "documents", originalName: doc.name, userId }) });
+  }
+  return { ...asset, documents: out };
+}
 
 app.get("/api/assets", auth, async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM assets WHERE organization_id=$1 ORDER BY data->>'name'", [req.user.organizationId]);
@@ -2685,9 +2703,12 @@ app.post("/api/assets", auth, requireRole("admin", "gerente", "tecnico"), apiRat
   if (asset.qrToken && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 LIMIT 1", [req.user.organizationId, asset.qrToken])).rowCount) {
     return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
   }
-  await pool.query("INSERT INTO assets(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id'))", [asset.id, asset]);
-  await auditChange({ entityType: "asset", entityId: asset.id, action: "create", user: req.user, afterData: { tag: asset.tag, name: asset.name, criticality: asset.criticality } });
-  res.status(201).json(asset);
+  let stored;
+  try { stored = await persistAssetDocuments(asset, req.user.id); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  await pool.query("INSERT INTO assets(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id'))", [stored.id, stored]);
+  await auditChange({ entityType: "asset", entityId: stored.id, action: "create", user: req.user, afterData: { tag: stored.tag, name: stored.name, criticality: stored.criticality } });
+  res.status(201).json(stored);
 });
 app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
   const current = (await pool.query("SELECT data FROM assets WHERE id=$1", [req.params.id])).rows[0];
@@ -2697,13 +2718,16 @@ app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), a
       && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 AND id<>$3 LIMIT 1", [req.user.organizationId, merged.qrToken, req.params.id])).rowCount) {
     return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
   }
-  await pool.query("UPDATE assets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  let storedMerged;
+  try { storedMerged = await persistAssetDocuments(merged, req.user.id); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  await pool.query("UPDATE assets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, storedMerged]);
   // Un cambio de criticidad mueve el stock de seguridad de todos sus repuestos, así que queda
   // registrado aparte: es la clase de decisión que después hay que poder explicar.
   if (current.data.criticality !== merged.criticality) {
     await auditChange({ entityType: "asset", entityId: merged.id, action: "update", user: req.user, beforeData: { criticality: current.data.criticality }, afterData: { criticality: merged.criticality, reason: merged.criticalityReason } });
   }
-  res.json(merged);
+  res.json(storedMerged);
 });
 app.delete("/api/assets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const deleted = await pool.query("DELETE FROM assets WHERE id=$1 RETURNING data", [req.params.id]);

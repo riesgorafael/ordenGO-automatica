@@ -856,6 +856,7 @@ function CredentialCheck({ token }) {
 export default function App() {
   // Se lee una sola vez: la URL no cambia sin recargar y esto decide qué se renderiza.
   const [credentialToken] = useState(() => new URLSearchParams(window.location.search).get("credencial") || "");
+  const [assetDeepLink, setAssetDeepLink] = useState(() => new URLSearchParams(window.location.search).get("activo") || "");
   const savedOrderFilters = useMemo(() => ({ q: "", status: "Todas", billable: false }), []);
   const savedProjectFilters = useMemo(() => ({ project: "all", q: "", mine: false, stale: false }), []);
   const [booting, setBooting] = useState(true);
@@ -1643,7 +1644,7 @@ export default function App() {
   const modTabs = roleModTabs.filter((tab) => allowedForCompany.has(tab.id));
   // Si el módulo activo no está permitido para el rol, caer en "Mi día"
   const allowedIds = modTabs.map((t) => t.id);
-  const activeModule = allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio");
+  const activeModule = assetDeepLink && allowedIds.includes("assets") ? "assets" : (allowedIds.includes(module) ? module : (isMonitor ? "projects" : "inicio"));
   // En teléfono priorizamos las áreas operativas de uso diario. El resto
   // queda agrupado en “Más” por área (Negocio, Utilidades);
   // además de evitar etiquetas superpuestas, reduce cambios de contexto accidentales.
@@ -1903,6 +1904,7 @@ export default function App() {
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} branding={branding} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
         {activeModule === "assets" && (isMgr || me.role === "tecnico") && <AssetsModule assets={assets} clients={clients} parts={parts} orders={orders} isMgr={isMgr} branding={branding} onErr={err}
+          deepLink={assetDeepLink} onConsumeDeepLink={() => { setAssetDeepLink(""); const url = new URL(window.location.href); url.searchParams.delete("activo"); window.history.replaceState({}, "", url); }}
           onSave={async (payload) => { try { const saved = payload.id && assets.some((a) => a.id === payload.id) ? await api.updateAsset(payload.id, payload) : await api.createAsset(payload); setAssets((items) => [saved, ...items.filter((a) => a.id !== saved.id)]); toast("Activo guardado"); return saved; } catch (e) { err(e); return null; } }}
           onDelete={(asset, done) => setConfirmDialog({
             title: `Eliminar ${[asset.tag, asset.name].filter(Boolean).join(" · ")}`,
@@ -8583,6 +8585,7 @@ function assetTokenFrom(scanned) {
 
 const ASSET_CRITICALITY = ["Alta", "Media", "Baja"];
 const ASSET_STATUS = ["En servicio", "En reparación", "Fuera de servicio", "Dado de baja"];
+const ASSET_DOC_KINDS = ["Manual", "Plano", "Esquema eléctrico", "Certificado", "Ficha técnica", "Otro"];
 const CRITICALITY_STYLE = {
   Alta: "bg-rose-50 text-rose-700 ring-rose-200",
   Media: "bg-amber-50 text-amber-700 ring-amber-200",
@@ -8596,6 +8599,78 @@ const CRITICALITY_STYLE = {
 /* Clave con la que se decide si dos TAG son el mismo equipo. Se ignoran mayúsculas y todo lo que
    no sea letra o número: los separadores son la fuente habitual de duplicados al escribir a mano. */
 const tagKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/* Desempeño de un activo a partir de sus intervenciones. Todo sale de datos que ya se cargan en la
+   orden de trabajo; no hay campos nuevos que completar.
+
+   Dos precisiones sobre lo que se mide, porque los nombres de la industria prometen más de lo que
+   estos datos dan: "parada" es downtimeMinutes, el tiempo que el equipo estuvo detenido, que no es
+   lo mismo que el tiempo de reparación; y el intervalo entre fallas se calcula sobre las fechas de
+   las intervenciones registradas, así que sólo tiene sentido a partir de la segunda. */
+function assetPerformance(interventions, options = {}) {
+  // Los borradores son órdenes que todavía no ocurrieron: contarlas inventaría fallas.
+  const real = interventions.filter((o) => o.status && o.status !== "Borrador" && o.date);
+  const dates = real.map((o) => o.date).sort();
+  const downtimeMin = real.reduce((sum, o) => sum + Math.max(0, Number(o.technical?.downtimeMinutes) || 0), 0);
+  const withDowntime = real.filter((o) => Number(o.technical?.downtimeMinutes) > 0).length;
+
+  // Intervalo medio entre intervenciones. Se prefiere la puesta en servicio como punto de partida:
+  // sin ella, un equipo con dos fallas seguidas parecería fallar cada dos días desde siempre.
+  const first = options.commissionedAt && options.commissionedAt < dates[0] ? options.commissionedAt : dates[0];
+  const spanDays = dates.length && first
+    ? Math.max(0, (new Date(dates[dates.length - 1]) - new Date(first)) / 86400000)
+    : 0;
+  const gaps = options.commissionedAt && options.commissionedAt < dates[0] ? real.length : real.length - 1;
+  const meanDaysBetween = gaps > 0 && spanDays > 0 ? spanDays / gaps : null;
+
+  const causes = new Map();
+  for (const o of real) {
+    const raw = String(o.technical?.rootCause || "").trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase().replace(/\s+/g, " ");
+    const current = causes.get(key) || { label: raw, count: 0, dates: [] };
+    current.count++;
+    current.dates.push(o.date);
+    causes.set(key, current);
+  }
+  const repeated = [...causes.values()].filter((c) => c.count >= 2).sort((a, b) => b.count - a.count);
+
+  // Lo gastado en mantener el equipo es lo facturado por sus intervenciones: es la cifra que se
+  // compara contra el valor de reposición para decidir si conviene seguir reparando o reemplazar.
+  const spent = real.reduce((sum, o) => sum + (orderTotals(o).total || 0), 0);
+  const replacement = Math.max(0, Number(options.replacementValue) || 0);
+  const spentPct = replacement > 0 ? spent / replacement : null;
+
+  // Próximo preventivo: sale de la última orden recurrente del equipo. Se toma la más reciente que
+  // declare una recurrencia, porque el plan vigente es el último que se acordó, no el primero.
+  const recurrent = real.filter((o) => Number(o.recurrenceMonths) > 0).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  let nextService = null;
+  if (recurrent) {
+    const [dueY, dueM, dueD] = String(recurrent.date).split("-").map(Number);
+    const due = new Date(Date.UTC(dueY, dueM - 1 + Number(recurrent.recurrenceMonths), dueD));
+    const dueStr = due.toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    nextService = {
+      date: dueStr,
+      everyMonths: Number(recurrent.recurrenceMonths),
+      daysLeft: Math.round((new Date(dueStr) - new Date(today)) / 86400000),
+      overdue: dueStr < today,
+    };
+  }
+
+  return {
+    count: real.length,
+    downtimeHours: Math.round((downtimeMin / 60) * 100) / 100,
+    meanDowntimeHours: withDowntime ? Math.round((downtimeMin / withDowntime / 60) * 100) / 100 : null,
+    meanDaysBetween: meanDaysBetween == null ? null : Math.round(meanDaysBetween),
+    lastDate: dates[dates.length - 1] || null,
+    repeated,
+    // Sin registro de paradas el indicador no se muestra: un cero inventado se lee como
+    // "el equipo nunca paró", que es lo contrario de "nadie lo anotó".
+    downtimeTracked: withDowntime > 0,
+    spent, spentPct, nextService,
+  };
+}
 
 function requiredStockByPart(assets) {
   const required = new Map();
@@ -8612,7 +8687,7 @@ function requiredStockByPart(assets) {
   return required;
 }
 
-function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, onSave, onDelete, onErr }) {
+function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, deepLink = "", onConsumeDeepLink, onSave, onDelete, onErr }) {
   const [editing, setEditing] = useState(null);
   const [query, setQuery] = useState("");
   const [critFilter, setCritFilter] = useState("");
@@ -8634,6 +8709,8 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
     setScanMsg("");
     setEditing({ qrToken: token });
   };
+  // Resolver una sola vez: si se reintentara en cada render, cerrar la ficha la volvería a abrir.
+  useEffect(() => { if (!deepLink) return; resolveScan(deepLink); onConsumeDeepLink?.(); }, [deepLink]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return assets.filter((a) =>
@@ -8643,16 +8720,18 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
   // El recuento por criticidad es lo primero que se mira en una revisión: dice si el parque está
   // clasificado de verdad o si quedó todo en el valor por omisión.
   const counts = useMemo(() => {
-    const base = { Alta: 0, Media: 0, Baja: 0, sinJustificar: 0 };
+    const base = { Alta: 0, Media: 0, Baja: 0, sinJustificar: 0, vencidos: 0 };
     for (const a of assets) {
       base[a.criticality] = (base[a.criticality] || 0) + 1;
       if (a.criticality === "Alta" && !String(a.criticalityReason || "").trim()) base.sinJustificar++;
+      const own = (orders || []).filter((o) => o.assetId === a.id || (a.tag && tagKey(o.technical?.assetTag) === tagKey(a.tag)));
+      if (assetPerformance(own, {}).nextService?.overdue) base.vencidos++;
     }
     return base;
-  }, [assets]);
+  }, [assets, orders]);
 
   if (editing) {
-    return <AssetEditor asset={editing} clients={clients} parts={parts} orders={orders} onErr={onErr}
+    return <AssetEditor asset={editing} clients={clients} parts={parts} orders={orders} showMoney={isMgr} onErr={onErr}
       onDelete={isMgr && editing.id ? () => onDelete(editing, () => setEditing(null)) : null}
       onCancel={() => setEditing(null)}
       onSave={async (payload) => { const saved = await onSave(payload); if (saved) setEditing(null); }} />;
@@ -8673,10 +8752,11 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
         <button onClick={() => setEditing({})} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Activo</button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {ASSET_CRITICALITY.map((c) => (
           <Box key={c} className="p-3"><div className="text-[11px] text-slate-500">Criticidad {c.toLowerCase()}</div><div className="text-xl font-semibold text-slate-900">{counts[c] || 0}</div></Box>
         ))}
+        <Box className="p-3"><div className="text-[11px] text-slate-500">Preventivo vencido</div><div className={counts.vencidos ? "text-xl font-semibold text-rose-600" : "text-xl font-semibold text-slate-900"}>{counts.vencidos}</div></Box>
         <Box className="p-3"><div className="text-[11px] text-slate-500">Críticos sin justificar</div><div className={counts.sinJustificar ? "text-xl font-semibold text-rose-600" : "text-xl font-semibold text-slate-900"}>{counts.sinJustificar}</div></Box>
       </div>
 
@@ -8691,7 +8771,9 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
         {filtered.length === 0 && <div className="p-6 text-center text-sm text-slate-400">No hay activos que coincidan.</div>}
         <div className="divide-y divide-slate-100">
           {filtered.map((a) => {
-            const interventions = (orders || []).filter((o) => o.assetId === a.id).length;
+            const own = (orders || []).filter((o) => o.assetId === a.id || (a.tag && tagKey(o.technical?.assetTag) === tagKey(a.tag)));
+            const interventions = own.length;
+            const stats = assetPerformance(own, { commissionedAt: a.commissionedAt, replacementValue: a.replacementValue });
             return (
               <div key={a.id} className="flex items-stretch hover:bg-slate-50">
               <button onClick={() => setEditing(a)} className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left">
@@ -8701,6 +8783,8 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
                     <span className="truncate text-sm font-medium text-slate-800">{a.name}</span>
                     <Chip className={CRITICALITY_STYLE[a.criticality] || CRITICALITY_STYLE.Baja}>{a.criticality}</Chip>
                     {a.status !== "En servicio" && <Chip className="bg-slate-100 text-slate-600 ring-slate-200">{a.status}</Chip>}
+                    {stats.nextService?.overdue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200">Preventivo vencido</Chip>}
+                    {stats.repeated.length > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Falla repetida</Chip>}
                   </div>
                   <div className="mt-0.5 truncate text-[11px] text-slate-500">
                     {[a.client, a.site, a.area].filter(Boolean).join(" · ") || "Sin ubicación"}
@@ -8747,26 +8831,27 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
   );
 }
 
-function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onDelete, onErr }) {
+function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCancel, onSave, onDelete, onErr }) {
   const [form, setForm] = useState({
     id: asset.id, tag: asset.tag || "", qrToken: asset.qrToken || "", name: asset.name || "", clientId: asset.clientId || "", client: asset.client || "",
     site: asset.site || "", siteCode: asset.siteCode || "", area: asset.area || "", manufacturer: asset.manufacturer || "", model: asset.model || "",
     serial: asset.serial || "", criticality: asset.criticality || "Media", criticalityReason: asset.criticalityReason || "",
     status: asset.status || "En servicio", commissionedAt: asset.commissionedAt || "", criticalParts: asset.criticalParts || [],
-    notes: asset.notes || "", createdAt: asset.createdAt,
+    replacementValue: asset.replacementValue || "", documents: asset.documents || [], notes: asset.notes || "", createdAt: asset.createdAt,
   });
   const [saving, setSaving] = useState(false);
   const [scanField, setScanField] = useState(false);
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const client = clients.find((c) => c.id === form.clientId);
   const sites = clientSites(client);
-  const history = useMemo(() => {
+  const interventions = useMemo(() => {
     const key = tagKey(form.tag);
     return (orders || [])
       .filter((o) => (form.id && o.assetId === form.id) || (key && tagKey(o.technical?.assetTag) === key))
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-      .slice(0, 8);
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   }, [orders, form.id, form.tag]);
+  const history = useMemo(() => interventions.slice(0, 8), [interventions]);
+  const perf = useMemo(() => assetPerformance(interventions, { commissionedAt: form.commissionedAt, replacementValue: form.replacementValue }), [interventions, form.commissionedAt, form.replacementValue]);
   // La justificación se exige sólo en criticidad alta: es la que inmoviliza stock y ordena la
   // prioridad de atención, así que es la que alguien va a pedir que expliquen.
   const needsReason = form.criticality === "Alta" && !form.criticalityReason.trim();
@@ -8813,6 +8898,7 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onDelete
           <L label="Modelo"><input value={form.model} onChange={(e) => set({ model: e.target.value })} className="u-input" /></L>
           <L label="Número de serie"><input value={form.serial} onChange={(e) => set({ serial: e.target.value })} className="u-input font-mono" /></L>
           <L label="Puesta en servicio"><input type="date" value={form.commissionedAt} onChange={(e) => set({ commissionedAt: e.target.value })} className="u-input" /></L>
+          {showMoney && <L label="Valor de reposición" help="Cuánto costaría reemplazarlo hoy. Sirve para avisar cuando lo gastado en repararlo se acerca a ese número."><input type="number" min="0" value={form.replacementValue || ""} onChange={(e) => set({ replacementValue: e.target.value })} placeholder="Opcional" className="u-input" /></L>}
         </div>
       </Box>
 
@@ -8859,6 +8945,137 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onDelete
           })}
         </div>
       </Box>
+
+      <Box className="space-y-2 p-4">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Documentación del equipo</h4>
+        <p className="text-[11px] text-slate-500">Manuales, planos, esquemas eléctricos. Quedan disponibles en el teléfono al abrir el activo desde su etiqueta.</p>
+        <div className="space-y-1.5">
+          {(form.documents || []).length === 0 && <p className="text-xs text-slate-400">Sin documentos cargados.</p>}
+          {(form.documents || []).map((doc, index) => (
+            <div key={doc.url + index} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2">
+              <FileText className="h-4 w-4 shrink-0 text-slate-400" />
+              <div className="min-w-0 flex-1">
+                {/* Los ya guardados se abren; el recién elegido todavía es un data URL y sólo se
+                    puede mirar después de guardar, así que no se ofrece como enlace. */}
+                {doc.url.startsWith("/api/") ? (
+                  <a href={doc.url} target="_blank" rel="noreferrer" className="block truncate text-sm text-brand-600 hover:underline">{doc.name || "Documento"}</a>
+                ) : (
+                  <span className="block truncate text-sm text-slate-700">{doc.name || "Documento"} <span className="text-[10px] text-amber-600">· se sube al guardar</span></span>
+                )}
+                {doc.kind && <div className="text-[10px] text-slate-400">{doc.kind}</div>}
+              </div>
+              <select value={doc.kind || ""} onChange={(e) => set({ documents: form.documents.map((d, i) => (i === index ? { ...d, kind: e.target.value } : d)) })} className="u-input h-9 w-auto min-w-0 text-xs">
+                <option value="">Tipo</option>
+                {ASSET_DOC_KINDS.map((k) => <option key={k}>{k}</option>)}
+              </select>
+              <button type="button" onClick={() => set({ documents: form.documents.filter((_, i) => i !== index) })} aria-label="Quitar documento" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          ))}
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+          <Upload className="h-3.5 w-3.5" /> Agregar documento
+          <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple className="hidden" onChange={async (event) => {
+            const files = [...(event.target.files || [])]; event.target.value = "";
+            const added = [];
+            for (const file of files) {
+              // El límite lo impone el servidor; comprobarlo acá evita subir 12 MB para que los rechace.
+              if (file.size > 12 * 1024 * 1024) { onErr?.(new Error(`"${file.name}" supera los 12 MB.`)); continue; }
+              try { added.push({ url: await fileToDataUrl(file), name: file.name, kind: "" }); }
+              catch { onErr?.(new Error(`No se pudo leer "${file.name}".`)); }
+            }
+            if (added.length) set({ documents: [...(form.documents || []), ...added] });
+          }} />
+        </label>
+        <p className="text-[11px] text-slate-400">PDF, PNG, JPG o WebP. Hasta 12 MB cada uno.</p>
+      </Box>
+
+      {perf.count > 0 && (
+        <Box className="space-y-3 p-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Desempeño</h4>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-lg bg-slate-50 p-2.5">
+              <div className="text-[11px] text-slate-500">Intervenciones</div>
+              <div className="text-lg font-semibold text-slate-900">{perf.count}</div>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-2.5">
+              <div className="text-[11px] text-slate-500">Horas de parada</div>
+              <div className="text-lg font-semibold text-slate-900">{perf.downtimeTracked ? perf.downtimeHours : "—"}</div>
+              {!perf.downtimeTracked && <div className="text-[10px] text-slate-400">Sin registrar</div>}
+            </div>
+            <div className="rounded-lg bg-slate-50 p-2.5">
+              <div className="text-[11px] text-slate-500">Parada promedio</div>
+              <div className="text-lg font-semibold text-slate-900">{perf.meanDowntimeHours != null ? perf.meanDowntimeHours + " h" : "—"}</div>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-2.5">
+              <div className="text-[11px] text-slate-500">Entre intervenciones</div>
+              <div className="text-lg font-semibold text-slate-900">{perf.meanDaysBetween != null ? perf.meanDaysBetween + " d" : "—"}</div>
+              {perf.meanDaysBetween == null && <div className="text-[10px] text-slate-400">Falta una segunda</div>}
+            </div>
+          </div>
+          {!perf.downtimeTracked && (
+            <p className="text-[11px] text-slate-400">Las horas de parada salen del campo “tiempo fuera de servicio” de cada orden. Si se completa, este bloque las totaliza solo.</p>
+          )}
+
+          {perf.nextService && (
+            <div className={"flex items-start gap-2 rounded-lg border p-3 text-xs " + (perf.nextService.overdue ? "border-rose-200 bg-rose-50 text-rose-800" : "border-sky-200 bg-sky-50 text-sky-800")}>
+              <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                <b>Mantenimiento preventivo cada {perf.nextService.everyMonths} mes(es).</b>{" "}
+                {perf.nextService.overdue
+                  ? `Vencido desde el ${perf.nextService.date} (${Math.abs(perf.nextService.daysLeft)} días).`
+                  : `Próximo el ${perf.nextService.date}, en ${perf.nextService.daysLeft} días.`}
+              </span>
+            </div>
+          )}
+
+          {showMoney && perf.spent > 0 && (
+            <div className="rounded-lg bg-slate-50 p-2.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-[11px] text-slate-500">Gastado en mantener este equipo</span>
+                <span className="text-base font-semibold text-slate-900">{money(perf.spent)}</span>
+              </div>
+              {perf.spentPct != null && (
+                <>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div className={"h-full rounded-full " + (perf.spentPct >= 0.6 ? "bg-rose-500" : perf.spentPct >= 0.3 ? "bg-amber-500" : "bg-emerald-500")}
+                      style={{ width: Math.min(100, perf.spentPct * 100) + "%" }} />
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">{Math.round(perf.spentPct * 100)}% del valor de reposición</div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* El umbral no es una regla contable, es una señal para que alguien mire el caso: cuando
+              reparar se acerca al precio de reemplazar, la decisión deja de ser automática. */}
+          {showMoney && perf.spentPct != null && perf.spentPct >= 0.6 && (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Ya se gastó el {Math.round(perf.spentPct * 100)}% de lo que cuesta reponerlo. Conviene evaluar el reemplazo antes de la próxima reparación.</span>
+            </div>
+          )}
+
+          {/* Una causa que vuelve es el hallazgo que justifica cambiar el equipo o el repuesto, en
+              lugar de seguir reparando lo mismo. Por eso va destacada y no como un dato más. */}
+          {perf.repeated.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <h5 className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><AlertTriangle className="h-3.5 w-3.5" /> Fallas que se repiten</h5>
+              <p className="mt-0.5 text-[11px] text-amber-700">La misma causa volvió a aparecer. Conviene revisar si el problema es el repuesto o el equipo, y no la reparación.</p>
+              <div className="mt-2 space-y-1.5">
+                {perf.repeated.map((cause) => (
+                  <div key={cause.label} className="flex items-start gap-2 rounded-md bg-white/70 p-2 text-xs">
+                    <span className="mt-0.5 shrink-0 rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-900">{cause.count}×</span>
+                    <div className="min-w-0">
+                      <div className="text-slate-800">{cause.label}</div>
+                      <div className="text-[10px] text-slate-500">{cause.dates.join(" · ")}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Box>
+      )}
 
       {history.length > 0 && (
         <Box className="p-4">
