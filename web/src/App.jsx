@@ -2037,6 +2037,8 @@ function Login({ branding = DEFAULT_BRANDING, t = (text) => text, lang = "es", o
               Va con contacto porque también funciona como puerta de entrada comercial: quien vea
               la aplicación en casa de un cliente y la quiera para su empresa, sabe a dónde escribir. */}
           <div className="mt-10 border-t border-cyan-200/10 pt-4 text-[11px] leading-relaxed text-slate-400">
+            <a href="/software-gestion-servicios-tecnicos/" className="font-semibold text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Conocé la plataforma</a>
+            <span className="mx-1.5 text-slate-600">·</span>
             {t("Desarrollado por")} <a href="https://www.automatica-arg.com.ar" target="_blank" rel="noreferrer" className="font-medium text-slate-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-white">Automatica ARG</a>
             <span className="mx-1.5 text-slate-600">·</span>
             <a href="mailto:info@automatica-arg.com.ar" className="hover:text-slate-200">info@automatica-arg.com.ar</a>
@@ -2082,6 +2084,7 @@ function Login({ branding = DEFAULT_BRANDING, t = (text) => text, lang = "es", o
               </div>
             </div>
           </div>
+          <a href="/software-gestion-servicios-tecnicos/" className="mt-5 block text-center text-xs font-semibold text-cyan-700 hover:text-cyan-900 hover:underline">Conocé las funcionalidades de MiOrdenGo</a>
         </div>
       </div>
     </div>

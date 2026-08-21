@@ -9,6 +9,7 @@ const webRoot = path.join(here, "..", "..", "web");
 const html = readFileSync(path.join(webRoot, "index.html"), "utf8");
 const robots = readFileSync(path.join(webRoot, "public", "robots.txt"), "utf8");
 const sitemap = readFileSync(path.join(webRoot, "public", "sitemap.xml"), "utf8");
+const landing = readFileSync(path.join(webRoot, "public", "software-gestion-servicios-tecnicos", "index.html"), "utf8");
 const analytics = readFileSync(path.join(webRoot, "public", "google-analytics.js"), "utf8");
 const server = readFileSync(path.join(here, "..", "index.js"), "utf8");
 
@@ -20,6 +21,12 @@ test("MiOrdenGo publica señales SEO consistentes para el dominio canónico", ()
   assert.match(robots, /Sitemap: https:\/\/www\.miordengo\.com\/sitemap\.xml/);
   assert.match(robots, /Disallow: \/api\//);
   assert.match(sitemap, /<loc>https:\/\/www\.miordengo\.com\/<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/www\.miordengo\.com\/software-gestion-servicios-tecnicos\/<\/loc>/);
+  assert.match(html, /"@type": "WebApplication"/);
+  assert.match(html, /"@type": "Organization"/);
+  assert.match(landing, /<h1>Software de gestión para empresas de servicios técnicos<\/h1>/);
+  assert.match(landing, /rel="canonical" href="https:\/\/www\.miordengo\.com\/software-gestion-servicios-tecnicos\/"/);
+  assert.match(landing, /href="\/"[^>]*>Ingresar a MiOrdenGo<\/a>/);
 });
 
 test("la etiqueta de Google Analytics funciona sin relajar la seguridad global", () => {
