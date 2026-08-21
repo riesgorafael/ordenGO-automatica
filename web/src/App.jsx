@@ -9384,6 +9384,25 @@ function WhiteboardViewDialog({ note, projects, onClose }) {
   const [zoomed, setZoomed] = useState(false);
   useDialogOpenClass(onClose);
   const isDrawing = note.type === "drawing";
+  // La vista ampliada entra en el historial por su cuenta. Sin esto, "atrás" —el gesto natural en
+  // el teléfono, y el que el usuario intentó— cerraba el diálogo entero en lugar de volver a la nota.
+  // Escape hace lo mismo y se detiene acá para que no lo tome también el diálogo de abajo.
+  useEffect(() => {
+    if (!zoomed) return;
+    window.history.pushState({ __zoom: true }, "");
+    const onPop = () => setZoomed(false);
+    const onKey = (event) => { if (event.key === "Escape") { event.stopPropagation(); setZoomed(false); } };
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("keydown", onKey, true);
+      // Si se cerró con la X o tocando la imagen, la entrada que agregamos sigue en el historial y
+      // hay que quitarla: de lo contrario el primer "atrás" siguiente no haría nada visible.
+      if (window.history.state?.__zoom) window.history.back();
+    };
+  }, [zoomed]);
+
   const downloadImage = () => {
     const a = document.createElement("a");
     a.href = note.imageDataUrl;
@@ -9410,10 +9429,15 @@ function WhiteboardViewDialog({ note, projects, onClose }) {
           : <p className="whitespace-pre-wrap rounded-lg p-3 text-sm text-slate-700" style={{ background: note.color || WHITEBOARD_NOTE_COLORS[0] }}>{note.content || "Sin contenido"}</p>}
       </div>
       {zoomed && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4" onClick={() => setZoomed(false)}>
-          <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="max-h-[95vh] max-w-[95vw] rounded-lg object-contain" onClick={(e) => e.stopPropagation()} />
-          <button onClick={() => setZoomed(false)} aria-label="Cerrar vista ampliada" className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-white/20 text-white hover:bg-white/30"><X className="h-5 w-5" /></button>
-          <button onClick={downloadImage} className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-lg bg-white/20 px-3 py-2 text-sm font-medium text-white hover:bg-white/30"><Download className="h-4 w-4" /> Descargar</button>
+        // Un clic en cualquier punto cierra, la imagen incluida: ocupa casi toda la pantalla, así que
+        // dejarla fuera del área sensible equivalía a no tener salida. El cursor lo anticipa.
+        <div className="fixed inset-0 z-[70] flex cursor-zoom-out items-center justify-center bg-black/90 p-4" onClick={() => setZoomed(false)}>
+          <img src={note.imageDataUrl} alt={note.title || "Dibujo"} className="max-h-[95vh] max-w-[95vw] rounded-lg object-contain" />
+          {/* Fondo sólido y borde: en blanco translúcido el botón desaparecía sobre los planos, que
+              son justamente lo que se amplía. */}
+          <button onClick={() => setZoomed(false)} aria-label="Cerrar vista ampliada" className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-slate-900/80 text-white ring-1 ring-white/40 hover:bg-slate-900"><X className="h-5 w-5" /></button>
+          <button onClick={(event) => { event.stopPropagation(); downloadImage(); }} className="absolute bottom-4 right-4 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-slate-900/80 px-3 py-2 text-sm font-medium text-white ring-1 ring-white/40 hover:bg-slate-900"><Download className="h-4 w-4" /> Descargar</button>
+          <span className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-slate-900/70 px-2.5 py-1.5 text-[11px] text-white/80">Tocá la imagen para volver</span>
         </div>
       )}
     </div>
