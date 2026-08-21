@@ -372,6 +372,51 @@ function orderCosts(o) {
   const mats = (o.materials || []).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.cost) || 0), 0);
   return { labor, mats, costTotal: labor + mats };
 }
+/* Avance de un presupuesto que se certifica por partes. Un presupuesto grande puede ejecutarse con
+   varias órdenes de trabajo —la base ya lo admite: orders.budget_id no es única— pero hasta acá no
+   había forma de ver cuánto se llevaba certificado ni cuánto quedaba.
+
+   El número de certificación se calcula por orden de fecha en lugar de guardarse: así no hay campo
+   que migrar y, sobre todo, no puede quedar desincronizado si se borra una orden del medio. */
+const CERTIFIED_STATUSES = ["Completada", "Aprobada", "Facturada"];
+
+function budgetProgress(budget, orders = []) {
+  const linked = orders
+    .filter((o) => (o.budgetId && o.budgetId === budget.id)
+      || (budget.number && (o.quoteNumber === budget.number || o.budgetNumber === budget.number)))
+    .sort((a, b) => String(a.date || a.createdAt || "").localeCompare(String(b.date || b.createdAt || "")));
+
+  const items = linked.map((o, index) => ({
+    id: o.id,
+    seq: index + 1,
+    date: o.date || "",
+    status: o.status,
+    total: orderTotals(o).total || 0,
+    // "En proceso" y "Borrador" todavía no certifican nada: son trabajo comprometido, no ejecutado.
+    counts: CERTIFIED_STATUSES.includes(o.status),
+  }));
+
+  const certified = items.filter((i) => i.counts).reduce((sum, i) => sum + i.total, 0);
+  const inProgress = items.filter((i) => !i.counts).reduce((sum, i) => sum + i.total, 0);
+  const amount = Math.max(0, Number(budget.amount) || 0);
+  // Sin monto cargado no hay contra qué comparar: se informa lo certificado y nada más, en vez de
+  // mostrar un 0% o un "infinito" que se leerían como un dato real.
+  const pct = amount > 0 ? certified / amount : null;
+  return {
+    items,
+    count: items.length,
+    certified,
+    inProgress,
+    amount,
+    pct,
+    remaining: amount > 0 ? amount - certified : null,
+    // El aviso mira lo certificado MÁS lo que ya está en curso: enterarse de que se pasó recién
+    // cuando la última orden se aprobó llega tarde para hacer algo al respecto.
+    over: amount > 0 && certified > amount,
+    willExceed: amount > 0 && certified <= amount && certified + inProgress > amount,
+  };
+}
+
 function orderMargin(o) {
   const rev = orderTotals(o).total, cost = orderCosts(o).costTotal;
   return { rev, cost, margin: rev - cost, pct: rev ? (rev - cost) / rev : 0 };
@@ -4629,6 +4674,63 @@ const emptyBudget = (me, clients) => {
   return { number: "", clientId: client?.id || "", client: client?.name || "", site: site?.name || client?.site || "", title: "", service: "Automatización", stage: "Borrador", probability: BUDGET_STAGE_PROBABILITY.Borrador, targetMargin: margin, validUntil: "", expectedDecisionDate: "", plannedStart: "", plannedEnd: "", durationDays: 0, teamSize: 1, owner: me.name, contact: "", scope: "", assumptions: "", exclusions: "", risks: "", nextAction: "", nextFollowUp: "", items: [{ type: "Ingeniería", description: role.name, qty: 1, unit: "hs", unitPrice: suggested, unitCost: role.cost }] };
 };
 
+/* Avance de certificación de un presupuesto ejecutado por varias órdenes de trabajo. Sólo aparece
+   cuando hay al menos una vinculada: en el presupuesto que todavía no se ejecutó no aporta nada. */
+function BudgetCertification({ budget, orders, onOpenOrder }) {
+  const progress = useMemo(() => budgetProgress(budget, orders), [budget, orders]);
+  if (progress.count === 0) return null;
+  const barColor = progress.over ? "bg-rose-500" : progress.pct != null && progress.pct >= 0.85 ? "bg-amber-500" : "bg-emerald-500";
+  return (
+    <Section title={`Certificación por órdenes de trabajo (${progress.count})`}>
+      {progress.over && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Lo certificado supera el presupuesto en <b>{money(Math.abs(progress.remaining))}</b>. Si la orden de compra del cliente está cerrada, ese excedente no se va a poder facturar.</span>
+        </div>
+      )}
+      {progress.willExceed && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Con las órdenes en curso se va a superar el presupuesto. Todavía estás a tiempo de ajustar el alcance o pedir una ampliación de la orden de compra.</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-[11px] text-slate-500">Presupuestado</div><div className="text-sm font-semibold text-slate-900">{progress.amount > 0 ? money(progress.amount) : "—"}</div></div>
+        <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-[11px] text-slate-500">Certificado</div><div className="text-sm font-semibold text-slate-900">{money(progress.certified)}</div></div>
+        <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-[11px] text-slate-500">En curso</div><div className="text-sm font-semibold text-slate-900">{money(progress.inProgress)}</div></div>
+        <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-[11px] text-slate-500">Saldo</div><div className={"text-sm font-semibold " + (progress.over ? "text-rose-600" : "text-slate-900")}>{progress.remaining != null ? money(progress.remaining) : "—"}</div></div>
+      </div>
+
+      {progress.pct != null && (
+        <div className="mt-2">
+          <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+            <div className={"h-full rounded-full " + barColor} style={{ width: Math.min(100, progress.pct * 100) + "%" }} />
+          </div>
+          <div className="mt-1 text-[11px] text-slate-500">{Math.round(progress.pct * 100)}% certificado</div>
+        </div>
+      )}
+      {progress.pct == null && <p className="mt-2 text-[11px] text-slate-400">El presupuesto no tiene monto cargado, así que no hay contra qué comparar lo certificado.</p>}
+
+      <div className="mt-3 space-y-1.5">
+        {progress.items.map((item) => (
+          <button key={item.id} type="button" onClick={() => onOpenOrder?.(item.id)} disabled={!onOpenOrder}
+            className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-slate-200 p-2 text-left text-xs enabled:hover:bg-slate-50 disabled:cursor-default">
+            {/* El número de certificación se calcula por fecha: distingue de un vistazo las órdenes
+                de un mismo presupuesto, que hasta ahora compartían todas el mismo número de cotización. */}
+            <span className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">{item.seq}/{progress.count}</span>
+            <span className="font-mono text-slate-700">{item.id}</span>
+            <Chip className={O_STYLE[item.status] || "bg-slate-100 text-slate-600 ring-slate-200"}>{item.status}</Chip>
+            {!item.counts && <span className="text-[10px] text-slate-400">no certifica todavía</span>}
+            <span className="ml-auto shrink-0 font-semibold text-slate-800">{money(item.total)}</span>
+            <span className="w-full text-[10px] text-slate-400 sm:w-auto sm:shrink-0">{item.date}</span>
+          </button>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpenOrder, onClose, onSave }) {
   useDialogOpenClass(onClose);
   const [form, setForm] = useState(() => ({ ...emptyBudget(me, clients), ...(budget || {}), number: budget?.number || budget?.id || "", probabilityOverridden: Boolean(budget?.probabilityOverridden), probability: budget?.probabilityOverridden ? budget.probability : BUDGET_STAGE_PROBABILITY[budget?.stage || "Borrador"], items: (budget?.items || emptyBudget(me, clients).items).map((item) => ({ ...item })), additionalCosts: (budget?.additionalCosts || []).map((item) => ({ ...item })) }));
@@ -4672,6 +4774,7 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpe
         <Section title="Oportunidad y cliente"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="N.º de presupuesto"><input value={form.number || ""} onChange={(event) => set("number", event.target.value)} placeholder="Automático al guardar" className="u-input" /></L><L label="Cliente *"><select value={form.clientId} onChange={(event) => { const client = clients.find((item) => item.id === event.target.value); setForm((current) => ({ ...current, clientId: event.target.value, client: client?.name || "", site: clientSites(client)[0]?.name || "", contact: client?.contactName || "" })); }} className="u-input"><option value="">Seleccionar cliente</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></L><L label="Sitio / planta">{clientSites(clients.find((c) => c.id === form.clientId)).length > 1 ? (<select value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input">{clientSites(clients.find((c) => c.id === form.clientId)).map((s) => <option key={s.code || s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ""}</option>)}</select>) : (<input value={form.site || ""} onChange={(event) => set("site", event.target.value)} className="u-input" />)}</L><L label="Nombre del presupuesto *"><input value={form.title} onChange={(event) => set("title", event.target.value)} placeholder="Ej. Automatización celda de secado 2" className="u-input" /></L><L label="Tipo de servicio"><select value={form.service} onChange={(event) => set("service", event.target.value)} className="u-input">{SERVICE_TYPES.map((service) => <option key={service}>{service}</option>)}</select></L><L label="Contacto"><input value={form.contact || ""} onChange={(event) => set("contact", event.target.value)} placeholder="Nombre, correo o teléfono" className="u-input" /></L><L label="Responsable comercial"><input value={form.owner || ""} onChange={(event) => set("owner", event.target.value)} className="u-input" /></L></div></Section>
 
         <Section title="Estado y seguimiento"><div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><L label="Etapa"><select disabled={form.stage === "Pagado"} value={form.stage} onChange={(event) => { const stage = event.target.value; setForm((current) => ({ ...current, stage, probability: current.probabilityOverridden ? current.probability : BUDGET_STAGE_PROBABILITY[stage], invoicedAt: stage === "Facturado" ? current.invoicedAt || todayStr() : current.invoicedAt })); }} className="u-input disabled:bg-emerald-50 disabled:text-emerald-700">{form.stage === "Pagado" && <option>Pagado</option>}{BUDGET_STAGE_GROUPS.map((group) => <optgroup key={group.label} label={group.label}>{group.stages.filter((stage) => stage !== "Pagado").map((stage) => <option key={stage}>{stage}</option>)}</optgroup>)}</select></L><L label={form.probabilityOverridden ? "Probabilidad (manual)" : "Probabilidad automática"}><div className="flex h-10 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1"><input type="number" min="0" max="100" step="1" value={form.probability} onChange={(event) => setForm((current) => ({ ...current, probabilityOverridden: true, probability: Math.min(100, Math.max(0, Number(event.target.value) || 0)) }))} className="w-full min-w-0 border-0 bg-transparent px-2 text-sm font-semibold text-slate-700 outline-none" />%</div></L><L label="Válido hasta"><input type="date" value={form.validUntil || ""} onChange={(event) => set("validUntil", event.target.value)} className="u-input" /></L><L label="Decisión estimada"><input type="date" value={form.expectedDecisionDate || ""} onChange={(event) => set("expectedDecisionDate", event.target.value)} className="u-input" /></L></div>{form.stage === "Pagado" && <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-700">Estado automático: los ingresos imputados cubren el total facturado con IVA{form.paidAt ? ` · Pago registrado el ${budgetDate(form.paidAt)}` : ""}.</p>}<p className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">{form.probabilityOverridden ? "Probabilidad ajustada manualmente para esta oportunidad." : "La probabilidad se actualiza automáticamente según la etapa comercial."}{form.probabilityOverridden && <button type="button" onClick={() => setForm((current) => ({ ...current, probabilityOverridden: false, probability: BUDGET_STAGE_PROBABILITY[current.stage] }))} className="font-medium text-brand-600 hover:underline">Volver a automática</button>}</p><div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2"><L label="Próxima acción"><input value={form.nextAction || ""} onChange={(event) => set("nextAction", event.target.value)} placeholder="Llamar, enviar revisión, visita técnica…" className="u-input" /></L><L label="Próximo seguimiento"><input type="date" value={form.nextFollowUp || ""} onChange={(event) => set("nextFollowUp", event.target.value)} className="u-input" /></L></div></Section>
+        <BudgetCertification budget={form} orders={orders} onOpenOrder={onOpenOrder} />
         {["Aprobado", "Facturado", "Pagado"].includes(form.stage) && <Section title="Orden de compra del cliente">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <L label="N.º de OC del cliente *"><input value={form.purchaseOrderNumber || ""} onChange={(event) => set("purchaseOrderNumber", event.target.value)} placeholder="Ej. OC 4500123456" className="u-input" /></L>
@@ -4883,7 +4986,11 @@ function BudgetsModule({ budgets, finances, clients, parts, projects, orders = [
   const billedGross = payment.fullyPaid ? payment.cash : payment.billedGross;
   const collected = payment.cash;
   const collectedPct = payment.progress;
-  const fullyPaid = billedGross > 0 && collected >= billedGross - 0.01; const project = projects.find((item) => item.id === budget.projectId); const ageDays = budget.createdAt ? daysSince(budget.createdAt) : null; const weightedValue = (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100; return <Box key={budget.id} onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} className="flex h-full cursor-pointer flex-col p-4 hover:border-brand-300"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{budget.number || budget.id}</span><Chip className={`${BUDGET_STYLE[displayStage]} ring-1`}>{displayStage}</Chip>{fullyPaid ? <Chip className="bg-emerald-600 font-semibold text-white ring-emerald-700/20">Pagado</Chip> : collected > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20">Cobrado {collectedPct}%</Chip>}{budget.purchaseOrderNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">OC {budget.purchaseOrderNumber}</Chip>}{Number(budget.additionalCostTotal) > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Costos extra {money(budget.additionalCostTotal)}</Chip>}{costUnderPlan && <Chip className="bg-amber-50 text-amber-700 ring-amber-200" title={`El plan son ${plannedPersonDays} jornada(s)-persona y el costo cargado es ${money(budgetCost)}: ${money(costPerPersonDay)} por jornada, por debajo del perfil más barato (${money(cheapestLaborRate)}/h). Probablemente falten las horas de mano de obra en las líneas.`}><AlertTriangle className="h-3 w-3" /> Costo incompatible con el plan</Chip>}{followDue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><AlertTriangle className="h-3 w-3" /> Seguimiento vencido</Chip>}{offerExpired && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><Clock className="h-3 w-3" /> Oferta vencida</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{budget.title}</h3><p className="mt-0.5 text-xs text-slate-500">{budget.client}{budget.site ? ` · ${budget.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5" onClick={(event) => event.stopPropagation()}><button onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} title="Editar presupuesto" aria-label="Editar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => onDuplicate(budget)} title="Duplicar presupuesto" aria-label="Duplicar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button><button onClick={() => onDelete(budget)} title="Eliminar presupuesto" aria-label="Eliminar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs sm:grid-cols-4"><div><span className="block text-[10px] text-slate-400">Valor</span><b>{money(budget.amount)}</b></div><div><span className="block text-[10px] text-slate-400">Valor ponderado</span><b>{money(weightedValue)}</b></div><div><span className="block text-[10px] text-slate-400">Probabilidad</span><b>{budget.probability || 0}%</b></div><div><span className="flex items-center gap-1 text-[10px] text-slate-400">Margen actual{costMissing ? <HelpHint text="Este presupuesto no tiene costo estimado cargado, así que su margen todavía no se puede calcular. Cargalo en el editor para conocer la rentabilidad real." /> : ["Aprobado", "Facturado"].includes(budget.stage) && <HelpHint text="Costo congelado: quedó fijado al aprobar el presupuesto y solo cambia si se cargan costos adicionales." />}</span>{costMissing ? <b className="text-amber-600">Sin costo cargado</b> : <b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{Number(budget.amount) > 0 ? <span className="ml-1 font-normal text-slate-400">· {Math.round((margin / Number(budget.amount)) * 100)}%</span> : null}</b>}</div></div><div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-slate-600">{isWon
+  const fullyPaid = billedGross > 0 && collected >= billedGross - 0.01; const project = projects.find((item) => item.id === budget.projectId); const ageDays = budget.createdAt ? daysSince(budget.createdAt) : null; const weightedValue = (Number(budget.amount) || 0) * (Number(budget.probability) || 0) / 100; return <Box key={budget.id} onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} className="flex h-full cursor-pointer flex-col p-4 hover:border-brand-300"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-semibold text-slate-700">{budget.number || budget.id}</span><Chip className={`${BUDGET_STYLE[displayStage]} ring-1`}>{displayStage}</Chip>{fullyPaid ? <Chip className="bg-emerald-600 font-semibold text-white ring-emerald-700/20">Pagado</Chip> : collected > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-600/20">Cobrado {collectedPct}%</Chip>}{budget.purchaseOrderNumber && <Chip className="bg-sky-50 text-sky-700 ring-sky-200">OC {budget.purchaseOrderNumber}</Chip>}{(() => { const cert = budgetProgress(budget, orders); if (!cert.count) return null; return (<>
+              {cert.count > 1 && <Chip className="bg-slate-100 text-slate-600 ring-slate-200">{cert.count} OT</Chip>}
+              {cert.over && <Chip className="bg-rose-50 text-rose-700 ring-rose-200">Sobre-certificado</Chip>}
+              {!cert.over && cert.willExceed && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Se va a exceder</Chip>}
+            </>); })()}{Number(budget.additionalCostTotal) > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Costos extra {money(budget.additionalCostTotal)}</Chip>}{costUnderPlan && <Chip className="bg-amber-50 text-amber-700 ring-amber-200" title={`El plan son ${plannedPersonDays} jornada(s)-persona y el costo cargado es ${money(budgetCost)}: ${money(costPerPersonDay)} por jornada, por debajo del perfil más barato (${money(cheapestLaborRate)}/h). Probablemente falten las horas de mano de obra en las líneas.`}><AlertTriangle className="h-3 w-3" /> Costo incompatible con el plan</Chip>}{followDue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><AlertTriangle className="h-3 w-3" /> Seguimiento vencido</Chip>}{offerExpired && <Chip className="bg-amber-50 text-amber-700 ring-amber-200"><Clock className="h-3 w-3" /> Oferta vencida</Chip>}</div><h3 className="mt-2 text-base font-semibold text-slate-900">{budget.title}</h3><p className="mt-0.5 text-xs text-slate-500">{budget.client}{budget.site ? ` · ${budget.site}` : ""}</p></div><div className="flex shrink-0 gap-1.5" onClick={(event) => event.stopPropagation()}><button onClick={() => { setEditingBudget(budget); setEditorOpen(true); }} title="Editar presupuesto" aria-label="Editar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-4 w-4" /></button><button onClick={() => onDuplicate(budget)} title="Duplicar presupuesto" aria-label="Duplicar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Copy className="h-4 w-4" /></button><button onClick={() => onDelete(budget)} title="Eliminar presupuesto" aria-label="Eliminar presupuesto" className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2.5 text-xs sm:grid-cols-4"><div><span className="block text-[10px] text-slate-400">Valor</span><b>{money(budget.amount)}</b></div><div><span className="block text-[10px] text-slate-400">Valor ponderado</span><b>{money(weightedValue)}</b></div><div><span className="block text-[10px] text-slate-400">Probabilidad</span><b>{budget.probability || 0}%</b></div><div><span className="flex items-center gap-1 text-[10px] text-slate-400">Margen actual{costMissing ? <HelpHint text="Este presupuesto no tiene costo estimado cargado, así que su margen todavía no se puede calcular. Cargalo en el editor para conocer la rentabilidad real." /> : ["Aprobado", "Facturado"].includes(budget.stage) && <HelpHint text="Costo congelado: quedó fijado al aprobar el presupuesto y solo cambia si se cargan costos adicionales." />}</span>{costMissing ? <b className="text-amber-600">Sin costo cargado</b> : <b className={margin >= 0 ? "text-emerald-600" : "text-rose-600"}>{money(margin)}{Number(budget.amount) > 0 ? <span className="ml-1 font-normal text-slate-400">· {Math.round((margin / Number(budget.amount)) * 100)}%</span> : null}</b>}</div></div><div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-slate-600">{isWon
       // En un presupuesto ganado, "próxima acción", "seguimiento" y "válido hasta" son campos de
       // negociación que ya no aplican: mostraban "Sin definir" ocupando media tarjeta. Se sustituyen
       // por los datos del cierre, que es lo que sí se consulta después de ganar.
