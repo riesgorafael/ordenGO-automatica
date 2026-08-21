@@ -5,7 +5,7 @@ import {
   FolderTree,
   Plus, X, Search, Camera, Upload, Sparkles, Loader2, MapPin, Clock, ClipboardList,
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
-  ChevronLeft, ChevronRight, Wrench, Cpu, DollarSign, Building2, Filter, LayoutGrid,
+  ChevronLeft, ChevronRight, Wrench, Cpu, QrCode, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2, Mail,
@@ -29,6 +29,7 @@ const monthlyReportPDF = (...args) => pdfModule().then((module) => module.monthl
 const projectStatusReportPDF = (options) => pdfModule().then((module) => module.projectStatusReportPDF({ ...options, branding: options?.branding || REPORT_BRANDING }));
 const purchaseOrderReportPDF = (...args) => pdfModule().then((module) => module.purchaseOrderReportPDF(...withReportBranding(args, 4)));
 const valuedClientReportPDF = (...args) => pdfModule().then((module) => module.valuedClientReportPDF(...withReportBranding(args, 3)));
+const assetLabelsPDF = (tokens, branding, options) => pdfModule().then((module) => module.assetLabelsPDF(tokens, branding, options));
 import { parseReceiptImage } from "./receiptOcr";
 import { warpPerspective, autoDetectCorners } from "./imagePerspective";
 import GanttChart from "./GanttChart";
@@ -136,6 +137,16 @@ function useDialogOpenClass(onRequestClose) {
 }
 // Un cliente puede tener varias plantas, cada una con su propio código (usado para numerar OTs).
 // Los clientes viejos solo tienen site/code sueltos — se tratan como una única planta.
+/* Etiqueta de un sitio en un desplegable: nombre y, cuando existe, su código. Si aun así dos
+   entradas quedan iguales se numera, porque dos opciones idénticas no se pueden elegir a conciencia. */
+const siteLabelOf = (site, all = []) => {
+  const name = site?.name || "—";
+  const base = site?.code ? name + " (" + site.code + ")" : name;
+  const twins = all.filter((s) => (s?.code ? (s.name || "—") + " (" + s.code + ")" : (s?.name || "—")) === base);
+  if (twins.length < 2) return base;
+  return base + " · " + (twins.indexOf(site) + 1);
+};
+
 const clientSites = (c) => c?.sites?.length ? c.sites : (c?.site ? [{ code: c.code || "", name: c.site }] : []);
 const normalizedRate = (value) => { const rate = wholeMoney(value); return !rate || rate === 850 ? DEFAULT_RATE : rate; };
 
@@ -1891,9 +1902,17 @@ export default function App() {
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} drawingSignal={drawingSignal} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} branding={branding} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
-        {activeModule === "assets" && (isMgr || me.role === "tecnico") && <AssetsModule assets={assets} clients={clients} parts={parts} orders={orders} onErr={err}
+        {activeModule === "assets" && (isMgr || me.role === "tecnico") && <AssetsModule assets={assets} clients={clients} parts={parts} orders={orders} isMgr={isMgr} branding={branding} onErr={err}
           onSave={async (payload) => { try { const saved = payload.id && assets.some((a) => a.id === payload.id) ? await api.updateAsset(payload.id, payload) : await api.createAsset(payload); setAssets((items) => [saved, ...items.filter((a) => a.id !== saved.id)]); toast("Activo guardado"); return saved; } catch (e) { err(e); return null; } }}
-          onDelete={async (id) => { try { await api.deleteAsset(id); setAssets((items) => items.filter((a) => a.id !== id)); } catch (e) { err(e); } }} />}
+          onDelete={(asset, done) => setConfirmDialog({
+            title: `Eliminar ${[asset.tag, asset.name].filter(Boolean).join(" · ")}`,
+            // Las órdenes ya emitidas no se tocan, pero pierden el vínculo con el equipo: conviene
+            // decir cuántas son antes de borrar, no después.
+            message: (() => { const n = orders.filter((o) => o.assetId === asset.id).length; return `Se eliminará el activo y sus repuestos críticos dejarán de exigir stock de seguridad.${n ? ` Las ${n} orden(es) que lo registran se conservan, pero quedarán sin activo asociado.` : ""} Esta acción no se puede deshacer.`; })(),
+            confirmLabel: "Eliminar activo",
+            danger: true,
+            action: async () => { try { await api.deleteAsset(asset.id); setAssets((items) => items.filter((a) => a.id !== asset.id)); done?.(); toast("Activo eliminado", "success"); } catch (e) { err(e); } },
+          })} />}
         {activeModule === "deliveryNotes" && (isMgr || me.role === "tecnico") && <DeliveryNotesModule notes={deliveryNotes} orders={orders} clients={clients} branding={branding} createSignal={deliveryNoteCreateSignal} toast={toast} onErr={err}
           onSave={async (payload) => { try { const saved = payload.id && deliveryNotes.some((n) => n.id === payload.id) ? await api.updateDeliveryNote(payload.id, payload) : await api.createDeliveryNote(payload); setDeliveryNotes((items) => { const rest = items.filter((n) => n.id !== saved.id); return [saved, ...rest]; }); return saved; } catch (e) { err(e); return null; } }}
           onDelete={async (note) => { if (!window.confirm(`¿Eliminar el remito ${note.number}?`)) return; try { await api.deleteDeliveryNote(note.id); setDeliveryNotes((items) => items.filter((n) => n.id !== note.id)); toast("Remito eliminado", "success"); } catch (e) { err(e); } }} />}
@@ -6061,7 +6080,7 @@ function DeliveryNoteEditor({ note, orders, clients, onCancel, onSave, onErr }) 
           <L label="Sitio">
             <select value={form.site} onChange={(e) => set({ site: e.target.value })} className="u-input">
               <option value="">Todos los sitios</option>
-              {sites.map((s, i) => <option key={s?.code || s?.name || i} value={s?.name || ""}>{s?.name || "—"}</option>)}
+              {sites.map((s, i) => <option key={s?.code || s?.name || i} value={s?.name || ""}>{siteLabelOf(s, sites)}</option>)}
             </select>
           </L>
           <L label="Fecha"><input type="date" value={form.date} onChange={(e) => set({ date: e.target.value })} className="u-input" /></L>
@@ -8543,6 +8562,25 @@ function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePa
 }
 
 /* ===================================== ACTIVOS ===================================== */
+/* Código de una etiqueta QR. Se usa un alfabeto sin I, O, 0 ni 1: la etiqueta también se lee y se
+   teclea a mano cuando el QR está dañado, y esos cuatro caracteres son los que se confunden. */
+const ASSET_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+function newAssetToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return "MOG-" + [...bytes].map((b) => ASSET_TOKEN_ALPHABET[b % ASSET_TOKEN_ALPHABET.length]).join("");
+}
+
+/* Lo que devuelve el lector puede ser la URL completa de la etiqueta o sólo el código, según se haya
+   escaneado con la app o con la cámara del teléfono. Las dos formas tienen que llevar al mismo lado. */
+function assetTokenFrom(scanned) {
+  const raw = String(scanned || "").trim();
+  if (!raw) return "";
+  const fromUrl = raw.match(/[?&]activo=([^&\s]+)/i);
+  const value = fromUrl ? decodeURIComponent(fromUrl[1]) : raw;
+  const token = value.trim().toUpperCase();
+  return /^MOG-[0-9A-Z]{4,20}$/.test(token) ? token : "";
+}
+
 const ASSET_CRITICALITY = ["Alta", "Media", "Baja"];
 const ASSET_STATUS = ["En servicio", "En reparación", "Fuera de servicio", "Dado de baja"];
 const CRITICALITY_STYLE = {
@@ -8574,10 +8612,27 @@ function requiredStockByPart(assets) {
   return required;
 }
 
-function AssetsModule({ assets, clients, parts, orders, onSave, onDelete, onErr }) {
+function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, onSave, onDelete, onErr }) {
   const [editing, setEditing] = useState(null);
   const [query, setQuery] = useState("");
   const [critFilter, setCritFilter] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [labelCount, setLabelCount] = useState(32);
+  const [scanMsg, setScanMsg] = useState("");
+
+  /* Una etiqueta escaneada tiene dos desenlaces y ninguno es un error: si ya está asignada se abre
+     ese equipo, y si está en blanco arranca el alta con el código puesto. Ese segundo caso es el que
+     hace útil imprimir etiquetas antes de saber a qué equipo van. */
+  const resolveScan = (scanned) => {
+    const token = assetTokenFrom(scanned);
+    setScanning(false);
+    if (!token) { setScanMsg("Ese código no es una etiqueta de activo."); return; }
+    const found = assets.find((a) => String(a.qrToken || "").toUpperCase() === token);
+    if (found) { setScanMsg(""); setEditing(found); return; }
+    setScanMsg("");
+    setEditing({ qrToken: token });
+  };
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return assets.filter((a) =>
@@ -8597,12 +8652,17 @@ function AssetsModule({ assets, clients, parts, orders, onSave, onDelete, onErr 
 
   if (editing) {
     return <AssetEditor asset={editing} clients={clients} parts={parts} orders={orders} onErr={onErr}
+      onDelete={isMgr && editing.id ? () => onDelete(editing, () => setEditing(null)) : null}
       onCancel={() => setEditing(null)}
       onSave={async (payload) => { const saved = await onSave(payload); if (saved) setEditing(null); }} />;
   }
 
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={() => setScanning(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ScanLine className="h-4 w-4" /> Escanear etiqueta</button>
+        <button onClick={() => setLabelsOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><QrCode className="h-4 w-4" /> Imprimir etiquetas</button>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por equipo, TAG, planta…" className="u-input max-w-xs flex-1" />
         <select value={critFilter} onChange={(e) => setCritFilter(e.target.value)} className="u-input w-auto">
@@ -8651,19 +8711,45 @@ function AssetsModule({ assets, clients, parts, orders, onSave, onDelete, onErr 
           })}
         </div>
       </Box>
+      {scanMsg && <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{scanMsg}</div>}
+      {scanning && <BarcodeScannerDialog onClose={() => setScanning(false)} onDetect={resolveScan} />}
+      {labelsOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onClick={() => setLabelsOpen(false)}>
+          <div className="w-full max-w-md rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-900">Imprimir etiquetas en blanco</h3>
+              <button onClick={() => setLabelsOpen(false)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+            </div>
+            <p className="mb-3 text-sm text-slate-500">Cada etiqueta trae un código único, todavía sin equipo. Se pegan en planta y después se da de alta escaneando.</p>
+            <L label="Cuántas etiquetas">
+              <input type="number" min="1" max="480" value={labelCount} onChange={(e) => setLabelCount(e.target.value)} className="u-input" />
+            </L>
+            <p className="mt-1.5 text-[11px] text-slate-400">Entran 32 por hoja A4. Los códigos se generan al momento: si imprimís de más, las sobrantes quedan disponibles para otro día.</p>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setLabelsOpen(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+              <button onClick={async () => {
+                const count = Math.max(1, Math.min(480, Number(labelCount) || 1));
+                const tokens = Array.from({ length: count }, newAssetToken);
+                try { await assetLabelsPDF(tokens, branding, { cols: 4, rows: 8 }); setLabelsOpen(false); }
+                catch (e) { onErr?.(e); }
+              }} className="flex-1 rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-400">Generar PDF</button>
+            </div>
+          </div>
+        </div>, document.body)}
     </div>
   );
 }
 
-function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onErr }) {
+function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onDelete, onErr }) {
   const [form, setForm] = useState({
-    id: asset.id, tag: asset.tag || "", name: asset.name || "", clientId: asset.clientId || "", client: asset.client || "",
-    site: asset.site || "", area: asset.area || "", manufacturer: asset.manufacturer || "", model: asset.model || "",
+    id: asset.id, tag: asset.tag || "", qrToken: asset.qrToken || "", name: asset.name || "", clientId: asset.clientId || "", client: asset.client || "",
+    site: asset.site || "", siteCode: asset.siteCode || "", area: asset.area || "", manufacturer: asset.manufacturer || "", model: asset.model || "",
     serial: asset.serial || "", criticality: asset.criticality || "Media", criticalityReason: asset.criticalityReason || "",
     status: asset.status || "En servicio", commissionedAt: asset.commissionedAt || "", criticalParts: asset.criticalParts || [],
     notes: asset.notes || "", createdAt: asset.createdAt,
   });
   const [saving, setSaving] = useState(false);
+  const [scanField, setScanField] = useState(false);
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const client = clients.find((c) => c.id === form.clientId);
   const sites = clientSites(client);
@@ -8681,6 +8767,12 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onErr })
       <Box className="space-y-2 p-4">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <L label="TAG / código" help="El identificador con el que la planta conoce al equipo."><input value={form.tag} onChange={(e) => set({ tag: e.target.value })} placeholder="CT-VTU-COMP-01" className="u-input font-mono" /></L>
+          <L label="Etiqueta QR" help="El código impreso en la calcomanía pegada al equipo. Se completa solo al dar de alta escaneando.">
+            <div className="flex gap-1.5">
+              <input value={form.qrToken || ""} onChange={(e) => set({ qrToken: e.target.value.toUpperCase() })} placeholder="Sin etiqueta" className="u-input font-mono" />
+              <button type="button" onClick={() => setScanField(true)} title="Escanear etiqueta" aria-label="Escanear etiqueta" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button>
+            </div>
+          </L>
           <L label="Equipo"><input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Compresor de tornillo 75 kW" className="u-input" /></L>
           <L label="Cliente">
             <select value={form.clientId} onChange={(e) => { const c = clients.find((x) => x.id === e.target.value); set({ clientId: e.target.value, client: c?.name || "", site: "" }); }} className="u-input">
@@ -8689,9 +8781,15 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onErr })
             </select>
           </L>
           <L label="Planta / sitio">
-            <select value={form.site} onChange={(e) => set({ site: e.target.value })} className="u-input">
+            {/* El sitio se elige por su código, no por su nombre: un cliente puede tener dos plantas
+                llamadas igual y, guardando solo el nombre, quedaban indistinguibles tanto en la lista
+                como en el dato grabado. La etiqueta muestra el código, como en el resto de la app. */}
+            <select value={form.siteCode || form.site || ""} onChange={(e) => {
+              const chosen = sites.find((x) => (x?.code || x?.name || "") === e.target.value);
+              set({ site: chosen?.name || "", siteCode: chosen?.code || "" });
+            }} className="u-input">
               <option value="">Sin definir</option>
-              {sites.map((s, i) => <option key={s?.code || s?.name || i} value={s?.name || ""}>{s?.name || "—"}</option>)}
+              {sites.map((s, i) => <option key={s?.code || s?.name || i} value={s?.code || s?.name || ""}>{siteLabelOf(s, sites)}</option>)}
             </select>
           </L>
           <L label="Área / línea"><input value={form.area} onChange={(e) => set({ area: e.target.value })} placeholder="Sala de compresores" className="u-input" /></L>
@@ -8773,6 +8871,13 @@ function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onErr })
         <button onClick={async () => { setSaving(true); await onSave(form); setSaving(false); }} disabled={saving || !form.name.trim() || !form.clientId}
           className="flex-1 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50">{saving ? "Guardando…" : "Guardar activo"}</button>
       </div>
+      {scanField && <BarcodeScannerDialog onClose={() => setScanField(false)} onDetect={(value) => { const token = assetTokenFrom(value); if (token) set({ qrToken: token }); setScanField(false); }} />}
+      {onDelete && (
+        <div className="pt-1">
+          <button onClick={onDelete} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-rose-600 hover:border-rose-200 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Eliminar activo</button>
+          <p className="mt-1.5 text-[11px] text-slate-400">Si el equipo salió de circulación, marcalo como “Dado de baja”: así deja de exigir stock pero conserva su historial.</p>
+        </div>
+      )}
     </div>
   );
 }

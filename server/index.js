@@ -2647,6 +2647,11 @@ const normalizeAsset = (body = {}) => {
     clientId: text(body.clientId, 60),
     client: text(body.client, 120),
     site: text(body.site, 120),
+    // El código identifica la planta cuando dos se llaman igual; el nombre solo no alcanza.
+    siteCode: text(body.siteCode, 40),
+    // Código de la etiqueta QR pegada en el equipo. Se normaliza a mayúsculas porque el lector puede
+    // devolverlo con otra caja según de dónde venga, y dos cajas distintas serían dos activos.
+    qrToken: text(body.qrToken, 40).toUpperCase(),
     area: text(body.area, 120),
     manufacturer: text(body.manufacturer, 80),
     model: text(body.model, 80),
@@ -2677,6 +2682,9 @@ app.post("/api/assets", auth, requireRole("admin", "gerente", "tecnico"), apiRat
   const asset = normalizeAsset(req.body);
   if (!asset.name) return res.status(400).json({ error: "El nombre del activo es obligatorio" });
   if (!asset.client) return res.status(400).json({ error: "El activo debe pertenecer a un cliente" });
+  if (asset.qrToken && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 LIMIT 1", [req.user.organizationId, asset.qrToken])).rowCount) {
+    return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
+  }
   await pool.query("INSERT INTO assets(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id'))", [asset.id, asset]);
   await auditChange({ entityType: "asset", entityId: asset.id, action: "create", user: req.user, afterData: { tag: asset.tag, name: asset.name, criticality: asset.criticality } });
   res.status(201).json(asset);
@@ -2685,6 +2693,10 @@ app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), a
   const current = (await pool.query("SELECT data FROM assets WHERE id=$1", [req.params.id])).rows[0];
   if (!current) return res.status(404).json({ error: "No existe" });
   const merged = normalizeAsset({ ...current.data, ...req.body, id: current.data.id, createdAt: current.data.createdAt });
+  if (merged.qrToken && merged.qrToken !== String(current.data.qrToken || "").toUpperCase()
+      && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 AND id<>$3 LIMIT 1", [req.user.organizationId, merged.qrToken, req.params.id])).rowCount) {
+    return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
+  }
   await pool.query("UPDATE assets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
   // Un cambio de criticidad mueve el stock de seguridad de todos sus repuestos, así que queda
   // registrado aparte: es la clase de decisión que después hay que poder explicar.

@@ -2079,3 +2079,54 @@ export function deliveryNotePDF(note, branding = {}) {
 
   saveBrandedPdf(doc, `${note.number || "remito"}.pdf`);
 }
+
+/* Etiquetas QR en blanco para pegar en los equipos antes de saber cuáles son. El alta se hace
+   después, escaneando: es el orden en que ocurre el trabajo real —primero se recorre la planta con
+   las etiquetas encima, después se cargan los datos— y evita tener que imprimir de a una.
+   El QR lleva una URL y no sólo el código: así también sirve la cámara del teléfono, sin la app. */
+export async function assetLabelsPDF(tokens, branding = {}, options = {}) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const W = 210, H = 297;
+  const cols = Math.max(1, Math.min(6, Number(options.cols) || 4));
+  const rows = Math.max(1, Math.min(12, Number(options.rows) || 8));
+  const M = 10;
+  const cellW = (W - M * 2) / cols;
+  const cellH = (H - M * 2) / rows;
+  // El QR manda sobre el tamaño de la celda: por debajo de ~15 mm el lector empieza a fallar
+  // cuando la etiqueta está sucia o mal pegada, que es la condición normal en planta.
+  const qrSide = Math.min(cellW, cellH) - 9;
+  const origin = (typeof window !== "undefined" && window.location?.origin) || "https://miordengo.com";
+  let QRCode = null;
+  try { ({ default: QRCode } = await import("qrcode")); } catch { QRCode = null; }
+
+  for (let index = 0; index < tokens.length; index++) {
+    const slot = index % (cols * rows);
+    if (index > 0 && slot === 0) doc.addPage();
+    const col = slot % cols;
+    const row = Math.floor(slot / cols);
+    const x = M + col * cellW;
+    const y = M + row * cellH;
+
+    // Marco de corte tenue: se imprime en hoja común y se recorta a mano.
+    doc.setDrawColor(210, 216, 224); doc.setLineWidth(0.15);
+    doc.rect(x + 1, y + 1, cellW - 2, cellH - 2);
+
+    const token = tokens[index];
+    if (QRCode) {
+      try {
+        const url = `${origin}/?activo=${encodeURIComponent(token)}`;
+        // Corrección alta: una etiqueta en planta se raya, se ensucia y se despega en una esquina.
+        const qr = await QRCode.toDataURL(url, { margin: 0, width: 420, errorCorrectionLevel: "H" });
+        doc.addImage(qr, "PNG", x + (cellW - qrSide) / 2, y + 3.5, qrSide, qrSide, undefined, "FAST");
+      } catch { /* sin QR se imprime igual: el código escrito permite el alta a mano */ }
+    }
+    doc.setFont("courier", "bold"); doc.setFontSize(7.5); doc.setTextColor(30, 41, 59);
+    doc.text(token, x + cellW / 2, y + 3.5 + qrSide + 3.4, { align: "center" });
+    const name = String(branding.companyName || "").trim();
+    if (name) {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(4.6); doc.setTextColor(148, 157, 170);
+      doc.text(name.slice(0, 34), x + cellW / 2, y + 3.5 + qrSide + 6.4, { align: "center" });
+    }
+  }
+  doc.save(`etiquetas-activos-${tokens.length}.pdf`);
+}
