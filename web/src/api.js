@@ -64,6 +64,12 @@ export const api = {
 
   createMaterialList: (ml) => req("/material-lists", { method: "POST", body: JSON.stringify(ml) }),
 
+  // Activos del cliente. De su criticidad sale el stock de seguridad de los repuestos.
+  assets: () => req("/assets"),
+  createAsset: (a) => req("/assets", { method: "POST", body: JSON.stringify(a) }),
+  updateAsset: (id, patch) => req("/assets/" + id, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteAsset: (id) => req("/assets/" + id, { method: "DELETE" }),
+
   // Remitos de trabajo: acreditan la entrega ante el cliente, sin importes.
   createDeliveryNote: (note) => req("/delivery-notes", { method: "POST", body: JSON.stringify(note) }),
   updateDeliveryNote: (id, patch) => req("/delivery-notes/" + id, { method: "PATCH", body: JSON.stringify(patch) }),

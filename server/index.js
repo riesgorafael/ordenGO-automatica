@@ -309,6 +309,13 @@ const randomTempPassword = () => crypto.randomBytes(9).toString("base64url");
 /* ------------------------------------------------ DB init + seed ------------------------------------------------ */
 async function initDb() {
   await pool.query(`
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='assets')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='data')
+      THEN DROP TABLE assets CASCADE; END IF;
+    END $$;
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users(
       id text PRIMARY KEY, name text NOT NULL, email text UNIQUE NOT NULL,
       password_hash text NOT NULL, role text NOT NULL DEFAULT 'tecnico',
@@ -326,6 +333,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS purchase_orders ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS material_lists ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS delivery_notes ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
+    CREATE TABLE IF NOT EXISTS assets ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS whiteboard_notes ( id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now());
     CREATE TABLE IF NOT EXISTS stock_movements (
       id text PRIMARY KEY, part_id text NOT NULL REFERENCES parts(id) ON DELETE RESTRICT,
@@ -361,7 +369,7 @@ async function initDb() {
       VALUES('org-automatica','automatica','AUTOMATICA ARG',$1)
       ON CONFLICT(id) DO NOTHING
   `, [DEFAULT_COMPANY_PROFILE]);
-  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "push_subscriptions", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
+  const tenantTables = ["users", "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications", "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "assets", "push_subscriptions", "whiteboard_notes", "stock_movements", "audit_log", "app_settings", "file_assets", "gantt_tasks"];
   for (const table of tenantTables) {
     await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS organization_id text DEFAULT '${DEFAULT_ORGANIZATION_ID}'; UPDATE ${table} SET organization_id='${DEFAULT_ORGANIZATION_ID}' WHERE organization_id IS NULL; ALTER TABLE ${table} ALTER COLUMN organization_id SET NOT NULL;`);
     await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='${table}_organization_fk') THEN ALTER TABLE ${table} ADD CONSTRAINT ${table}_organization_fk FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;`);
@@ -561,7 +569,7 @@ async function initDb() {
   // las únicas relaciones válidas entre entidades multiempresa.
   // Estos módulos fueron retirados y versiones antiguas podían conservar FK simples hacia
   // projects/clients. Se quitan antes de cambiar las claves para no bloquear la migración.
-  await pool.query("DROP TABLE IF EXISTS technical_documents; DROP TABLE IF EXISTS service_contracts; DROP TABLE IF EXISTS assets;");
+  await pool.query("DROP TABLE IF EXISTS technical_documents; DROP TABLE IF EXISTS service_contracts;");
   await pool.query(`
     ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_part_id_fkey;
     ALTER TABLE gantt_tasks DROP CONSTRAINT IF EXISTS gantt_tasks_project_id_fkey;
@@ -581,7 +589,7 @@ async function initDb() {
   // organización lo sigue dando RLS, que sí la cubre en tenantTables.
   const tenantEntityTables = [
     "clients", "projects", "budgets", "financial_movements", "orders", "tasks", "notifications",
-    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "whiteboard_notes", "stock_movements",
+    "parts", "suppliers", "purchase_orders", "material_lists", "delivery_notes", "assets", "whiteboard_notes", "stock_movements",
     "audit_log", "file_assets", "gantt_tasks",
   ];
   for (const table of tenantEntityTables) {
@@ -1652,7 +1660,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
   // puede filtrar desde el navegador ni leer llamando la API a mano.
   const client = isClient(req.user.role);
   const organizationId = req.user.organizationId;
-  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, dn, wb] = await Promise.all([
+  const [me, u, cl, pr, bu, fi, or, ta, no, pa, branding, companyProfile, sup, po, ml, dn, wb, as] = await Promise.all([
     pool.query("SELECT * FROM users WHERE id=$1 AND organization_id=$2", [req.user.id, organizationId]),
     pool.query("SELECT * FROM users WHERE organization_id=$1 ORDER BY created_at", [organizationId]),
     pool.query("SELECT data FROM clients WHERE organization_id=$1", [organizationId]),
@@ -1670,6 +1678,7 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     pool.query("SELECT data, updated_at FROM material_lists WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
     pool.query("SELECT data, updated_at FROM delivery_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
     pool.query("SELECT data, updated_at FROM whiteboard_notes WHERE organization_id=$1 ORDER BY updated_at DESC", [organizationId]),
+    pool.query("SELECT data, updated_at FROM assets WHERE organization_id=$1 ORDER BY data->>'name'", [organizationId]),
   ]);
   // Aviso de tareas por vencer (próximos 2 días): se genera una sola vez por tarea (id determinístico)
   // y queda en la bandeja de notificaciones —visible en la campana de cualquier pantalla— hasta que
@@ -1757,6 +1766,12 @@ app.get("/api/bootstrap", auth, apiRateLimit(30), async (req, res) => {
     parts: client ? [] : pa.rows.map((r) => partOut(r.data)),
     suppliers: tec || client || isMonitor(req.user.role) ? [] : sup.rows.map((r) => r.data),
     purchaseOrders: tec || client || isMonitor(req.user.role) || companyProfile.features.purchaseOrders === false ? [] : po.rows.filter((r) => !r.data.archivedAt).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
+    // El cliente corporativo ve solo los equipos de su empresa y su planta, con el mismo criterio
+    // que ya se aplica a sus órdenes: si no, vería el parque de otra planta a la que no pertenece.
+    assets: isMonitor(req.user.role) ? [] : as.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at }))
+      .filter((a) => !client || (!!clientScopeId
+        && (a.clientId === clientScopeId || String(a.client || "").trim() === clientScopeId)
+        && (!clientScopeSite || String(a.site || "").trim().toLowerCase() === clientScopeSite))),
     deliveryNotes: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : dn.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     materialLists: (req.user.role === "tecnico_oficina" || client || isMonitor(req.user.role) || companyProfile.features.materialLists === false) ? [] : ml.rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
     whiteboardNotes: companyProfile.features.whiteboard === false ? [] : wb.rows.filter((r) => whiteboardNoteVisible(req.user, r.data)).map((r) => ({ ...r.data, _updatedAt: r.updated_at })),
@@ -2614,6 +2629,77 @@ app.delete("/api/delivery-notes/:id", auth, requireRole("admin", "gerente"), asy
   await auditChange({ entityType: "delivery_note", entityId: req.params.id, action: "delete", user: req.user, beforeData: { number: deleted.rows[0].data.number } });
   res.status(204).end();
 });
+/* ------------------------------------------------ ACTIVOS ------------------------------------------------ */
+// Registro de activos del cliente sobre los que prestamos servicio. Es la pieza que le faltaba al
+// inventario: la norma no fija cuánto stock tener, exige que responda a la criticidad del activo al
+// que sirve. Por eso el repuesto crítico se declara acá, colgando del equipo, y no suelto en el
+// catálogo — así cada mínimo de stock queda justificado por algo verificable.
+const ASSET_CRITICALITY = ["Alta", "Media", "Baja"];
+const ASSET_STATUS = ["En servicio", "En reparación", "Fuera de servicio", "Dado de baja"];
+
+const normalizeAsset = (body = {}) => {
+  const text = (value, max) => String(value ?? "").trim().slice(0, max);
+  const pick = (value, list, fallback) => (list.includes(String(value)) ? String(value) : fallback);
+  return {
+    id: text(body.id, 40) || `AS-${crypto.randomUUID()}`,
+    tag: text(body.tag, 40),
+    name: text(body.name, 160),
+    clientId: text(body.clientId, 60),
+    client: text(body.client, 120),
+    site: text(body.site, 120),
+    area: text(body.area, 120),
+    manufacturer: text(body.manufacturer, 80),
+    model: text(body.model, 80),
+    serial: text(body.serial, 80),
+    criticality: pick(body.criticality, ASSET_CRITICALITY, "Media"),
+    // La justificación no es decorativa: una criticidad sin motivo escrito es exactamente lo que un
+    // auditor objeta, porque no se puede reconstruir con qué criterio se clasificó el equipo.
+    criticalityReason: text(body.criticalityReason, 600),
+    status: pick(body.status, ASSET_STATUS, "En servicio"),
+    commissionedAt: text(body.commissionedAt, 10),
+    // Repuestos que el equipo exige tener disponibles, con la cantidad mínima que justifica su
+    // criticidad. De acá sale el stock de seguridad que el inventario compara contra la existencia.
+    criticalParts: (Array.isArray(body.criticalParts) ? body.criticalParts : []).slice(0, 50).map((item) => ({
+      partId: text(item.partId, 60),
+      qtyRequired: Math.max(0, Math.min(9999, Number(item.qtyRequired) || 0)),
+      note: text(item.note, 200),
+    })).filter((item) => item.partId),
+    notes: text(body.notes, 2000),
+    createdAt: body.createdAt || new Date().toISOString(),
+  };
+};
+
+app.get("/api/assets", auth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data, updated_at FROM assets WHERE organization_id=$1 ORDER BY data->>'name'", [req.user.organizationId]);
+  res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
+});
+app.post("/api/assets", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
+  const asset = normalizeAsset(req.body);
+  if (!asset.name) return res.status(400).json({ error: "El nombre del activo es obligatorio" });
+  if (!asset.client) return res.status(400).json({ error: "El activo debe pertenecer a un cliente" });
+  await pool.query("INSERT INTO assets(id,data,organization_id) VALUES($1,$2,current_setting('app.organization_id'))", [asset.id, asset]);
+  await auditChange({ entityType: "asset", entityId: asset.id, action: "create", user: req.user, afterData: { tag: asset.tag, name: asset.name, criticality: asset.criticality } });
+  res.status(201).json(asset);
+});
+app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
+  const current = (await pool.query("SELECT data FROM assets WHERE id=$1", [req.params.id])).rows[0];
+  if (!current) return res.status(404).json({ error: "No existe" });
+  const merged = normalizeAsset({ ...current.data, ...req.body, id: current.data.id, createdAt: current.data.createdAt });
+  await pool.query("UPDATE assets SET data=$2, updated_at=now() WHERE id=$1", [req.params.id, merged]);
+  // Un cambio de criticidad mueve el stock de seguridad de todos sus repuestos, así que queda
+  // registrado aparte: es la clase de decisión que después hay que poder explicar.
+  if (current.data.criticality !== merged.criticality) {
+    await auditChange({ entityType: "asset", entityId: merged.id, action: "update", user: req.user, beforeData: { criticality: current.data.criticality }, afterData: { criticality: merged.criticality, reason: merged.criticalityReason } });
+  }
+  res.json(merged);
+});
+app.delete("/api/assets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
+  const deleted = await pool.query("DELETE FROM assets WHERE id=$1 RETURNING data", [req.params.id]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
+  await auditChange({ entityType: "asset", entityId: req.params.id, action: "delete", user: req.user, beforeData: { tag: deleted.rows[0].data.tag, name: deleted.rows[0].data.name } });
+  res.status(204).end();
+});
+
 app.get("/api/material-lists", auth, requireRole("admin", "gerente", "tecnico"), async (req, res) => {
   const { rows } = await pool.query("SELECT data, updated_at FROM material_lists WHERE organization_id=$1 ORDER BY updated_at DESC", [req.user.organizationId]);
   const materialLists = rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at }));

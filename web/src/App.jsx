@@ -5,7 +5,7 @@ import {
   FolderTree,
   Plus, X, Search, Camera, Upload, Sparkles, Loader2, MapPin, Clock, ClipboardList,
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
-  ChevronLeft, ChevronRight, Wrench, DollarSign, Building2, Filter, LayoutGrid,
+  ChevronLeft, ChevronRight, Wrench, Cpu, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2, Mail,
@@ -40,9 +40,9 @@ const CUR = "USD ";
 let DEFAULT_RATE = 50;
 const ROLES = { admin: "Administrador", gerente: "Gerencia / Gerente", tecnico: "Técnico de campo", tecnico_oficina: "Técnico de oficina", cliente: "Cliente corporativo", monitor_oficina: "Monitor de oficina" };
 const DEFAULT_COMPANY_PROFILE = { locale: "es-AR", timezone: "America/Buenos_Aires", baseCurrency: "USD", pricing: { defaultHourlyRate: 0, defaultInternalHourlyCost: 0, minimumBillableHours: 0, targetMargin: 0, vatRate: 0 }, laborRoles: [{ name: "Técnico", cost: 0 }], features: { panel: true, budgets: true, finances: true, orders: true, projects: true, whiteboard: true, materialLists: true, clients: true, purchaseOrders: true, inventory: true, team: true, reports: true } };
-const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", deliveryNotes: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", team: "team" };
+const MODULE_FEATURE = { panel: "panel", budgets: "budgets", finances: "finances", orders: "orders", projects: "projects", whiteboard: "whiteboard", materialLists: "materialLists", deliveryNotes: "materialLists", clients: "clients", purchaseOrders: "purchaseOrders", inventory: "inventory", assets: "inventory", team: "team" };
 const allowedModulesForRole = (role, profile = DEFAULT_COMPANY_PROFILE) => {
-  const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists", "deliveryNotes"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
+  const byRole = role === "monitor_oficina" ? ["projects", "whiteboard"] : ["inicio", ...(["admin", "gerente"].includes(role) ? ["panel", "budgets", "finances", "industrial"] : []), ...(["tecnico_oficina", "monitor_oficina"].includes(role) ? [] : ["orders"]), "projects", "whiteboard", ...(["admin", "gerente", "tecnico"].includes(role) ? ["materialLists", "deliveryNotes"] : []), ...(["admin", "gerente", "tecnico"].includes(role) ? ["assets"] : []), ...(["admin", "gerente"].includes(role) ? ["clients", "purchaseOrders", "inventory"] : []), ...(role === "admin" ? ["team", "settings"] : [])];
   return byRole.filter((moduleId) => !MODULE_FEATURE[moduleId] || profile.features?.[MODULE_FEATURE[moduleId]] !== false);
 };
 const ORDENGO_THEME = Object.freeze({ id: "ordengo", name: "MiOrdenGo", primaryColor: "#0EA5C5", headerColor: "#0B315F" });
@@ -861,6 +861,7 @@ export default function App() {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [materialLists, setMaterialLists] = useState([]);
   const [deliveryNotes, setDeliveryNotes] = useState([]);
+  const [assets, setAssets] = useState([]);
   const [deliveryNoteCreateSignal, setDeliveryNoteCreateSignal] = useState(0);
   const [whiteboardNotes, setWhiteboardNotes] = useState([]);
   const orderSyncCursor = useRef("");
@@ -1047,7 +1048,7 @@ export default function App() {
     setMe(d.me); setUsers(d.users); setClients(d.clients); setProjects(d.projects); setBudgets(d.budgets || []); setFinances(d.finances || []); setOrders((d.orders || []).map((order) => order.status === "En progreso" ? { ...order, status: "En proceso de ejecución" } : order)); setTasks(d.tasks); setBranding(d.branding || DEFAULT_BRANDING); setCompanyProfile(d.companyProfile || DEFAULT_COMPANY_PROFILE);
     orderSyncCursor.current = (d.orders || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, orderSyncCursor.current);
     taskSyncCursor.current = (d.tasks || []).reduce((latest, item) => item._updatedAt && item._updatedAt > latest ? item._updatedAt : latest, taskSyncCursor.current);
-    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setDeliveryNotes(d.deliveryNotes || []); setWhiteboardNotes(d.whiteboardNotes || []);
+    setSuppliers(d.suppliers || []); setPurchaseOrders(d.purchaseOrders || []); setMaterialLists(d.materialLists || []); setDeliveryNotes(d.deliveryNotes || []); setAssets(d.assets || []); setWhiteboardNotes(d.whiteboardNotes || []);
     setNotifs(d.notifications || []); setParts(d.parts || []);
     try {
       const savedOrder = readPreference(tenantPreferenceKey("ordengo_order_filters", d.me), savedOrderFilters);
@@ -1600,7 +1601,7 @@ export default function App() {
   const lowStock = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock).length;
 
   if (!isOffice && module === "orders" && oView === "new")
-    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
+    return <NewOrder ger={isMgr} showInternal={isMgr || me.role === "tecnico"} me={me} clients={clients} users={users} parts={parts} assets={assets} knownOrders={orders} online={online} prefill={orderPrefill} toast={toast} onDeleted={(id) => { clearOrderDraft(me.id); setOrderPrefill(null); setOView("list"); toast(`La orden ${id} fue eliminada por un administrador. Debes abrir una OT nueva.`, "error"); }} onCancel={() => { setOrderPrefill(null); setOView("list"); }} onSave={async (order, currentOrderId, { stayOpen = false } = {}) => { const existingId = currentOrderId || orderPrefill?.existingOrderId; const saved = existingId ? await updateOrder(existingId, order) : await onSaveOrder(order, { stayOpen }); if (saved && !stayOpen) { setOrderPrefill(null); setOView("list"); } return saved; }} />;
 
   // Los módulos se agrupan por área de trabajo: Inicio/Órdenes/Proyectos quedan
   // como núcleo operativo sin agrupar (uso diario, incluye técnicos de campo);
@@ -1620,6 +1621,7 @@ export default function App() {
     ...(isMgr && !branding.hideAdminModules ? [{ id: "purchaseOrders", label: "Compras", icon: ShoppingCart, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "materialLists", label: "Materiales", icon: Package, group: "Administración" }] : []),
     ...(isMgr || me.role === "tecnico" ? [{ id: "deliveryNotes", label: "Remitos", icon: FileText, group: "Administración" }] : []),
+    ...(isMgr || me.role === "tecnico" ? [{ id: "assets", label: "Activos", icon: Cpu, group: "Administración" }] : []),
     ...(isMgr && !branding.hideAdminModules ? [{ id: "finances", label: "Finanzas", icon: DollarSign, group: "Administración" }] : []),
     { id: "whiteboard", label: "Notas", icon: Pencil, group: "Utilidades" },
     ...(isMgr ? [{ id: "inventory", label: "Inventario", icon: Wrench, badge: lowStock, group: "Utilidades" }] : []),
@@ -1782,7 +1784,7 @@ export default function App() {
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} branding={branding} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} finances={finances} clients={clients} parts={parts} projects={projects} users={users} orders={orders} branding={branding} onOpenOrder={setODetail} me={me} createSignal={budgetCreateSignal} onConsumeCreate={() => setBudgetCreateSignal(0)} onSave={saveBudget} onDelete={deleteBudget} onDuplicate={duplicateBudget} onConvert={convertBudget} onCreateOrder={createOrderFromBudget} onInvoice={saveFinance} />}
         {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} purchaseOrders={purchaseOrders} branding={branding} me={me} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
-        {activeModule === "inventory" && isMgr && <Inventory parts={parts} orders={orders} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
+        {activeModule === "inventory" && isMgr && <Inventory parts={parts} orders={orders} assets={assets} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
         {activeModule === "orders" && (
           <>
             {isMgr && (
@@ -1889,6 +1891,9 @@ export default function App() {
         {activeModule === "whiteboard" && <Whiteboard notes={whiteboardNotes} projects={projects} users={users} me={me} initialProjectId={whiteboardProjectFilter} drawingSignal={drawingSignal} onSave={saveWhiteboardNote} onDelete={deleteWhiteboardNote} onErr={err} />}
         {activeModule === "clients" && isMgr && <Clients clients={clients} orders={orders} onAdd={addClientMgr} onPatch={updateClient} onRemove={removeClient} onErr={err} />}
         {activeModule === "purchaseOrders" && isMgr && <PurchaseOrdersModule purchaseOrders={purchaseOrders} suppliers={suppliers} projects={projects} finances={finances} parts={parts} me={me} branding={branding} createSignal={purchaseOrderCreateSignal} onConsumeCreate={() => setPurchaseOrderCreateSignal(0)} onSave={savePurchaseOrder} onDelete={deletePurchaseOrder} onDuplicate={duplicatePurchaseOrder} onMarkPaid={markFinancePaid} onAddSupplier={addSupplierMgr} onPatchSupplier={updateSupplier} onRemoveSupplier={removeSupplier} onErr={err} />}
+        {activeModule === "assets" && (isMgr || me.role === "tecnico") && <AssetsModule assets={assets} clients={clients} parts={parts} orders={orders} onErr={err}
+          onSave={async (payload) => { try { const saved = payload.id && assets.some((a) => a.id === payload.id) ? await api.updateAsset(payload.id, payload) : await api.createAsset(payload); setAssets((items) => [saved, ...items.filter((a) => a.id !== saved.id)]); toast("Activo guardado"); return saved; } catch (e) { err(e); return null; } }}
+          onDelete={async (id) => { try { await api.deleteAsset(id); setAssets((items) => items.filter((a) => a.id !== id)); } catch (e) { err(e); } }} />}
         {activeModule === "deliveryNotes" && (isMgr || me.role === "tecnico") && <DeliveryNotesModule notes={deliveryNotes} orders={orders} clients={clients} branding={branding} createSignal={deliveryNoteCreateSignal} toast={toast} onErr={err}
           onSave={async (payload) => { try { const saved = payload.id && deliveryNotes.some((n) => n.id === payload.id) ? await api.updateDeliveryNote(payload.id, payload) : await api.createDeliveryNote(payload); setDeliveryNotes((items) => { const rest = items.filter((n) => n.id !== saved.id); return [saved, ...rest]; }); return saved; } catch (e) { err(e); return null; } }}
           onDelete={async (note) => { if (!window.confirm(`¿Eliminar el remito ${note.number}?`)) return; try { await api.deleteDeliveryNote(note.id); setDeliveryNotes((items) => items.filter((n) => n.id !== note.id)); toast("Remito eliminado", "success"); } catch (e) { err(e); } }} />}
@@ -7365,7 +7370,7 @@ function BarcodeScannerDialog({ onClose, onDetect }) {
 }
 
 /* ===================================== ÓRDENES: NUEVA ===================================== */
-function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
+function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = [], assets = [], knownOrders = [], online = true, prefill = null, onSave, onCancel, onDeleted, toast }) {
   const fieldTechs = users.filter((u) => u.active && ["admin", "gerente", "tecnico"].includes(u.role));
   const draft = useMemo(() => loadOrderDraft(me.id), [me.id]);
   const initial = prefill || draft || {};
@@ -7434,6 +7439,13 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
   const technicians = Math.max(1, new Set([tech, ...assignedTechs].filter(Boolean).map((name) => name.trim().toLowerCase())).size);
   const [materials, setMaterials] = useState(initial.materials || []); const [location, setLocation] = useState(initial.location || null); const [geoMsg, setGeoMsg] = useState("");
   const [siteLabel, setSiteLabel] = useState(initial.siteLabel || initial.location?.label || "");
+  const assetOptions = useMemo(() => {
+    if (!clientId) return [];
+    const site = String(siteLabel || "").trim().toLowerCase();
+    return assets.filter((a) => a.clientId === clientId && a.status !== "Dado de baja"
+      && (!site || !a.site || String(a.site).trim().toLowerCase() === site));
+  }, [assets, clientId, siteLabel]);
+  const chosenAsset = assetOptions.find((a) => a.id === assetId) || null;
   const [siteCode, setSiteCode] = useState(initial.siteCode || (initial.clientId ? "" : defaultSite?.code || ""));
   const [signatureUrl, setSignatureUrl] = useState(initial.signatureUrl || null); const [signedBy, setSignedBy] = useState(initial.signedBy || "");
   const [technicianSignatureUrl, setTechnicianSignatureUrl] = useState(initial.technicianSignatureUrl || null);
@@ -7630,7 +7642,33 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
           <label className="mt-3 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} className="h-4 w-4" /> Marcar como urgente{URGENT_SERVICES.has(service) && <span className="text-xs text-slate-400">(ya lo es por ser {service})</span>}</label>
         </Section>
         <Section title="Identificación del activo">
-          
+          {/* Activo del registro. Elegirlo liga la orden al equipo —de ahí salen su historial y el
+              consumo de repuestos críticos— y completa la ficha técnica de una vez. Se deja abierto
+              a escribir a mano: en campo aparecen equipos que todavía no están dados de alta. */}
+          {assetOptions.length > 0 && (
+            <L label="Activo registrado" help="Los equipos de esta empresa y planta que ya están en el registro.">
+              <select value={assetId} onChange={(e) => {
+                const chosen = assetOptions.find((a) => a.id === e.target.value);
+                setAssetId(e.target.value);
+                if (chosen) {
+                  setEquipo(chosen.name || equipo);
+                  setTechnicalField("assetTag", chosen.tag || "");
+                  setTechnicalField("manufacturer", chosen.manufacturer || "");
+                  setTechnicalField("model", chosen.model || "");
+                  setTechnicalField("serial", chosen.serial || "");
+                }
+              }} className="u-input mt-1">
+                <option value="">— Sin activo del registro —</option>
+                {assetOptions.map((a) => <option key={a.id} value={a.id}>{[a.tag, a.name].filter(Boolean).join(" · ")}{a.criticality === "Alta" ? "  (crítico)" : ""}</option>)}
+              </select>
+            </L>
+          )}
+          {chosenAsset?.criticality === "Alta" && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] text-rose-800">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Equipo de criticidad alta.{chosenAsset.criticalityReason ? " " + chosenAsset.criticalityReason : ""}</span>
+            </div>
+          )}
           <ReqLabel>Equipo / sistema intervenido</ReqLabel>
           <input value={equipo} onChange={(e) => setEquipo(e.target.value)} placeholder="Ej. Tablero principal, línea 2" className={`u-input mt-1 ${errCls(!(equipo || technical.assetTag))}`} />
           <L label="Categoría" help="Etiqueta corta y libre para agrupar el tipo de falla o intervención (ej. Sobrecalentamiento, Falla eléctrica, Programación)."><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Sobrecalentamiento" className="u-input mt-1" /></L>
@@ -8445,6 +8483,237 @@ function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePa
   ), document.body);
 }
 
+/* ===================================== ACTIVOS ===================================== */
+const ASSET_CRITICALITY = ["Alta", "Media", "Baja"];
+const ASSET_STATUS = ["En servicio", "En reparación", "Fuera de servicio", "Dado de baja"];
+const CRITICALITY_STYLE = {
+  Alta: "bg-rose-50 text-rose-700 ring-rose-200",
+  Media: "bg-amber-50 text-amber-700 ring-amber-200",
+  Baja: "bg-slate-100 text-slate-600 ring-slate-200",
+};
+
+/* Stock de seguridad exigido por el parque de activos: para cada repuesto se suma lo que piden los
+   equipos que lo declararon crítico y que siguen en uso. Es el número que justifica un mínimo de
+   stock —sale de la criticidad del equipo, no del criterio de quien cargó la ficha— y por eso se
+   recalcula desde los activos en lugar de guardarse suelto en el repuesto. */
+function requiredStockByPart(assets) {
+  const required = new Map();
+  for (const asset of assets) {
+    if (asset.status === "Dado de baja") continue;
+    for (const item of asset.criticalParts || []) {
+      if (!item.partId || !(Number(item.qtyRequired) > 0)) continue;
+      const current = required.get(item.partId) || { qty: 0, assets: [] };
+      current.qty += Number(item.qtyRequired) || 0;
+      current.assets.push({ id: asset.id, name: asset.name, tag: asset.tag, criticality: asset.criticality });
+      required.set(item.partId, current);
+    }
+  }
+  return required;
+}
+
+function AssetsModule({ assets, clients, parts, orders, onSave, onDelete, onErr }) {
+  const [editing, setEditing] = useState(null);
+  const [query, setQuery] = useState("");
+  const [critFilter, setCritFilter] = useState("");
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return assets.filter((a) =>
+      (!critFilter || a.criticality === critFilter)
+      && (!q || [a.name, a.tag, a.client, a.site, a.area, a.model, a.serial].some((v) => String(v || "").toLowerCase().includes(q))));
+  }, [assets, query, critFilter]);
+  // El recuento por criticidad es lo primero que se mira en una revisión: dice si el parque está
+  // clasificado de verdad o si quedó todo en el valor por omisión.
+  const counts = useMemo(() => {
+    const base = { Alta: 0, Media: 0, Baja: 0, sinJustificar: 0 };
+    for (const a of assets) {
+      base[a.criticality] = (base[a.criticality] || 0) + 1;
+      if (a.criticality === "Alta" && !String(a.criticalityReason || "").trim()) base.sinJustificar++;
+    }
+    return base;
+  }, [assets]);
+
+  if (editing) {
+    return <AssetEditor asset={editing} clients={clients} parts={parts} orders={orders} onErr={onErr}
+      onCancel={() => setEditing(null)}
+      onSave={async (payload) => { const saved = await onSave(payload); if (saved) setEditing(null); }} />;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por equipo, TAG, planta…" className="u-input max-w-xs flex-1" />
+        <select value={critFilter} onChange={(e) => setCritFilter(e.target.value)} className="u-input w-auto">
+          <option value="">Toda criticidad</option>
+          {ASSET_CRITICALITY.map((c) => <option key={c}>{c}</option>)}
+        </select>
+        <button onClick={() => setEditing({})} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Activo</button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {ASSET_CRITICALITY.map((c) => (
+          <Box key={c} className="p-3"><div className="text-[11px] text-slate-500">Criticidad {c.toLowerCase()}</div><div className="text-xl font-semibold text-slate-900">{counts[c] || 0}</div></Box>
+        ))}
+        <Box className="p-3"><div className="text-[11px] text-slate-500">Críticos sin justificar</div><div className={counts.sinJustificar ? "text-xl font-semibold text-rose-600" : "text-xl font-semibold text-slate-900"}>{counts.sinJustificar}</div></Box>
+      </div>
+
+      {counts.sinJustificar > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          Hay {counts.sinJustificar} equipo(s) de criticidad alta sin motivo escrito. Una clasificación sin criterio registrado no se puede reconstruir después.
+        </div>
+      )}
+
+      <Box className="overflow-hidden">
+        {filtered.length === 0 && <div className="p-6 text-center text-sm text-slate-400">No hay activos que coincidan.</div>}
+        <div className="divide-y divide-slate-100">
+          {filtered.map((a) => {
+            const interventions = (orders || []).filter((o) => o.assetId === a.id).length;
+            return (
+              <button key={a.id} onClick={() => setEditing(a)} className="flex w-full items-center gap-3 p-3 text-left hover:bg-slate-50">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {a.tag && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{a.tag}</span>}
+                    <span className="truncate text-sm font-medium text-slate-800">{a.name}</span>
+                    <Chip className={CRITICALITY_STYLE[a.criticality] || CRITICALITY_STYLE.Baja}>{a.criticality}</Chip>
+                    {a.status !== "En servicio" && <Chip className="bg-slate-100 text-slate-600 ring-slate-200">{a.status}</Chip>}
+                  </div>
+                  <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                    {[a.client, a.site, a.area].filter(Boolean).join(" · ") || "Sin ubicación"}
+                    {interventions > 0 ? " · " + interventions + " intervención(es)" : ""}
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+              </button>
+            );
+          })}
+        </div>
+      </Box>
+    </div>
+  );
+}
+
+function AssetEditor({ asset, clients, parts, orders, onCancel, onSave, onErr }) {
+  const [form, setForm] = useState({
+    id: asset.id, tag: asset.tag || "", name: asset.name || "", clientId: asset.clientId || "", client: asset.client || "",
+    site: asset.site || "", area: asset.area || "", manufacturer: asset.manufacturer || "", model: asset.model || "",
+    serial: asset.serial || "", criticality: asset.criticality || "Media", criticalityReason: asset.criticalityReason || "",
+    status: asset.status || "En servicio", commissionedAt: asset.commissionedAt || "", criticalParts: asset.criticalParts || [],
+    notes: asset.notes || "", createdAt: asset.createdAt,
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (patch) => setForm((c) => ({ ...c, ...patch }));
+  const client = clients.find((c) => c.id === form.clientId);
+  const sites = clientSites(client);
+  const history = (orders || []).filter((o) => o.assetId === form.id).slice(0, 8);
+  // La justificación se exige sólo en criticidad alta: es la que inmoviliza stock y ordena la
+  // prioridad de atención, así que es la que alguien va a pedir que expliquen.
+  const needsReason = form.criticality === "Alta" && !form.criticalityReason.trim();
+
+  const addPart = (partId) => { if (partId && !form.criticalParts.some((p) => p.partId === partId)) set({ criticalParts: [...form.criticalParts, { partId, qtyRequired: 1, note: "" }] }); };
+  const setPart = (index, patch) => set({ criticalParts: form.criticalParts.map((p, i) => (i === index ? { ...p, ...patch } : p)) });
+  const removePart = (index) => set({ criticalParts: form.criticalParts.filter((_, i) => i !== index) });
+
+  return (
+    <div className="space-y-3">
+      <Box className="space-y-2 p-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <L label="TAG / código" help="El identificador con el que la planta conoce al equipo."><input value={form.tag} onChange={(e) => set({ tag: e.target.value })} placeholder="CT-VTU-COMP-01" className="u-input font-mono" /></L>
+          <L label="Equipo"><input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Compresor de tornillo 75 kW" className="u-input" /></L>
+          <L label="Cliente">
+            <select value={form.clientId} onChange={(e) => { const c = clients.find((x) => x.id === e.target.value); set({ clientId: e.target.value, client: c?.name || "", site: "" }); }} className="u-input">
+              <option value="">Seleccionar</option>
+              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </L>
+          <L label="Planta / sitio">
+            <select value={form.site} onChange={(e) => set({ site: e.target.value })} className="u-input">
+              <option value="">Sin definir</option>
+              {sites.map((s, i) => <option key={s?.code || s?.name || i} value={s?.name || ""}>{s?.name || "—"}</option>)}
+            </select>
+          </L>
+          <L label="Área / línea"><input value={form.area} onChange={(e) => set({ area: e.target.value })} placeholder="Sala de compresores" className="u-input" /></L>
+          <L label="Estado">
+            <select value={form.status} onChange={(e) => set({ status: e.target.value })} className="u-input">{ASSET_STATUS.map((x) => <option key={x}>{x}</option>)}</select>
+          </L>
+          <L label="Fabricante"><input value={form.manufacturer} onChange={(e) => set({ manufacturer: e.target.value })} className="u-input" /></L>
+          <L label="Modelo"><input value={form.model} onChange={(e) => set({ model: e.target.value })} className="u-input" /></L>
+          <L label="Número de serie"><input value={form.serial} onChange={(e) => set({ serial: e.target.value })} className="u-input font-mono" /></L>
+          <L label="Puesta en servicio"><input type="date" value={form.commissionedAt} onChange={(e) => set({ commissionedAt: e.target.value })} className="u-input" /></L>
+        </div>
+      </Box>
+
+      <Box className="space-y-2 p-4">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Criticidad</h4>
+        <div className="flex flex-wrap gap-2">
+          {ASSET_CRITICALITY.map((c) => (
+            <button key={c} type="button" onClick={() => set({ criticality: c })}
+              className={"rounded-lg px-3 py-2 text-xs font-medium ring-1 " + (form.criticality === c ? CRITICALITY_STYLE[c] : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}>{c}</button>
+          ))}
+        </div>
+        <L label="Con qué criterio" help="Qué pasa si este equipo se detiene: producción parada, riesgo, incumplimiento.">
+          <textarea value={form.criticalityReason} onChange={(e) => set({ criticalityReason: e.target.value })} rows={2}
+            placeholder="Detiene la línea de envasado completa; no hay equipo de respaldo." className="u-input resize-none" />
+        </L>
+        {needsReason && <p className="text-[11px] text-amber-600">Falta el criterio. Sin él, nadie puede reconstruir por qué este equipo es crítico.</p>}
+      </Box>
+
+      <Box className="space-y-2 p-4">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Repuestos críticos</h4>
+        <p className="text-[11px] text-slate-500">Lo que este equipo exige tener disponible. La suma de todos los activos define el stock de seguridad de cada repuesto en Inventario.</p>
+        <select value="" onChange={(e) => { addPart(e.target.value); e.target.value = ""; }} className="u-input">
+          <option value="">+ Agregar repuesto…</option>
+          {parts.filter((p) => !form.criticalParts.some((x) => x.partId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? " · " + p.sku : ""}</option>)}
+        </select>
+        <div className="space-y-2">
+          {form.criticalParts.length === 0 && <p className="text-xs text-slate-400">Sin repuestos declarados.</p>}
+          {form.criticalParts.map((item, index) => {
+            const part = parts.find((p) => p.id === item.partId);
+            const short = part && Number(part.stock || 0) < Number(item.qtyRequired || 0);
+            return (
+              <div key={item.partId} className="grid grid-cols-[minmax(0,1fr)_5rem_2.5rem] items-center gap-2 rounded-lg border border-slate-200 p-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-slate-800">{part?.name || "Repuesto eliminado"}</div>
+                  <div className="text-[11px] text-slate-500">
+                    En stock: {part ? Number(part.stock || 0) : "—"}
+                    {short && <span className="ml-1 font-medium text-rose-600">· por debajo de lo requerido</span>}
+                  </div>
+                </div>
+                <input type="number" min="0" value={item.qtyRequired} onChange={(e) => setPart(index, { qtyRequired: e.target.value })} className="u-input text-center" title="Cantidad mínima requerida" />
+                <button type="button" onClick={() => removePart(index)} className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+              </div>
+            );
+          })}
+        </div>
+      </Box>
+
+      {history.length > 0 && (
+        <Box className="p-4">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Últimas intervenciones</h4>
+          <div className="space-y-1.5">
+            {history.map((o) => (
+              <div key={o.id} className="flex items-center gap-2 text-xs">
+                <span className="font-mono text-slate-400">{o.id}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700">{o.service || o.sintoma || "—"}</span>
+                <span className="shrink-0 text-slate-400">{o.date}</span>
+              </div>
+            ))}
+          </div>
+        </Box>
+      )}
+
+      <Box className="p-4">
+        <L label="Observaciones"><textarea value={form.notes} onChange={(e) => set({ notes: e.target.value })} rows={2} className="u-input resize-none" /></L>
+      </Box>
+
+      <div className="flex gap-2">
+        <button onClick={onCancel} className="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
+        <button onClick={async () => { setSaving(true); await onSave(form); setSaving(false); }} disabled={saving || !form.name.trim() || !form.clientId}
+          className="flex-1 rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50">{saving ? "Guardando…" : "Guardar activo"}</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================================== EQUIPO (ADMIN) ===================================== */
 /* ===================================== ACCESO POR PROYECTO ===================================== */
 function ProjectAccess({ project, users, onClose, onSave }) {
@@ -8518,7 +8787,7 @@ function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) 
 }
 
 /* ===================================== INVENTARIO / REPUESTOS ===================================== */
-function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
+function Inventory({ parts, orders = [], assets = [], onAdd, onPatch, onRemove, onErr }) {
   const [nf, setNf] = useState({ name: "", sku: "", brand: "", unit: "u", price: "", cost: "", margin: "", stock: "", minStock: "", category: MATERIAL_LIST_DISCIPLINES[0] });
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({});
@@ -8539,6 +8808,11 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
   const startEdit = (p) => { setEditId(p.id); setEf({ name: p.name || "", sku: p.sku || "", brand: p.brand || "", unit: p.unit || "u", price: p.price ?? 0, cost: p.cost ?? 0, margin: "", stock: p.stock ?? 0, minStock: p.minStock ?? 0, category: MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro" }); };
   const saveEdit = async () => { if (!ef.name.trim()) return; try { await onPatch(editId, { name: ef.name.trim(), sku: ef.sku.trim(), brand: ef.brand.trim(), unit: ef.unit.trim() || "u", price: wholeMoney(ef.price), cost: wholeMoney(ef.cost), stock: Number(ef.stock) || 0, minStock: Number(ef.minStock) || 0, category: ef.category }); setEditId(null); } catch (e) { onErr(e); } };
   const low = parts.filter((p) => typeof p.stock === "number" && typeof p.minStock === "number" && p.stock <= p.minStock);
+  // Stock de seguridad derivado del parque de activos. El mínimo que alguien escribió a mano en la
+  // ficha del repuesto es una opinión; esto es la suma de lo que exigen los equipos que lo declararon
+  // crítico, y por eso se muestra aparte en lugar de pisar el valor cargado.
+  const required = useMemo(() => requiredStockByPart(assets), [assets]);
+  const belowSafety = parts.filter((p) => { const r = required.get(p.id); return r && Number(p.stock || 0) < r.qty; });
   const categoryOf = (p) => MATERIAL_LIST_DISCIPLINES.includes(p.category) ? p.category : "Otro";
   // Consumo real de los últimos 90 días (a partir de las órdenes completadas/aprobadas/facturadas,
   // no una proyección estadística) — para sugerir reposición con datos propios en vez de adivinar.
@@ -8655,6 +8929,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
         </div>}
         {scannerTarget && <BarcodeScannerDialog onClose={() => setScannerTarget(null)} onDetect={(value) => { if (scannerTarget === "search") setQuery(value); else if (scannerTarget === "new") setNf((current) => ({ ...current, sku: value })); else if (scannerTarget === "edit") setEf((current) => ({ ...current, sku: value })); setScannerTarget(null); }} />}
         {low.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{low.length} material(es) en o por debajo del stock mínimo: {low.map((p) => p.name).join(", ")}.</div>}
+        {belowSafety.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span><b>{belowSafety.length} repuesto(s) por debajo del stock de seguridad</b> que exigen los activos críticos: {belowSafety.map((p) => p.name + " (" + Number(p.stock || 0) + " de " + required.get(p.id).qty + ")").join(", ")}.</span></div>}
         <Panel title={`Catálogo de materiales (${parts.length})`} action={parts.length > 0 && <div className="flex flex-wrap items-center gap-2"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"><option value="Todas">Todas las categorías</option>{MATERIAL_LIST_DISCIPLINES.map((c) => <option key={c}>{c}</option>)}</select>{sorted.length > 0 && <button onClick={() => setBulkDeleteOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Eliminar visibles ({sorted.length})</button>}</div>}>
           <div className="space-y-4">
             {sorted.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">Sin materiales cargados</div>}
@@ -8664,6 +8939,8 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
                 <div className="space-y-2">
                   {group.items.map((p) => {
               const isLow = p.stock <= p.minStock;
+              const req = required.get(p.id);
+              const short = req && Number(p.stock || 0) < req.qty;
               const margin = p.price ? Math.round((1 - (p.cost || 0) / p.price) * 100) : null;
               if (editId === p.id) return (
                 <div key={p.id} className="rounded-lg border border-brand-300 bg-brand-50/40 p-3">
@@ -8689,7 +8966,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
                 // Tarjeta compacta: la fila con el separador y el botón "Editar" ocupaba casi la
                 // mitad del alto para repetir algo que ya hace el clic sobre la tarjeta entera.
                 // El stock sube a la línea de datos y solo queda el botón de eliminar.
-                <div key={p.id} onClick={() => startEdit(p)} title="Tocá para editar" className={`flex cursor-pointer items-start gap-3 rounded-lg border p-2.5 hover:border-brand-300 ${isLow ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
+                <div key={p.id} onClick={() => startEdit(p)} title="Tocá para editar" className={`flex cursor-pointer items-start gap-3 rounded-lg border p-2.5 hover:border-brand-300 ${isLow || short ? "border-rose-200 bg-rose-50/40" : "border-slate-200"}`}>
                   <div className="min-w-0 flex-1">
                     <div className="break-words text-sm font-semibold text-slate-800">{p.name}{p.sku && <span className="ml-1.5 font-mono text-[11px] font-normal text-slate-400">· {p.sku}</span>}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
@@ -8697,6 +8974,7 @@ function Inventory({ parts, orders = [], onAdd, onPatch, onRemove, onErr }) {
                       <span>Venta <b className="font-medium text-slate-700">{money(p.price)}</b></span>
                       <span>Costo <b className="font-medium text-slate-700">{money(p.cost)}</b></span>
                       {margin != null && <span className="font-medium text-emerald-600">{margin}%</span>}
+                      {req && <span className={"rounded-md px-1.5 py-0.5 font-medium " + (short ? "bg-rose-100 text-rose-700" : "bg-sky-50 text-sky-700")} title={"Exigido por: " + req.assets.map((a) => a.tag || a.name).join(", ")}>Seguridad {req.qty} · {req.assets.length} activo(s)</span>}
                       {p.brand && <span className="text-slate-400">{p.brand}</span>}
                       {consumption90d[p.id] > 0 && <span className="text-slate-400">Consumo 90d: <b className="font-medium text-slate-600">{consumption90d[p.id]} {p.unit}</b></span>}
                     </div>
