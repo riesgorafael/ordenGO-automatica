@@ -5919,6 +5919,18 @@ function DeliveryNotesModule({ notes, orders, clients, branding, createSignal = 
               </div>
               <div className="mt-1 truncate text-sm font-semibold text-slate-900">{note.client}</div>
               <div className="truncate text-xs text-slate-500">{note.site || "Sin sitio"} · {(note.items || []).length} renglón(es)</div>
+              {/* Resumen derivado de los renglones, no un campo aparte: así no hay que escribir nada
+                  al emitir y funciona también con los remitos ya cargados. Se prefieren los folios
+                  de las órdenes —son lo que distingue un remito de otro del mismo cliente y mes— y
+                  sólo si no hay ninguna se cae al texto del primer renglón. */}
+              {(() => {
+                const items = note.items || [];
+                const folios = items.map((item) => item.orderId).filter(Boolean);
+                const summary = folios.length
+                  ? folios.slice(0, 2).join(" · ") + (folios.length > 2 ? ` +${folios.length - 2}` : "")
+                  : String(items[0]?.description || "").split("\n")[0];
+                return summary ? <div className="mt-0.5 truncate font-mono text-[11px] text-slate-400">{summary}</div> : null;
+              })()}
             </div>
             {/* Los botones frenan la propagación: sin esto, descargar o eliminar abriría además el
                 editor, porque el clic sube hasta la fila. */}
