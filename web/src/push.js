@@ -73,3 +73,34 @@ export async function disablePush() {
   await subscription.unsubscribe();
   return true;
 }
+
+/* Instalada como aplicación (no en una pestaña del navegador). Es la condición que iOS exige para
+   entregar push, y la señal de que la persona ya adoptó la aplicación en su teléfono. */
+export const isInstalledApp = () => isStandalone();
+
+/* Suscripción automática, sin preguntar nada. Sólo procede cuando el permiso YA está concedido y
+   falta el registro en el servidor: pasa al reinstalar la aplicación, al limpiar los datos del sitio
+   o cuando el navegador rota la suscripción por su cuenta. En esos casos el usuario cree que tiene
+   los avisos activados —de hecho los autorizó— y no recibiría ninguno.
+
+   No pide permiso por su cuenta a propósito: requestPermission() sin un gesto de la persona lo
+   bloquean los navegadores, y en Chrome insistir deja el sitio marcado para no volver a preguntar. */
+export async function syncPushIfAllowed() {
+  const support = pushSupport();
+  if (!support.supported || Notification.permission !== "granted") return false;
+  const registration = await navigator.serviceWorker.ready;
+  const existing = await registration.pushManager.getSubscription();
+  if (existing) {
+    // Ya suscrito: se reenvía al servidor de todos modos, que es idempotente por endpoint. Cubre el
+    // caso de una suscripción viva en el teléfono cuya fila se perdió en la base.
+    try { await api.pushSubscribe(existing.toJSON()); } catch { return false; }
+    return true;
+  }
+  try {
+    const { key } = await api.pushKey();
+    if (!key) return false;
+    const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) });
+    await api.pushSubscribe(subscription.toJSON());
+    return true;
+  } catch { return false; }
+}

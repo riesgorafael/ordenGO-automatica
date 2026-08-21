@@ -13,7 +13,7 @@ import {
   Undo2, Redo2, ClipboardPaste, ScanLine, Mic, GanttChartSquare, EyeOff, Activity, Sun, Moon, Monitor,
 } from "lucide-react";
 import { api, setToken, getToken } from "./api";
-import { pushState as pushSubscriptionState, enablePush, disablePush } from "./push";
+import { pushState as pushSubscriptionState, enablePush, disablePush, syncPushIfAllowed, isInstalledApp } from "./push";
 import { LOGO, LOGO_LIGHT } from "./logo";
 import { LANGUAGES, detectLanguage, saveLanguage, translator } from "./i18n";
 const pdfModule = () => import("./pdf");
@@ -1790,6 +1790,7 @@ export default function App() {
       </header>
 
       {(!online || offlineCount > 0) && <div className={`motion-banner sticky top-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium text-white ${online && offlineSyncFailed ? "bg-rose-600" : online ? "bg-brand-600" : "bg-amber-600"}`} role="status">{!online ? <WifiOff className="h-4 w-4" /> : syncingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}{!online ? `${offlineCount ? `${offlineCount} cambio(s) guardado(s). ` : ""}Podés seguir trabajando sin conexión.` : offlineSyncFailed ? <><span>{offlineCount} cambio(s) pendientes por un error.</span><button type="button" onClick={() => setOfflineRetry((value) => value + 1)} className="inline-flex items-center gap-1 rounded border border-white/40 px-2 py-1 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button></> : `Sincronizando ${offlineCount} cambio(s)…`}</div>}
+      <PushInvite onErr={err} />
       <main className={`mx-auto px-3 py-4 pb-28 sm:px-4 sm:py-5 sm:pb-5 ${tvMode ? "max-w-none lg:px-7 lg:py-4" : "max-w-6xl"}`}><ErrorBoundary key={activeModule}>
         <div key={activeModule} className="motion-page">
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} projects={projects} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} onGoToProject={(projectId) => { navigateModule("projects"); setPTab("board"); setPProj(projectId); }} ger={isMgr} />}
@@ -8428,6 +8429,51 @@ function ChartBox({ data }) {
   return (<div style={{ width: "100%", height: 220 }}><ResponsiveContainer debounce={1} minWidth={200} minHeight={200}><BarChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }} /><RechartsBar dataKey="value" radius={[5, 5, 0, 0]} isAnimationActive={false}>{data.map((d, i) => <Cell key={i} fill={d.fill} />)}</RechartsBar></BarChart></ResponsiveContainer></div>);
 }
 
+
+/* Invitación a activar los avisos, sólo dentro de la aplicación instalada. Ahí tiene sentido: es un
+   teléfono que la persona ya adoptó, y es además el único contexto donde iOS entrega push.
+
+   Es una invitación y no una imposición porque no hay alternativa técnica: el permiso lo concede la
+   persona, y requestPermission() sin un gesto suyo lo bloquean los navegadores. Lo que sí se puede
+   es no obligarla a ir a buscarlo al menú. Si lo descarta, no vuelve a aparecer. */
+function PushInvite({ onErr }) {
+  const [visible, setVisible] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // Primero lo automático: si ya autorizó, se registra la suscripción en silencio y no se
+      // muestra nada. Sólo si nunca decidió se ofrece el atajo.
+      if (await syncPushIfAllowed()) return;
+      if (!isInstalledApp()) return;
+      if (localStorage.getItem("og_push_invite_dismissed") === "1") return;
+      const state = await pushSubscriptionState();
+      if (alive && state.supported && state.permission === "default") setVisible(true);
+    })().catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!visible) return null;
+  const dismiss = () => { localStorage.setItem("og_push_invite_dismissed", "1"); setVisible(false); };
+  return (
+    <div className="motion-banner mx-auto mt-3 flex max-w-6xl items-start gap-3 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-900 sm:mx-4">
+      <Bell className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">Activá los avisos en este teléfono</p>
+        <p className="mt-0.5 text-xs text-brand-800/80">Te llegan los comentarios y las órdenes asignadas aunque tengas la aplicación cerrada.</p>
+      </div>
+      <div className="flex shrink-0 gap-1.5">
+        <button onClick={dismiss} className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100">Ahora no</button>
+        <button disabled={busy} onClick={async () => {
+          setBusy(true);
+          // El clic es el gesto que el navegador exige para dejar mostrar el pedido de permiso.
+          try { await enablePush(); setVisible(false); }
+          catch (e) { onErr?.(e); dismiss(); }
+          setBusy(false);
+        }} className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-400 disabled:opacity-50">Activar</button>
+      </div>
+    </div>
+  );
+}
 
 /* Interruptor de notificaciones al teléfono. Sólo se muestra en la ficha propia: una suscripción
    push pertenece a este navegador concreto, así que nadie puede activársela a otra persona. */
