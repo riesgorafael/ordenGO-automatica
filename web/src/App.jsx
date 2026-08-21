@@ -8620,6 +8620,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [labelCount, setLabelCount] = useState(32);
   const [scanMsg, setScanMsg] = useState("");
+  const mouseDownOnBackdrop = useRef(false);
 
   /* Una etiqueta escaneada tiene dos desenlaces y ninguno es un error: si ya está asignada se abre
      ese equipo, y si está en blanco arranca el alta con el código puesto. Ese segundo caso es el que
@@ -8720,7 +8721,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, on
       {scanMsg && <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{scanMsg}</div>}
       {scanning && <BarcodeScannerDialog onClose={() => setScanning(false)} onDetect={resolveScan} />}
       {labelsOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onClick={() => setLabelsOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) setLabelsOpen(false); }}>
           <div className="w-full max-w-md rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-1 flex items-center justify-between">
               <h3 className="text-base font-semibold text-slate-900">Imprimir etiquetas en blanco</h3>
