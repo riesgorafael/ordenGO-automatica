@@ -11,7 +11,13 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
-  if (request.method !== "GET" || new URL(request.url).pathname.startsWith("/api/")) return;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.pathname.startsWith("/api/")) return;
+  // Todo lo de otros dominios se deja pasar sin tocarlo (Google Fonts, el CDN de Tesseract). Dos
+  // motivos: el fetch() que haría el worker cuenta como connect-src para la CSP —no como style-src,
+  // que es la directiva que el navegador aplica cuando pide la hoja por su cuenta—, y además esas
+  // respuestas nunca se cacheaban igual, porque no son de tipo "basic".
+  if (url.origin !== self.location.origin) return;
   event.respondWith(fetch(request).then((response) => {
     // clone() tiene que llamarse ANTES de devolver la respuesta: "return response" entrega el
     // body a quien pidió el fetch (ej. el worker de Tesseract/pdf.js leyendo un .wasm), y si esa
@@ -23,7 +29,14 @@ self.addEventListener("fetch", (event) => {
       caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
     }
     return response;
-  }).catch(() => caches.match(request).then((cached) => cached || caches.match("/"))));
+  }).catch(() => caches.match(request).then((cached) => {
+    if (cached) return cached;
+    // El index.html sólo sirve de respaldo para una navegación. Devolverlo ante cualquier recurso
+    // hacía que una hoja de estilos o un script recibieran HTML, y el navegador los rechazaba por
+    // MIME type en vez de reportar el fallo real.
+    if (request.mode === "navigate") return caches.match("/");
+    return Response.error();
+  })));
 });
 
 // ---------------------------------------------------------------------------------------------
