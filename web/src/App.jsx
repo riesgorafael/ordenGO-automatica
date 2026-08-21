@@ -5,7 +5,7 @@ import {
   FolderTree,
   Plus, X, Search, Camera, Upload, Sparkles, Loader2, MapPin, Clock, ClipboardList,
   FileSignature, CheckCircle2, AlertTriangle, Download, Trash2, Play, Square,
-  ChevronLeft, ChevronRight, Wrench, Cpu, QrCode, DollarSign, Building2, Filter, LayoutGrid,
+  ChevronLeft, ChevronRight, Wrench, Cpu, QrCode, MoreHorizontal, DollarSign, Building2, Filter, LayoutGrid,
   BarChart3, Users, UserPlus, Calendar, Flag, Folder, LogOut, Briefcase, KeyRound, FileText, Pencil,
   Bell, Home, MessageSquare, Copy, Link2, TrendingUp, TrendingDown, Menu, Settings2, Palette,
   WifiOff, RefreshCw, ListTodo, Phone, Navigation, ExternalLink, CircleHelp, Maximize2, Mail,
@@ -1853,7 +1853,7 @@ export default function App() {
               </div>
             )}
             {(!isMgr || oTab === "list")
-              ? <OrdersHome {...{ orders, ger: isMgr, projects, branding, onErr: err, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen: setODetail }} />
+              ? <OrdersHome {...{ orders, ger: isMgr, me, projects, branding, onErr: err, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen: setODetail, onAdvance: (id, status) => updateOrder(id, { status }), onSuspend: setODetail, onReopen: setODetail }} />
               : <MonthlyReport orders={orders} branding={branding} />}
           </>
         )}
@@ -6876,11 +6876,137 @@ function OrderReportMenu({ order, projects, ger, branding = DEFAULT_BRANDING, on
   );
 }
 
-function OrderRow({ order: o, ger, projects = [], branding = DEFAULT_BRANDING, onErr, onOpen }) {
+/* Acción principal de una orden en el listado: una sola, siempre en el mismo lugar, la que
+   corresponde a su estado. Una batería de botones fijos no sirve acá porque casi ninguno aplica al
+   estado en curso, y un botón que a veces no hace nada enseña a desconfiar de la interfaz.
+
+   Cuando falta un requisito el botón se muestra igual, apagado y con el motivo: ocultarlo dejaría al
+   usuario preguntándose por qué esa fila es distinta de las demás. */
+function orderQuickAction(order, { ger = false, me = null } = {}) {
+  const mine = !!me && (order.tech === me.name || (order.assignedTechs || []).includes(me.name));
+  const blocked = (reason) => reason;
+
+  switch (order.status) {
+    case "Borrador":
+      return { key: "open", label: "Continuar", tone: "neutral" };
+    case "En proceso de ejecución":
+      return { key: "open", label: mine || ger ? "Retomar" : "Ver", tone: "neutral" };
+    case "Completada": {
+      if (!ger) return { key: "open", label: "Ver", tone: "neutral" };
+      // Las mismas condiciones que exige el detalle al avanzar de estado. Se repiten acá para poder
+      // decir qué falta sin obligar a abrir la orden y descubrirlo ahí.
+      const missing = !order.technicianSignatureUrl ? "falta la firma del técnico"
+        : (!order.signatureUrl && !String(order.noSignReason || "").trim()) ? "falta la conformidad del cliente"
+        : "";
+      return { key: "approve", label: "Aprobar", tone: "primary", confirm: true, disabledReason: blocked(missing) };
+    }
+    case "Aprobada":
+      if (!ger) return { key: "open", label: "Ver", tone: "neutral" };
+      return { key: "invoice", label: "Facturar", tone: "primary", confirm: true, disabledReason: "" };
+    case "Suspendida":
+      if (!ger) return { key: "open", label: "Ver", tone: "neutral" };
+      return { key: "resume", label: "Reanudar", tone: "neutral", confirm: false, disabledReason: "" };
+    case "Facturada":
+    default:
+      return { key: "open", label: "Ver", tone: "neutral" };
+  }
+}
+
+/* Acciones secundarias, las de baja frecuencia y las difíciles de revertir. Van detrás de un menú
+   para que el clic accidental en una lista no las dispare. */
+function orderMoreActions(order, { ger = false } = {}) {
+  const actions = [];
+  if (ger && ["En proceso de ejecución", "Completada", "Aprobada"].includes(order.status)) {
+    // Suspender abre su propio diálogo: guarda categoría y motivo, que es lo que después explica el
+    // hueco en la facturación. Degradarlo a un clic perdería ese dato.
+    actions.push({ key: "suspend", label: "Suspender", tone: "danger" });
+  }
+  if (ger && order.status === "Completada") actions.push({ key: "reopen", label: "Reabrir", tone: "neutral" });
+  if (ger && order.status === "Suspendida") actions.push({ key: "resume", label: "Reanudar", tone: "neutral" });
+  return actions;
+}
+
+/* Botonera de una fila de orden: la acción principal del estado, más un menú con las secundarias.
+   Va fuera del <button> que abre la orden —como hermano, no anidado— porque un button dentro de otro
+   es marcado inválido y el navegador reacomoda el árbol dejando el clic donde no corresponde. */
+function OrderRowActions({ order, ger, me, onOpen, onAdvance, onSuspend, onReopen }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirming, setConfirming] = useState(null);
+  const action = orderQuickAction(order, { ger, me });
+  const extras = orderMoreActions(order, { ger });
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event) => { if (!menuRef.current?.contains(event.target)) setMenuOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpen]);
+
+  const run = (key) => {
+    setMenuOpen(false);
+    if (key === "open") return onOpen(order);
+    if (key === "approve") return onAdvance(order.id, "Aprobada");
+    if (key === "invoice") return onAdvance(order.id, "Facturada");
+    if (key === "resume") return onAdvance(order.id, order.suspendedFromStatus || "Borrador");
+    if (key === "suspend") return onSuspend(order);
+    if (key === "reopen") return onReopen(order);
+  };
+
+  const primaryClass = action.tone === "primary"
+    ? "bg-brand-500 text-white hover:bg-brand-400 disabled:bg-slate-200 disabled:text-slate-400"
+    : "border border-slate-200 text-slate-600 hover:bg-slate-50";
+
+  return (
+    <>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button type="button" disabled={Boolean(action.disabledReason)}
+          title={action.disabledReason || action.label}
+          onClick={() => (action.confirm ? setConfirming(action) : run(action.key))}
+          className={`rounded-lg px-3.5 py-2 text-xs font-semibold disabled:cursor-not-allowed ${primaryClass}`}>
+          {action.label}
+        </button>
+        {extras.length > 0 && (
+          <div ref={menuRef} className="relative">
+            <button type="button" onClick={() => setMenuOpen((v) => !v)} aria-label="Más acciones" aria-expanded={menuOpen}
+              className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                {extras.map((extra) => (
+                  <button key={extra.key} type="button" onClick={() => run(extra.key)}
+                    className={`block w-full px-3 py-2 text-left text-xs font-medium hover:bg-slate-50 ${extra.tone === "danger" ? "text-rose-600" : "text-slate-700"}`}>
+                    {extra.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {/* Aprobar y facturar cuestan revertirlas, y en una lista el clic accidental es fácil. */}
+      {action.disabledReason && (
+        <span className="w-full text-[10px] text-amber-600">Para aprobar, {action.disabledReason}.</span>
+      )}
+      {confirming && createPortal(
+        <ConfirmDialog
+          title={`${confirming.label} ${order.id}`}
+          message={confirming.key === "invoice"
+            ? "La orden pasa a Facturada. Verificá que el importe y el presupuesto vinculado sean los correctos."
+            : "La orden pasa a Aprobada y su costo real se registra en Finanzas."}
+          confirmLabel={confirming.label}
+          onClose={() => setConfirming(null)}
+          onConfirm={() => { const key = confirming.key; setConfirming(null); run(key); }}
+        />, document.body)}
+    </>
+  );
+}
+
+function OrderRow({ order: o, ger, me, projects = [], branding = DEFAULT_BRANDING, onErr, onOpen, onAdvance, onSuspend, onReopen }) {
   const t = orderTotals(o);
   return (
-    <button onClick={() => onOpen(o)} className="block w-full text-left">
-      <Box className="p-4 transition hover:border-slate-300 hover:shadow-sm">
+    <Box className="p-4 transition hover:border-slate-300 hover:shadow-sm">
+      <button onClick={() => onOpen(o)} className="block w-full text-left">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-sm font-semibold text-slate-800">{o.id}</span>
           <Chip className={O_STYLE[o.status]}>{o.status}</Chip>
@@ -6897,12 +7023,17 @@ function OrderRow({ order: o, ger, projects = [], branding = DEFAULT_BRANDING, o
         <div className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-800"><Building2 className="h-3.5 w-3.5 text-slate-400" />{o.client}</div>
         <div className="text-xs text-slate-500">{o.site} · {o.service} · {o.date}</div>
         {o.equipo && <div className="mt-1 truncate text-xs text-slate-500">Equipo: {o.equipo}</div>}
-      </Box>
-    </button>
+      </button>
+      {onAdvance && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-1.5 border-t border-slate-100 pt-3">
+          <OrderRowActions order={o} ger={ger} me={me} onOpen={onOpen} onAdvance={onAdvance} onSuspend={onSuspend} onReopen={onReopen} />
+        </div>
+      )}
+    </Box>
   );
 }
 /* ===================================== ÓRDENES: HOME ===================================== */
-function OrdersHome({ orders, ger, projects = [], branding = DEFAULT_BRANDING, onErr, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen }) {
+function OrdersHome({ orders, ger, me, projects = [], branding = DEFAULT_BRANDING, onErr, oQ, setOQ, oStatus, setOStatus, oBillable, setOBillable, exportCSV, onOpen, onAdvance, onSuspend, onReopen }) {
   const [oUrgent, setOUrgent] = useState(false);
   const [view, setView] = useState("lista"); // "lista" | "estado"
   // Mismo criterio que el filtro "Facturables": lista y con algo que cobrar. Con solo el estado,
@@ -6963,7 +7094,7 @@ function OrdersHome({ orders, ger, projects = [], branding = DEFAULT_BRANDING, o
               <div className="flex items-center justify-between px-3 py-2"><h3 className="text-sm font-semibold text-slate-700">{status}</h3><span className="rounded-full bg-white px-2 text-xs font-medium text-slate-500 ring-1 ring-slate-200">{items.length}</span></div>
               <div className="space-y-2 px-2 pb-3">
                 {items.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 bg-white py-8 text-center text-xs text-slate-400">Sin órdenes</div>}
-                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} branding={branding} onErr={onErr} onOpen={onOpen} />)}
+                {items.map((o) => <OrderRow key={o.id} order={o} ger={ger} me={me} projects={projects} branding={branding} onErr={onErr} onOpen={onOpen} onAdvance={onAdvance} onSuspend={onSuspend} onReopen={onReopen} />)}
               </div>
             </section>
           ); })}
@@ -6971,7 +7102,7 @@ function OrdersHome({ orders, ger, projects = [], branding = DEFAULT_BRANDING, o
       ) : (
         <div className="space-y-3">
           {filtered.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No hay órdenes que coincidan.</div>}
-          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} projects={projects} branding={branding} onErr={onErr} onOpen={onOpen} />)}
+          {filtered.map((o) => <OrderRow key={o.id} order={o} ger={ger} me={me} projects={projects} branding={branding} onErr={onErr} onOpen={onOpen} onAdvance={onAdvance} onSuspend={onSuspend} onReopen={onReopen} />)}
         </div>
       )}
     </div>
