@@ -111,7 +111,7 @@ app.use((req, res, next) => {
   // 'wasm-unsafe-eval' en script-src: instanciar un módulo WebAssembly (el motor de OCR de
   // Tesseract) cuenta como "eval" para CSP; esta keyword lo habilita sin abrir eval() de JS común.
   // "data:" en connect-src: Tesseract carga el binario .wasm como un data: URI internamente.
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: https://cdn.jsdelivr.net https://tessdata.projectnaptha.com");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://www.googletagmanager.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.google-analytics.com https://www.googletagmanager.com; font-src 'self' data:; connect-src 'self' data: https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com");
   next();
 });
 app.use(compression({ threshold: 1024 }));
