@@ -1738,16 +1738,16 @@ export default function App() {
                 llave aparte en la barra; al sacarlo quedaba sin ningún acceso, porque era el único
                 lugar de toda la app donde cambiar la propia clave. Colgarlo del nombre es además
                 dónde se lo busca: es una acción de la cuenta, no una herramienta más de la barra. */}
-            <button onClick={() => (me.role === "cliente" || isMonitor ? setPwOpen(true) : setProfileOpen(true))} title={me.role === "cliente" || isMonitor ? "Cambiar contraseña" : "Mi ficha y contraseña"} className="flex items-center gap-2 rounded-lg p-1 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
+            <button onClick={() => (me.role === "cliente" || isMonitor ? setPwOpen(true) : setProfileOpen(true))} title={me.role === "cliente" || isMonitor ? "Cambiar contraseña" : "Mi ficha y contraseña"} className="flex min-h-10 items-center gap-2 rounded-lg p-1.5 text-left hover:bg-ink-800"><Avatar user={me} size={26} /><div className="hidden leading-tight sm:block"><div className="text-xs font-medium text-slate-200">{me.name.split(" ")[0]}</div><div className="text-[10px] text-slate-400">{ROLES[me.role]}</div></div></button>
             {/* Acceso directo a Notas, sólo desde tablet en adelante: en el teléfono la barra ya
                 está llena y Notas se alcanza desde el menú "Más". Se muestra únicamente si el
                 módulo está habilitado para el rol y la empresa, para no ofrecer un botón que
                 lleve a una pantalla vacía o sin permiso. */}
             {allowedForCompany.has("whiteboard") && <button onClick={() => { navigateModule("whiteboard"); setDrawingSignal((v) => v + 1); }} title="Nuevo dibujo" aria-label="Nuevo dibujo" className={`hidden rounded-lg p-1.5 sm:block sm:p-2 ${activeModule === "whiteboard" ? "bg-ink-800 text-white" : "text-slate-300 hover:bg-ink-800"}`}><Pencil className="h-4 w-4" /></button>}
-            <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en MiOrdenGo" aria-label="Buscar en MiOrdenGo" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><Search className="h-4 w-4" /></button>
-            <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><AppearanceIcon className="h-4 w-4" /></button>
+            <button onClick={() => setGlobalSearchOpen(true)} title="Buscar en MiOrdenGo" aria-label="Buscar en MiOrdenGo" className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800 sm:h-9 sm:w-9"><Search className="h-4 w-4" /></button>
+            <button onClick={cycleAppearance} title={`Apariencia: ${appearanceOption.name}. Cambiar modo`} aria-label={`Apariencia ${appearanceOption.name}. Cambiar modo`} className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800 sm:h-9 sm:w-9"><AppearanceIcon className="h-4 w-4" /></button>
             <div ref={notifRef} className="relative">
-              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" aria-label="Novedades" aria-expanded={notifOpen} aria-controls="notifications-panel" className="relative rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2">
+              <button onClick={() => setNotifOpen((v) => !v)} title="Novedades" aria-label="Novedades" aria-expanded={notifOpen} aria-controls="notifications-panel" className="relative grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800 sm:h-9 sm:w-9">
                 <Bell className="h-4 w-4" />
                 {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{unread}</span>}
               </button>
@@ -1765,7 +1765,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            <button onClick={logout} title="Cerrar sesión" aria-label="Cerrar sesión" className="rounded-lg p-1.5 text-slate-300 hover:bg-ink-800 sm:p-2"><LogOut className="h-4 w-4" /></button>
+            <button onClick={logout} title="Cerrar sesión" aria-label="Cerrar sesión" className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:bg-ink-800 sm:h-9 sm:w-9"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
         <div className={`mx-auto flex max-w-6xl items-stretch gap-1 px-2 ${tvMode ? "hidden" : "hidden sm:flex"}`}>
@@ -5638,13 +5638,13 @@ function PurchaseOrdersModule({
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 text-xs font-medium">
           <button
             onClick={() => setPoTab("orders")}
-            className={`rounded-md px-3 py-1.5 ${poTab === "orders" ? "bg-brand-500 text-white" : "text-slate-600"}`}
+            className={`rounded-md px-3 py-2.5 ${poTab === "orders" ? "bg-brand-500 text-white" : "text-slate-600"}`}
           >
             Órdenes
           </button>
           <button
             onClick={() => setPoTab("suppliers")}
-            className={`rounded-md px-3 py-1.5 ${poTab === "suppliers" ? "bg-brand-500 text-white" : "text-slate-600"}`}
+            className={`rounded-md px-3 py-2.5 ${poTab === "suppliers" ? "bg-brand-500 text-white" : "text-slate-600"}`}
           >
             Proveedores
           </button>
@@ -6871,7 +6871,7 @@ function OrderReportMenu({ order, projects, ger, branding = DEFAULT_BRANDING, on
         onClick={() => (rect ? setRect(null) : place())}
         onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); rect ? setRect(null) : place(); } }}
         aria-expanded={!!rect} aria-haspopup="menu" title="Descargar reporte de esta orden"
-        className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium ${rect ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600"}`}>
+        className={`inline-flex min-h-9 cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-medium ${rect ? "border-brand-400 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600"}`}>
         <Download className="h-3.5 w-3.5" /> PDF
       </span>
       {rect && createPortal(
