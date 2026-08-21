@@ -2182,7 +2182,7 @@ function ChangePassword({ onClose, forced, onDone }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) close(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-sm overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Cambiar contraseña</h3>{!forced && <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>}</div>
+        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Cambiar contraseña</h3>{!forced && <button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>}</div>
         {forced && !done && <div className="mb-3 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">Por seguridad, define una contraseña nueva antes de continuar.</div>}
         {done ? (
           <div className="space-y-4">
@@ -5110,12 +5110,16 @@ function PurchaseOrderEditor({
       setRateLoading(false);
     }
   };
+  const enviando = useRef(false);
   const submit = async () => {
+    if (enviando.current) return;
+    enviando.current = true;
     setSaving(true);
     try {
       const saved = await onSave({ ...form, items: validItems });
       if (saved) onClose();
     } finally {
+      enviando.current = false;
       setSaving(false);
     }
   };
@@ -7345,7 +7349,7 @@ function OrderDetail({ ger, order, users = [], projects = [], branding = DEFAULT
   return (
     <div className="motion-backdrop fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="sticky top-0 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-3"><div className="flex items-center gap-2"><span className="font-mono text-sm font-semibold text-slate-800">{order.id}</span><Chip className={O_STYLE[order.status]}>{order.status}</Chip></div><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="sticky top-0 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-3"><div className="flex items-center gap-2"><span className="font-mono text-sm font-semibold text-slate-800">{order.id}</span><Chip className={O_STYLE[order.status]}>{order.status}</Chip></div><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="space-y-4 p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-5">
           <section><div className="text-base font-semibold text-slate-900">{order.client}</div><div className="text-sm text-slate-500">{order.site}{order.contact ? ` · ${order.contact}` : ""}</div><div className="mt-1 text-xs text-slate-500">{order.service} · {order.date}{order.tech ? ` · Técnico: ${order.tech}` : ""}</div>{(order.quoteNumber || order.customerPO) && <div className="mt-1 text-xs text-slate-400">{order.quoteNumber ? `Presupuesto: ${order.quoteNumber}` : ""}{order.quoteNumber && order.customerPO ? " · " : ""}{order.customerPO ? `OC: ${order.customerPO}` : ""}</div>}<div className="mt-3 flex flex-wrap gap-2">{order.contactPhone && <a href={`tel:${order.contactPhone}`} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600"><Phone className="h-4 w-4" /> Llamar</a>}{order.location && <a href={`https://www.google.com/maps/search/?api=1&query=${order.location.lat},${order.location.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600"><Navigation className="h-4 w-4" /> Abrir mapa</a>}<button onClick={shareOrder} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600"><ExternalLink className="h-4 w-4" /> Compartir</button></div></section>
           {(assignedTechs.length > 1 || canManageTechs) && <section className="rounded-lg border border-slate-200 p-3"><h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Técnicos con acceso</h4><div className="flex flex-wrap gap-1.5">{assignedTechs.map((name) => <Chip key={name} className="bg-slate-100 text-slate-700 ring-slate-300">{name}{canManageTechs && name !== order.tech && <button type="button" onClick={() => removeMateTech(name)} aria-label={`Quitar a ${name}`} className="ml-1 text-slate-400 hover:text-rose-500"><X className="h-3 w-3" /></button>}</Chip>)}</div>{canManageTechs && <div className="mt-2 flex gap-2"><input list="order-detail-mate-techs" value={mateTechPick} onChange={(e) => setMateTechPick(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addMateTech(mateTechPick); } }} placeholder="Sumar técnico a esta orden" className="u-input flex-1 text-sm" /><button type="button" onClick={() => addMateTech(mateTechPick)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Agregar</button><datalist id="order-detail-mate-techs">{fieldTechs.filter((u) => !assignedTechs.some((name) => name.toLowerCase() === u.name.toLowerCase())).map((u) => <option key={u.id} value={u.name} />)}</datalist></div>}
@@ -8400,7 +8404,7 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
   return (
     <div className="motion-backdrop fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">{editingExisting ? f.id : "Nueva tarea"}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">{editingExisting ? f.id : "Nueva tarea"}</h3><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="space-y-3">
           <input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={readOnly} placeholder="Título de la tarea" className="u-input text-sm font-medium disabled:bg-slate-50" />
           <RichTextEditor value={f.desc} onChange={(html) => set({ desc: html })} disabled={readOnly} placeholder="Descripción / criterios" />
@@ -8789,7 +8793,7 @@ function ProfileDialog({ user, branding = {}, onClose, onSave, onErr, onChangePa
           ventana, dejando el título y la foto fuera de vista. Ahora sólo scrollea el cuerpo, y el
           encabezado y los botones quedan siempre visibles. */}
       <div className="mobile-dialog mobile-sheet-content flex max-h-[90dvh] w-full max-w-md flex-col rounded-t-2xl bg-white sm:max-h-[85vh] sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
-        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Ficha de {user.name}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Ficha de {user.name}</h3><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="mb-4 flex items-center gap-4">
           <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-full" style={{ background: user.color || "#94a3b8" }}>
@@ -9103,7 +9107,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
           <div className="w-full max-w-md rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-1 flex items-center justify-between">
               <h3 className="text-base font-semibold text-slate-900">Imprimir etiquetas en blanco</h3>
-              <button onClick={() => setLabelsOpen(false)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+              <button onClick={() => setLabelsOpen(false)} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
             <p className="mb-3 text-sm text-slate-500">Cada etiqueta trae un código único, todavía sin equipo. Se pegan en planta y después se da de alta escaneando.</p>
             <L label="Cuántas etiquetas">
@@ -9466,7 +9470,7 @@ function ProjectAccess({ project, users, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Accesos del proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Accesos del proyecto</h3><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <p className="mb-3 text-sm text-slate-500">{project.key} · {project.name}. Marcá quién puede ver este proyecto y sus tareas: técnicos, monitores y clientes corporativos. La gerencia siempre lo ve.</p>
         <div className="space-y-1.5">
           {techs.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">No hay técnicos cargados.</div>}
@@ -9502,7 +9506,7 @@ function DuplicateProject({ project, users, tasksCount, onClose, onDuplicate }) 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Duplicar proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Duplicar proyecto</h3><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <p className="mb-4 text-sm text-slate-500">Se creará una copia de <span className="font-medium text-slate-700">{project.name}</span> con sus {tasksCount} tarea(s). Podés reasignarlas todas a una persona.</p>
         <div className="space-y-3">
           <L label="Nombre del nuevo proyecto"><input value={name} onChange={(e) => setName(e.target.value)} className="u-input" /></L>
@@ -10783,7 +10787,7 @@ function UserProjectsDialog({ user, projects, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Proyectos asociados</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mb-1 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Proyectos asociados</h3><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <p className="mb-3 text-sm text-slate-500">{user.name}. Marcá los proyectos a los que este técnico de oficina tiene acceso.</p>
         <div className="space-y-1.5">
           {projects.length === 0 && <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">No hay proyectos cargados.</div>}

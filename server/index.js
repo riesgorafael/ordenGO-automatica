@@ -2393,7 +2393,27 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateL
   po.supplierName = supplier.name;
   if (!po.items.length) return res.status(400).json({ error: "Agregá al menos un ítem a la orden de compra." });
   if (po.stage === "Recibida" && !po.supplierInvoiceNumber) return res.status(400).json({ error: "El número de factura del proveedor es obligatorio para marcar la orden como Recibida." });
+  // Idempotencia: un segundo envío del mismo formulario —doble toque en el teléfono, o un clic que
+  // se repite antes de que el botón alcance a deshabilitarse— llegaba como una orden nueva. Y como
+  // la numeración lee el último id ya confirmado, esa segunda no chocaba por clave primaria: se le
+  // asignaba el número siguiente y quedaban dos órdenes idénticas con distinto número.
+  //
+  // La ventana es corta y compara emisor, proveedor e ítems. Dos compras realmente iguales al mismo
+  // proveedor dentro de ese lapso son indistinguibles de un doble envío; para ese caso está el
+  // botón de duplicar, que además nace en Borrador.
   if (!po.id) {
+    const huella = JSON.stringify((po.items || []).map((item) => [item.description, item.qty, item.unitPrice]));
+    const recientes = (await pool.query(
+      "SELECT data FROM purchase_orders WHERE organization_id=$1 AND data->>'supplierId'=$2 AND updated_at > now() - interval '45 seconds' ORDER BY updated_at DESC LIMIT 5",
+      [req.user.organizationId, po.supplierId],
+    )).rows.map((row) => row.data);
+    const gemela = recientes.find((otra) =>
+      String(otra.createdBy || "") === String(req.user.id)
+      && JSON.stringify((otra.items || []).map((item) => [item.description, item.qty, item.unitPrice])) === huella);
+    if (gemela) {
+      console.warn("Orden de compra duplicada evitada:", gemela.id, "· usuario", req.user.id);
+      return res.json({ ...gemela, _duplicadoEvitado: true });
+    }
     const year = new Date().getFullYear();
     const rows = (await pool.query("SELECT id FROM purchase_orders WHERE id LIKE $1", [`OC-${year}-%`])).rows;
     const next = Math.max(0, ...rows.map((row) => Number(String(row.id).split("-").pop()) || 0)) + 1;
@@ -2401,6 +2421,7 @@ app.post("/api/purchase-orders", auth, requireRole("admin", "gerente"), apiRateL
   }
   po.number = po.number || po.id;
   po.createdAt = po.createdAt || new Date().toISOString();
+  po.createdBy = po.createdBy || req.user.id;
   if (po.stage === "Recibida") po.receivedAt = po.receivedAt || new Date().toISOString();
   po.activity = [...(po.activity || []), { type: "created", text: "Orden de compra creada", by: req.user.id, byName: req.user.name, at: new Date().toISOString() }];
   const db = await pool.connect();
