@@ -145,6 +145,9 @@ const DEFAULT_BRANDING = {
   companyIvaCondition: "",
   companyAddress: "",
   companyLocality: "",
+  companyCity: "",
+  companyProvince: "",
+  companyCountry: "",
   companyPhone: "",
   companyEmail: "",
   companyWebsite: "",
@@ -216,7 +219,13 @@ const normalizeBranding = (value = {}) => ({
   companyAddress: String(value.companyAddress || "").trim().slice(0, 160),
   // Localidad en renglón propio: el membrete la muestra debajo de la calle, como en un papel
   // membretado. Antes había que meterla dentro de la dirección y quedaba todo en una línea larga.
+  // Ciudad, provincia y país por separado: el membrete los arma en un renglón propio y así se puede
+  // componer "Venado Tuerto, Santa Fe" sin obligar a escribirlo dentro de la calle. companyLocality
+  // se conserva para las empresas que ya lo tenían cargado.
   companyLocality: String(value.companyLocality || "").trim().slice(0, 120),
+  companyCity: String(value.companyCity || "").trim().slice(0, 80),
+  companyProvince: String(value.companyProvince || "").trim().slice(0, 80),
+  companyCountry: String(value.companyCountry || "").trim().slice(0, 60),
   companyPhone: String(value.companyPhone || "").trim().slice(0, 40),
   companyEmail: String(value.companyEmail || "").trim().slice(0, 120),
   companyWebsite: String(value.companyWebsite || "").trim().slice(0, 160),
