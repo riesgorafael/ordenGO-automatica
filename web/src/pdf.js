@@ -123,22 +123,27 @@ function stampProductBranding(doc) {
   doc.setPage(Math.min(currentPage, pages));
 }
 function saveBrandedPdf(doc, fileName) { stampProductBranding(doc); doc.save(fileName); }
-function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30) {
-  drawLogo(doc, M, logoY, branding);
-  // El bloque tiene un alto fijo asignado en el encabezado, así que el interlineado se calcula a
-  // partir de cuántas líneas haya: con pocas queda aireado y con siete se compacta para entrar sin
-  // pisar la sección siguiente. Antes el paso era fijo en 3,8 mm y la última línea se cortaba.
-  doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139);
-  // La línea separadora del encabezado está en y=49 en los tres reportes, así que el bloque tiene
-  // que cerrar antes. Con siete renglones se arranca más arriba y se comprime el paso: 27 + 6×3 = 45,
-  // cuatro milímetros de aire. Antes, con paso fijo, el último renglón caía justo sobre la línea.
+function drawCompanyHeader(doc, branding, M, logoY = 12, linesY = 30, ruleY = 49) {
+  // drawLogo devuelve el alto que ocupó el logo, que depende de la proporción de la imagen que
+  // cargó cada empresa. Antes ese valor se descartaba y los datos arrancaban siempre en la misma
+  // altura: con un logo alto —un isotipo cuadrado, por ejemplo— la primera línea caía encima de la
+  // imagen. Ahora el texto empieza donde el logo termina, sea cual sea.
+  const logoH = drawLogo(doc, M, logoY, branding) || 0;
   const lines = companyLines(branding).slice(0, 7);
-  const dense = lines.length > 5;
-  const step = dense ? 3 : 3.8;
-  const top = dense ? linesY - 3 : linesY;
-  doc.setFontSize(dense ? 6.4 : 7.2);
+  if (!lines.length) return;
+
+  const top = logoH ? logoY + logoH + 2.6 : linesY;
+  // El bloque tiene que cerrar antes de la línea separadora del encabezado. Se reparte el espacio
+  // que quedó y se ajusta el interlineado, en vez de asumir uno fijo que a veces no entra.
+  const available = Math.max(0, ruleY - 2 - top);
+  const step = lines.length > 1
+    ? Math.max(2.6, Math.min(3.8, available / (lines.length - 1)))
+    : 3.8;
+  doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139);
+  doc.setFontSize(step >= 3.4 ? 7.2 : step >= 3 ? 6.7 : 6.2);
   lines.forEach((line, index) => doc.text(line, M, top + index * step));
 }
+
 
 function drawServiceSummaryPage(doc, order, valued = false, project = null, branding = {}) {
   const W = 210, M = 15, technical = order.technical || {}, t = totals(order);
