@@ -2672,6 +2672,15 @@ const normalizeAsset = (body = {}) => {
       qtyRequired: Math.max(0, Math.min(9999, Number(item.qtyRequired) || 0)),
       note: text(item.note, 200),
     })).filter((item) => item.partId),
+    // Se conserva el valor ya guardado; las altas nuevas arrancan vacías.
+    locationHistory: (Array.isArray(body.locationHistory) ? body.locationHistory : []).slice(0, 50).map((move) => ({
+      site: text(move.site, 120),
+      siteCode: text(move.siteCode, 40),
+      area: text(move.area, 120),
+      until: text(move.until, 10),
+      reason: text(move.reason, 300),
+      byName: text(move.byName, 120),
+    })),
     documents: (Array.isArray(body.documents) ? body.documents : []).slice(0, 30).map((doc) => ({
       url: text(doc.url, 300),
       name: text(doc.name, 180),
@@ -2697,7 +2706,7 @@ app.get("/api/assets", auth, async (req, res) => {
   res.json(rows.map((r) => ({ ...r.data, _updatedAt: r.updated_at })));
 });
 app.post("/api/assets", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
-  const asset = normalizeAsset(req.body);
+  const asset = { ...normalizeAsset(req.body), locationHistory: [] };
   if (!asset.name) return res.status(400).json({ error: "El nombre del activo es obligatorio" });
   if (!asset.client) return res.status(400).json({ error: "El activo debe pertenecer a un cliente" });
   if (asset.qrToken && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 LIMIT 1", [req.user.organizationId, asset.qrToken])).rowCount) {
@@ -2713,7 +2722,18 @@ app.post("/api/assets", auth, requireRole("admin", "gerente", "tecnico"), apiRat
 app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(60), async (req, res) => {
   const current = (await pool.query("SELECT data FROM assets WHERE id=$1", [req.params.id])).rows[0];
   if (!current) return res.status(404).json({ error: "No existe" });
-  const merged = normalizeAsset({ ...current.data, ...req.body, id: current.data.id, createdAt: current.data.createdAt });
+  const merged = normalizeAsset({ ...current.data, ...req.body, id: current.data.id, createdAt: current.data.createdAt, locationHistory: current.data.locationHistory });
+  const before = { site: String(current.data.site || ""), area: String(current.data.area || "") };
+  if (before.site !== merged.site || before.area !== merged.area) {
+    // Se guarda dónde ESTABA y hasta cuándo: el destino ya vive en el activo, y repetirlo daría
+    // dos versiones del mismo dato que pueden discrepar al editar.
+    merged.locationHistory = [{
+      site: before.site, siteCode: String(current.data.siteCode || ""), area: before.area,
+      until: new Date().toISOString().slice(0, 10),
+      reason: String(req.body?.moveReason || "").trim().slice(0, 300),
+      byName: req.user.name || "",
+    }, ...merged.locationHistory].slice(0, 50);
+  }
   if (merged.qrToken && merged.qrToken !== String(current.data.qrToken || "").toUpperCase()
       && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 AND id<>$3 LIMIT 1", [req.user.organizationId, merged.qrToken, req.params.id])).rowCount) {
     return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });

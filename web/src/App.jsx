@@ -8837,7 +8837,7 @@ function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCance
     site: asset.site || "", siteCode: asset.siteCode || "", area: asset.area || "", manufacturer: asset.manufacturer || "", model: asset.model || "",
     serial: asset.serial || "", criticality: asset.criticality || "Media", criticalityReason: asset.criticalityReason || "",
     status: asset.status || "En servicio", commissionedAt: asset.commissionedAt || "", criticalParts: asset.criticalParts || [],
-    replacementValue: asset.replacementValue || "", documents: asset.documents || [], notes: asset.notes || "", createdAt: asset.createdAt,
+    replacementValue: asset.replacementValue || "", documents: asset.documents || [], locationHistory: asset.locationHistory || [], notes: asset.notes || "", createdAt: asset.createdAt,
   });
   const [saving, setSaving] = useState(false);
   const [scanField, setScanField] = useState(false);
@@ -8855,6 +8855,7 @@ function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCance
   // La justificación se exige sólo en criticidad alta: es la que inmoviliza stock y ordena la
   // prioridad de atención, así que es la que alguien va a pedir que expliquen.
   const needsReason = form.criticality === "Alta" && !form.criticalityReason.trim();
+  const moved = Boolean(asset.id) && (String(asset.site || "") !== String(form.site || "") || String(asset.area || "") !== String(form.area || ""));
 
   const addPart = (partId) => { if (partId && !form.criticalParts.some((p) => p.partId === partId)) set({ criticalParts: [...form.criticalParts, { partId, qtyRequired: 1, note: "" }] }); };
   const setPart = (index, patch) => set({ criticalParts: form.criticalParts.map((p, i) => (i === index ? { ...p, ...patch } : p)) });
@@ -8945,6 +8946,37 @@ function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCance
           })}
         </div>
       </Box>
+
+      {/* Traslados: sólo se muestra cuando hay algo que decir. Para el equipo que nunca se mueve —la
+          mayoría— la ficha queda exactamente igual que antes. */}
+      {moved && (
+        <Box className="space-y-2 border-sky-200 bg-sky-50/40 p-4">
+          <h4 className="flex items-center gap-1.5 text-xs font-semibold text-sky-800"><MapPin className="h-3.5 w-3.5" /> Cambió de ubicación</h4>
+          <p className="text-[11px] text-sky-700">
+            De <b>{[asset.site, asset.area].filter(Boolean).join(" · ") || "sin ubicación"}</b> a <b>{[form.site, form.area].filter(Boolean).join(" · ") || "sin ubicación"}</b>. Al guardar queda registrado.
+          </p>
+          <L label="Motivo del traslado (opcional)">
+            <input value={form.moveReason || ""} onChange={(e) => set({ moveReason: e.target.value })} placeholder="Ej. reasignado a la línea 3 por baja de equipo" className="u-input" />
+          </L>
+        </Box>
+      )}
+
+      {(form.locationHistory || []).length > 0 && (
+        <Box className="p-4">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Ubicaciones anteriores</h4>
+          <div className="space-y-1.5">
+            {form.locationHistory.map((move, index) => (
+              <div key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 p-2 text-xs">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                <span className="text-slate-800">{[move.site, move.area].filter(Boolean).join(" · ") || "Sin ubicación"}</span>
+                <span className="text-slate-400">hasta el {move.until}</span>
+                {move.byName && <span className="text-[10px] text-slate-400">· {move.byName}</span>}
+                {move.reason && <div className="w-full text-[11px] text-slate-500">{move.reason}</div>}
+              </div>
+            ))}
+          </div>
+        </Box>
+      )}
 
       <Box className="space-y-2 p-4">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Documentación del equipo</h4>
