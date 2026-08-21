@@ -6721,7 +6721,13 @@ function OrdersHome({ orders, ger, projects = [], branding = DEFAULT_BRANDING, o
   const [oDateFrom, setODateFrom] = useState("");
   const [oDateTo, setODateTo] = useState("");
   const filtered = orders
-    .filter((o) => (oStatus === "Todas" || o.status === oStatus) && (!oBillable || o.status === "Completada" || o.status === "Aprobada") && (!oUrgent || isUrgentOrder(o)) && (!oDateFrom || (o.date || "") >= oDateFrom) && (!oDateTo || (o.date || "") <= oDateTo) && `${o.id} ${o.client} ${o.site} ${o.service} ${o.equipo} ${o.tech || ""} ${o.category || ""} ${o.sintoma || ""} ${o.solucion || ""}`.toLowerCase().includes(oQ.toLowerCase()))
+    // "Facturables" exige además que la orden tenga algo que facturar. Antes miraba sólo el estado,
+    // así que una orden Aprobada marcada como no facturable —sin mano de obra facturable ni
+    // materiales cobrables, importe cero— aparecía igual en el filtro y se colaba en lo que hay que
+    // salir a cobrar. El estado dice si está lista; el importe, si corresponde cobrarla.
+    .filter((o) => (oStatus === "Todas" || o.status === oStatus)
+      && (!oBillable || ((o.status === "Completada" || o.status === "Aprobada") && orderTotals(o).total > 0))
+      && (!oUrgent || isUrgentOrder(o)) && (!oDateFrom || (o.date || "") >= oDateFrom) && (!oDateTo || (o.date || "") <= oDateTo) && `${o.id} ${o.client} ${o.site} ${o.service} ${o.equipo} ${o.tech || ""} ${o.category || ""} ${o.sintoma || ""} ${o.solucion || ""}`.toLowerCase().includes(oQ.toLowerCase()))
     .sort((a, b) => (isUrgentOrder(b) - isUrgentOrder(a)) || (isResponseOverdue(b) - isResponseOverdue(a)));
   return (
     <div>
