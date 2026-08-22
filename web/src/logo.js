@@ -7,4 +7,4 @@ export const LOGO_RATIO = 0.2609;
 // de la empresa usuaria y se muestra como una identidad secundaria.
 // Logo del producto en SVG: se dibuja nítido en cualquier tamaño y no depende de exportar
 // mapas de bits por resolución. El PNG queda como respaldo para los PDF, que no aceptan SVG.
-export const PRODUCT_LOGO = "/branding/miordengo-logo.svg";
+export const PRODUCT_LOGO = "/branding/miordengo-logo.png";

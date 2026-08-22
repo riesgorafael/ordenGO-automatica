@@ -4175,6 +4175,13 @@ app.get("*", (req, res) => {
      servir los índices de subdirectorio, que es de donde cuelga /software-gestion-servicios-tecnicos/. */
   const candidato = path.join(dist, req.path, "index.html");
   if (req.path !== "/" && candidato.startsWith(dist + path.sep) && fs.existsSync(candidato)) {
+    // La web comercial tiene una sola dirección. Si se la pide por el dominio de la aplicación
+    // —un enlace viejo, o alguien que guardó la ruta— se la manda a su dominio en vez de servir
+    // una segunda copia: dos direcciones para la misma página confunden y dividen el posicionamiento.
+    if (!esHostComercial(req) && req.path.startsWith("/software-gestion-servicios-tecnicos")) {
+      const resto = req.originalUrl.slice("/software-gestion-servicios-tecnicos".length) || "/";
+      return res.redirect(301, (process.env.SITE_URL || "https://miordengo.com") + (resto.startsWith("/") ? resto : "/" + resto));
+    }
     return res.sendFile(candidato);
   }
   // La web comercial responde en la raíz de sus dominios. Cualquier otra ruta —un enlace viejo a

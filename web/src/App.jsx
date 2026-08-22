@@ -2192,7 +2192,7 @@ function Login({ branding = DEFAULT_BRANDING, t = (text) => text, lang = "es", o
               </div>
             </div>
           </div>
-          <a href="/software-gestion-servicios-tecnicos/" className="mt-5 block text-center text-xs font-semibold text-cyan-700 hover:text-cyan-900 hover:underline">Conocé las funcionalidades de MiOrdenGo</a>
+          <a href="https://miordengo.com/" target="_blank" rel="noopener" className="mt-5 block text-center text-xs font-semibold text-cyan-700 hover:text-cyan-900 hover:underline">Conocé las funcionalidades de MiOrdenGo</a>
         </div>
       </div>
     </div>
