@@ -3887,7 +3887,23 @@ app.delete("/api/orders/:id", auth, requireRole("admin", "gerente"), async (req,
 const TASK_STATUSES = new Set(["Por hacer", "En progreso", "En revisión", "Hecho"]);
 const TASK_PRIORITIES = new Set(["Baja", "Media", "Alta", "Urgente"]);
 const TASK_TYPES = new Set(["Tarea", "Bug", "Mejora", "Historia"]);
-const TECH_TASK_PATCH = new Set(["title", "desc", "status", "priority", "type", "due", "participants"]);
+/* Pasos de una tarea. El avance del tablero sale de acá y no de un porcentaje escrito a mano:
+   un número que hay que acordarse de actualizar queda viejo en dos semanas y termina engañando,
+   que es peor que no tener barra. Tildar un paso es parte de hacer el trabajo, así que el avance
+   se mantiene solo.
+
+   El texto va sin formato a propósito: es una lista de acciones, no un documento. */
+const MAX_PASOS = 30;
+function normalizeChecklist(valor) {
+  if (!Array.isArray(valor)) return [];
+  return valor.slice(0, MAX_PASOS).map((paso) => ({
+    text: String(paso?.text ?? "").replace(/<[^>]*>/g, "").trim().slice(0, 180),
+    done: Boolean(paso?.done),
+  })).filter((paso) => paso.text);
+}
+
+// Los pasos los tilda quien hace el trabajo, así que un técnico puede modificarlos.
+const TECH_TASK_PATCH = new Set(["title", "desc", "status", "priority", "type", "due", "participants", "checklist"]);
 app.get("/api/tasks", auth, async (req, res) => {
   const since = req.query.updated_since ? new Date(String(req.query.updated_since)) : null;
   if (since && !Number.isFinite(since.getTime())) return res.status(400).json({ error: "updated_since inválido" });
@@ -3914,6 +3930,7 @@ app.post("/api/tasks", auth, requireProjectWrite, async (req, res) => {
   if (!(await tecCanProject(req.user, t.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   if (isTec(req.user.role)) t.assignee = req.user.id;
   if (!(await assigneeIsAllowed(t.assignee))) return res.status(400).json({ error: "Monitor Oficina no puede ser responsable de tareas" });
+  t.checklist = normalizeChecklist(t.checklist);
   t.status = TASK_STATUSES.has(t.status) ? t.status : "Por hacer";
   t.priority = TASK_PRIORITIES.has(t.priority) ? t.priority : "Media";
   t.type = TASK_TYPES.has(t.type) ? t.type : "Tarea";
@@ -3943,6 +3960,7 @@ app.patch("/api/tasks/:id", auth, requireProjectWrite, async (req, res) => {
   if (!(await tecCanProject(req.user, prev.project))) return res.status(403).json({ error: "Sin acceso a ese proyecto" });
   // Misma sanitización que en el alta: la edición es la otra vía por la que entra HTML.
   if (patch.desc !== undefined) patch.desc = sanitizeRichText(patch.desc);
+  if (patch.checklist !== undefined) patch.checklist = normalizeChecklist(patch.checklist);
   if (isTec(req.user.role)) patch = Object.fromEntries(Object.entries(patch).filter(([key]) => TECH_TASK_PATCH.has(key)));
   if (patch.project !== undefined && !(await tecCanProject(req.user, patch.project))) return res.status(403).json({ error: "Sin acceso al proyecto de destino" });
   if (patch.assignee !== undefined && !(await assigneeIsAllowed(patch.assignee))) return res.status(400).json({ error: "Monitor Oficina no puede ser responsable de tareas" });

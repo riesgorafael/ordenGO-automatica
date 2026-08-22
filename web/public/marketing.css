@@ -196,3 +196,7 @@
   .ui-gantt-row{grid-template-columns:4.4rem 1fr}
   .ui-gantt-today{left:calc(4.4rem + .4rem + 52%)}
 }
+
+/* Contador de comentarios en la tarjeta: existe en el tablero real y es de lo que más se mira,
+   porque señala qué tarea tiene una conversación abierta sin entrar una por una. */
+.ui-comments{font-size:.58rem;color:#53647c;background:#eef3f8;border-radius:99px;padding:0 .3rem}

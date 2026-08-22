@@ -8255,6 +8255,21 @@ function TaskColumn({ status, tasks, projects = [], userById, onOpen, onMove, on
             ? <Chip className="shrink-0 whitespace-nowrap bg-sky-600 font-semibold text-white ring-sky-700/20" title={detail}><MessageSquare className="h-3 w-3" />Nuevo comentario</Chip>
             : <Chip className="shrink-0 whitespace-nowrap bg-sky-50 text-sky-700 ring-sky-600/20" title={detail}><MessageSquare className="h-3 w-3" />{comments.length}</Chip>;
         })()}</div><h4 className="mt-1.5 text-sm font-semibold leading-snug text-slate-900">{task.title}</h4><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400"><span className="font-mono">{task.id}</span>{task.due && <span className="inline-flex items-center gap-0.5"><Calendar className="h-3 w-3" />{dueLabel(task.due)}</span>}{task.status !== "Hecho" && task._updatedAt && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{age === 0 ? "Actualizada hoy" : `Hace ${age}d`}</span>}</div></button>
+        {(() => {
+          const avance = taskProgress(task);
+          if (!avance) return null;
+          return (
+            <div className="mt-2" title={`${avance.hechos} de ${avance.total} pasos completados`}>
+              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                <span>{avance.hechos}/{avance.total} pasos</span>
+                <span className={avance.pct === 100 ? "font-semibold text-emerald-600" : ""}>{avance.pct}%</span>
+              </div>
+              <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                <div className={`h-full rounded-full transition-[width] duration-300 ${avance.pct === 100 ? "bg-emerald-500" : "bg-brand-500"}`} style={{ width: `${avance.pct}%` }} />
+              </div>
+            </div>
+          );
+        })()}
         <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3"><div className="flex min-w-0 items-center gap-1.5"><Avatar user={userById(task.assignee)} size={24} /><Chip className={`${prioMeta[task.priority]} ring-1 ring-inset ring-black/5`}><Flag className="h-3 w-3" />{task.priority}</Chip></div>{!readOnly && <div className="flex gap-1"><button onClick={() => onMove(task.id, -1)} disabled={index === 0} aria-label={`Mover ${task.title} hacia atrás`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button><button onClick={() => onMove(task.id, 1)} disabled={index === T_STATUS.length - 1} aria-label={`Avanzar ${task.title}`} className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button></div>}</div>
       </article>; })}
     </div>
@@ -8321,6 +8336,17 @@ function SubprojectStrip({ parent, items, projects, tasks, active, onSelect }) {
       </div>
     </div>
   );
+}
+
+/* Avance de una tarea a partir de sus pasos. Devuelve null cuando no tiene ninguno: sin pasos no
+   hay nada que medir, y mostrar 0% en una tarea recién creada la haría parecer atrasada. Una tarea
+   marcada como Hecho cuenta como completa aunque queden pasos sin tildar —el estado manda sobre la
+   lista, no al revés—. */
+function taskProgress(task) {
+  const pasos = Array.isArray(task?.checklist) ? task.checklist : [];
+  if (!pasos.length) return null;
+  const hechos = task?.status === "Hecho" ? pasos.length : pasos.filter((paso) => paso?.done).length;
+  return { hechos, total: pasos.length, pct: Math.round((hechos / pasos.length) * 100) };
 }
 
 function Board({ tasks, projects = [], userById, onOpen, onMove, onMoveToStatus, readOnly = false, tvMode = false }) {
@@ -8470,6 +8496,55 @@ function TaskModal({ task, me, users, projects, canAssign, canDelete, readOnly =
         <div className="space-y-3">
           <input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={readOnly} placeholder="Título de la tarea" className="u-input text-sm font-medium disabled:bg-slate-50" />
           <RichTextEditor value={f.desc} onChange={(html) => set({ desc: html })} disabled={readOnly} placeholder="Descripción / criterios" />
+          {/* Pasos de la tarea. De acá sale la barra de avance del tablero: se tilda lo que se va
+              haciendo y el porcentaje se actualiza solo, sin que nadie tenga que mantener un número. */}
+          {(() => {
+            const pasos = Array.isArray(f.checklist) ? f.checklist : [];
+            const hechos = pasos.filter((paso) => paso.done).length;
+            const cambiar = (index, patch) => set({ checklist: pasos.map((paso, i) => (i === index ? { ...paso, ...patch } : paso)) });
+            const quitar = (index) => set({ checklist: pasos.filter((_, i) => i !== index) });
+            const agregar = () => set({ checklist: [...pasos, { text: "", done: false }] });
+            return (
+              <div className="mt-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-slate-500">Pasos</span>
+                  {pasos.length > 0 && <span className="text-[11px] text-slate-400">{hechos} de {pasos.length}</span>}
+                </div>
+                {pasos.length > 0 && (
+                  <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div className={`h-full rounded-full transition-[width] duration-300 ${hechos === pasos.length ? "bg-emerald-500" : "bg-brand-500"}`} style={{ width: `${Math.round((hechos / pasos.length) * 100)}%` }} />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  {pasos.map((paso, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!paso.done} disabled={readOnly}
+                        onChange={(event) => cambiar(index, { done: event.target.checked })}
+                        aria-label={`Marcar "${paso.text || "paso"}" como hecho`}
+                        className="h-4 w-4 shrink-0 accent-brand-500" />
+                      <input value={paso.text} disabled={readOnly}
+                        onChange={(event) => cambiar(index, { text: event.target.value })}
+                        placeholder="Qué hay que hacer"
+                        className={`u-input py-1.5 text-sm ${paso.done ? "text-slate-400 line-through" : ""}`} />
+                      {!readOnly && (
+                        <button type="button" onClick={() => quitar(index)} aria-label="Quitar paso"
+                          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {!readOnly && pasos.length < 30 && (
+                  <button type="button" onClick={agregar}
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                    <Plus className="h-3.5 w-3.5" /> Agregar paso
+                  </button>
+                )}
+                {pasos.length === 0 && <p className="text-[11px] text-slate-400">Desglosá la tarea en pasos y el avance aparece solo en el tablero.</p>}
+              </div>
+            );
+          })()}
           <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2"><L label="Proyecto" help={editingExisting ? "Podés mover la tarea a otro proyecto. Conserva su ID original." : undefined}><select value={f.project} onChange={(e) => set({ project: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{projects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></L><L label="Responsable"><select value={f.assignee} onChange={(e) => set({ assignee: e.target.value })} disabled={readOnly} className="u-input disabled:bg-slate-50">{assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L></div>
           <L label="Participantes (opcional)" help="Otras personas que colaboran en la tarea además del responsable.">
             <div className="flex flex-wrap gap-1.5">
