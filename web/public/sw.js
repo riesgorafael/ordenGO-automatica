@@ -52,9 +52,13 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, {
     body: payload.body || "",
     icon: "/branding/ordengo-mark-192.png",
-    badge: "/branding/ordengo-mark-192.png",
+    badge: "/branding/notification-badge.png",
     // tag agrupa: varios avisos de la misma tarea reemplazan al anterior en lugar de apilarse.
     tag: payload.tag || undefined,
+    // Con tag, renotify vuelve a avisar al reemplazar; sin esto el aviso nuevo entra en silencio.
+    renotify: Boolean(payload.tag),
+    // El texto completo queda accesible al desplegar la notificación, aunque el cuerpo se corte.
+    body: payload.body || "",
     data: { url: payload.url || "/" },
   }));
 });

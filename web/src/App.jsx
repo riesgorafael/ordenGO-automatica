@@ -653,6 +653,20 @@ if (typeof window !== "undefined") window.matchMedia("(prefers-reduced-motion: r
 const Bar = RechartsBar;
 const Pie = RechartsPie;
 
+/* Momento de un aviso, en corto. Hoy se muestra la hora y los días anteriores la fecha: dos
+   resúmenes diarios seguidos suelen decir lo mismo, y sin esto parecen el mismo aviso duplicado. */
+function notifWhen(at) {
+  if (!at) return "";
+  const fecha = new Date(at);
+  if (Number.isNaN(fecha.getTime())) return "";
+  const hoy = new Date();
+  const mismoDia = fecha.toDateString() === hoy.toDateString();
+  const ayer = new Date(hoy); ayer.setDate(ayer.getDate() - 1);
+  if (mismoDia) return "Hoy " + fecha.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (fecha.toDateString() === ayer.toDateString()) return "Ayer " + fecha.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return fecha.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
+}
+
 const Chip = ({ children, className = "", ...rest }) => (<span {...rest} className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>{children}</span>);
 const Box = ({ children, className = "", ...rest }) => (<div {...rest} className={`motion-card rounded-xl border border-slate-200 bg-white ${className}`}>{children}</div>);
 const Panel = ({ title, action, children }) => (<div className="motion-card h-full rounded-xl border border-slate-200 bg-white p-4"><div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold leading-5 text-slate-900 sm:min-h-10">{title}</h3>{action}</div>{children}</div>);
@@ -1011,6 +1025,8 @@ export default function App() {
   const [pSub, setPSub] = useState("");
   const [prefill, setPrefill] = useState(null);
   const [orderPrefill, setOrderPrefill] = useState(null);
+  // Señal para que Finanzas se abra mostrando las facturas cuando se llega desde el aviso de cobranzas.
+  const [financeFocus, setFinanceFocus] = useState(0);
   const [accessProj, setAccessProj] = useState(null); // proyecto cuyo acceso se está gestionando
   const [dupProj, setDupProj] = useState(null); // proyecto a duplicar
   const [whiteboardProjectFilter, setWhiteboardProjectFilter] = useState(""); // al saltar desde Proyectos a Notas, filtra por ese proyecto
@@ -1568,9 +1584,28 @@ export default function App() {
   const unread = notifs.filter((n) => !n.read).length;
   const markRead = async (id) => { setNotifs((p) => p.map((n) => (n.id === id ? { ...n, read: true } : n))); try { await api.readNotification(id); } catch {} };
   const markAllRead = async () => { setNotifs((p) => p.map((n) => ({ ...n, read: true }))); try { await api.readAllNotifications(); } catch {} };
+  /* Cada aviso lleva a donde se resuelve. Antes sólo navegaban los de tarea: el resumen diario se
+     creaba sin enlace, así que enterarse de que había facturas vencidas no daba forma de ver
+     cuáles. Los destinos además dejan el filtro puesto, para no repetir la búsqueda a mano. */
   const openNotif = (n) => {
     markRead(n.id); setNotifOpen(false);
-    if (n.link && n.link.startsWith("task:")) { const t = tasks.find((x) => x.id === n.link.slice(5)); if (t) { navigateModule("projects"); setPTab("board"); setEditing(t); } }
+    const link = n.link || "";
+    if (link.startsWith("task:")) {
+      const t = tasks.find((x) => x.id === link.slice(5));
+      if (t) { navigateModule("projects"); setPTab("board"); setEditing(t); }
+      return;
+    }
+    if (link === "tasks:overdue" || link === "tasks:soon") {
+      navigateModule("projects"); setPTab("board"); setPMine(true);
+      return;
+    }
+    if (link === "finances:overdue" || link === "finances:upcoming") {
+      // Cuentas por cobrar, que es donde figuran las facturas emitidas y su saldo.
+      navigateModule("finances"); setFinanceFocus((n) => n + 1);
+      return;
+    }
+    if (link === "budgets:followup") { navigateModule("budgets"); return; }
+    if (link === "purchases:late") { navigateModule("purchaseOrders"); return; }
   };
 
   /* Comentarios */
@@ -1758,7 +1793,7 @@ export default function App() {
                     {notifs.length === 0 && <div className="px-3 py-6 text-center text-xs text-slate-400">Sin novedades</div>}
                     {notifs.map((n) => (
                       <button key={n.id} onClick={() => openNotif(n)} className={`block w-full border-b border-slate-50 px-3 py-2 text-left text-xs hover:bg-slate-50 ${n.read ? "text-slate-500" : "font-medium text-slate-800"}`}>
-                        <div className="flex items-start gap-2">{!n.read && <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />}<span className="flex-1">{n.text}</span></div>
+                        <div className="flex items-start gap-2">{!n.read && <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />}<span className="min-w-0 flex-1"><span className="block">{n.text}</span><span className="mt-0.5 flex items-center gap-1 text-[10px] font-normal text-slate-400">{notifWhen(n.at)}{n.link && <ChevronRight className="h-3 w-3" />}</span></span></div>
                       </button>
                     ))}
                   </div>
@@ -1841,7 +1876,7 @@ export default function App() {
         {activeModule === "inicio" && <MiDia me={me} tasks={tasks} orders={orders} purchaseOrders={purchaseOrders} finances={finances} budgets={budgets} projects={projects} userById={userById} onOpenTask={(t) => { navigateModule("projects"); setPTab("board"); setEditing(t); }} onOpenOrder={setODetail} onGoToPurchaseOrders={() => navigateModule("purchaseOrders")} onGoToBudgets={() => navigateModule("budgets")} onGoToProject={(projectId) => { navigateModule("projects"); setPTab("board"); setPProj(projectId); }} ger={isMgr} />}
         {activeModule === "panel" && isMgr && <Dashboard orders={orders} users={users} tasks={tasks} parts={parts} budgets={budgets} branding={branding} onOpen={setODetail} onGo={(destination) => { if (destination === "billing") { navigateModule("orders"); setOTab("list"); setOBillable(true); } else if (destination === "budgets") navigateModule("budgets"); else if (destination === "inventory") navigateModule("inventory"); else if (destination === "projects") { navigateModule("projects"); setPTab("board"); setPStale(true); } }} />}
         {activeModule === "budgets" && isMgr && <BudgetsModule budgets={budgets} finances={finances} clients={clients} parts={parts} projects={projects} users={users} orders={orders} branding={branding} onOpenOrder={setODetail} me={me} createSignal={budgetCreateSignal} onConsumeCreate={() => setBudgetCreateSignal(0)} onSave={saveBudget} onDelete={deleteBudget} onDuplicate={duplicateBudget} onConvert={convertBudget} onCreateOrder={createOrderFromBudget} onInvoice={saveFinance} />}
-        {activeModule === "finances" && isMgr && <FinanceModule movements={finances} projects={projects} budgets={budgets} clients={clients} purchaseOrders={purchaseOrders} branding={branding} me={me} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
+        {activeModule === "finances" && isMgr && <FinanceModule focusSignal={financeFocus} onConsumeFocus={() => setFinanceFocus(0)} movements={finances} projects={projects} budgets={budgets} clients={clients} purchaseOrders={purchaseOrders} branding={branding} me={me} createSignal={financeCreateSignal} onConsumeCreate={() => setFinanceCreateSignal(0)} onSave={saveFinance} onLoad={loadFinance} onDelete={deleteFinance} />}
         {activeModule === "inventory" && isMgr && <Inventory parts={parts} orders={orders} assets={assets} onAdd={addPart} onPatch={updatePart} onRemove={removePart} onErr={err} />}
         {activeModule === "orders" && (
           <>
@@ -3885,7 +3920,7 @@ function FinanceEntryModal({
   ), document.body);
 }
 
-function FinanceModule({ movements, projects, budgets, clients, purchaseOrders = [], branding, me, createSignal, onConsumeCreate, onSave, onLoad, onDelete }) {
+function FinanceModule({ movements, projects, budgets, clients, purchaseOrders = [], branding, me, createSignal, onConsumeCreate, focusSignal = 0, onConsumeFocus, onSave, onLoad, onDelete }) {
   const [period, setPeriod] = useState(currentMonth());
   const [projectFilter, setProjectFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -3913,6 +3948,13 @@ function FinanceModule({ movements, projects, budgets, clients, purchaseOrders =
     if (full) setInvoiceDocs(full);
   };
   useEffect(() => { if (createSignal > 0) { setNewKind("expense"); setIsDuplicate(false); setEditor({ mode: "new" }); onConsumeCreate(); } }, [createSignal, onConsumeCreate]);
+  // Llegando desde el aviso de cobranzas: se deja el listado filtrado en facturas, sin texto de
+  // búsqueda ni proyecto, para que las facturas se vean sin tener que armar el filtro a mano.
+  // El período se deja como está: alimenta los gráficos y los cálculos del módulo, y sólo acepta
+  // un mes concreto en formato AAAA-MM.
+  useEffect(() => {
+    if (focusSignal > 0) { setKindFilter("invoice"); setQuery(""); setProjectFilter("all"); onConsumeFocus?.(); }
+  }, [focusSignal, onConsumeFocus]);
   const closeEditor = () => { setEditor(null); setIsDuplicate(false); };
   // Duplicar abre el formulario precargado pero sin id, así se guarda como movimiento nuevo.
   // Se descarta todo lo que es propio del original y no debe repetirse: el número de comprobante,
@@ -8094,7 +8136,7 @@ function NewOrder({ ger, showInternal = ger, me, clients, users = [], parts = []
 }
 const Section = ({ title, children }) => <div className="motion-card rounded-xl border border-slate-200 bg-white p-4"><h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>{children}</div>;
 function ServiceTimeline({ technical, active, elapsedMs, billableHours, minimumApplied, showBilling = false, technicians, errors = [], disabled = false, onAction, onDowntime, onBillableWait, onBillableWaitReason }) {
-  const stamp = (value) => value ? new Date(value).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "Pendiente";
+  const stamp = (value) => value ? new Date(value).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false }) : "Pendiente";
   const responseMs = technical.arrivalAt && technical.reportedAt ? new Date(technical.arrivalAt) - new Date(technical.reportedAt) : 0;
   const onSiteMs = technical.completedAt && technical.arrivalAt ? new Date(technical.completedAt) - new Date(technical.arrivalAt) : 0;
   const [pausePromptOpen, setPausePromptOpen] = useState(false);

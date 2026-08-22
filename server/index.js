@@ -4132,20 +4132,36 @@ async function runOrganizationDailyDigest(organizationId) {
     const mine = pending.filter((task) => task.assignee === user.id);
     const overdue = mine.filter((task) => task.due < today).length;
     const dueSoon = mine.filter((task) => task.due >= today && task.due <= soon).length;
-    const parts = [];
-    if (overdue) parts.push(`${overdue} tarea(s) vencida(s)`);
-    if (dueSoon) parts.push(`${dueSoon} por vencer en 4 días`);
-    // Lo comercial y las compras solo le importan a quien puede accionarlas.
+
+    /* Un aviso por tema, cada uno con su destino. Antes era un único resumen que juntaba tareas,
+       presupuestos, compras y cobranzas en una sola línea y sin enlace: al tocarlo no llevaba a
+       ningún lado, y no había forma de ver cuáles eran las facturas vencidas.
+
+       El id se arma con el día y el tema, así que si el resumen se ejecuta más de una vez —un
+       reinicio del servidor, por ejemplo— la fila ya existe y no se duplica. Eso es lo que hacía
+       aparecer el mismo texto tres o cuatro veces en la campana. */
+    const avisos = [];
+    if (overdue) avisos.push({ tema: "tareas-vencidas", texto: `${overdue} tarea(s) vencida(s).`, link: "tasks:overdue" });
+    if (dueSoon) avisos.push({ tema: "tareas-proximas", texto: `${dueSoon} tarea(s) por vencer en 4 días.`, link: "tasks:soon" });
     if (["admin", "gerente"].includes(user.role)) {
       const followUps = budgets.filter((budget) => !["Aprobado", "Facturado", "Pagado", "Rechazado"].includes(budget.stage) && budget.nextFollowUp && budget.nextFollowUp <= today).length;
       const latePurchases = purchaseOrders.filter((po) => po.dueDate && po.dueDate < today && !["Recibida", "Cancelada"].includes(po.stage)).length;
-      if (followUps) parts.push(`${followUps} seguimiento(s) de presupuesto atrasado(s)`);
-      if (latePurchases) parts.push(`${latePurchases} orden(es) de compra demorada(s)`);
-      if (overdueInvoices.length) parts.push(`${overdueInvoices.length} factura(s) con el cobro vencido`);
-      if (upcomingInvoices.length) parts.push(`${upcomingInvoices.length} factura(s) por cobrar en 7 días (USD ${upcomingInvoicesTotal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+      if (followUps) avisos.push({ tema: "presupuestos", texto: `${followUps} seguimiento(s) de presupuesto atrasado(s).`, link: "budgets:followup" });
+      if (latePurchases) avisos.push({ tema: "compras", texto: `${latePurchases} orden(es) de compra demorada(s).`, link: "purchases:late" });
+      if (overdueInvoices.length) avisos.push({ tema: "cobro-vencido", texto: `${overdueInvoices.length} factura(s) con el cobro vencido.`, link: "finances:overdue" });
+      if (upcomingInvoices.length) avisos.push({ tema: "cobro-proximo", texto: `${upcomingInvoices.length} factura(s) por cobrar en 7 días (USD ${upcomingInvoicesTotal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}).`, link: "finances:upcoming" });
     }
-    if (!parts.length) continue; // a quien no tiene nada pendiente no se le escribe
-    await notify(user.id, `Resumen de hoy: ${parts.join(" · ")}.`, null);
+    if (!avisos.length) continue; // a quien no tiene nada pendiente no se le escribe
+
+    for (const aviso of avisos) {
+      try {
+        await pool.query(
+          "INSERT INTO notifications(id,user_id,text,link,organization_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT (organization_id,id) DO NOTHING",
+          [`resumen-${today}-${aviso.tema}-${user.id}`, user.id, aviso.texto, aviso.link, organizationId],
+        );
+      } catch (error) { console.error("No se pudo crear el aviso del resumen:", error.message); }
+      await sendPush(user.id, aviso.texto, aviso.link).catch(() => {});
+    }
     sent++;
   }
   console.log(`Resumen diario ${today}: ${sent} notificación(es).`);
