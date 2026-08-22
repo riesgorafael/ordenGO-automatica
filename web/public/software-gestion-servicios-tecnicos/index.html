@@ -13,6 +13,7 @@
     <link rel="canonical" href="https://www.miordengo.com/software-gestion-servicios-tecnicos/" />
     <link rel="icon" type="image/svg+xml" href="/branding/miordengo-icon.svg" />
     <link rel="stylesheet" href="/marketing.css" />
+    <script src="/sin-service-worker.js" defer></script>
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="es_AR" />
     <meta property="og:site_name" content="MiOrdenGo" />
@@ -60,6 +61,7 @@
       </a>
       <nav aria-label="Navegación principal">
         <a href="#funcionalidades">Funcionalidades</a>
+        <a href="#capturas">Cómo se ve</a>
         <a href="#sectores">Para quién</a>
         <a href="#implementacion">Implementación</a>
         <a class="button button-small" href="https://app.miordengo.com/">Ingresar a MiOrdenGo</a>
@@ -103,6 +105,89 @@
           <article><h3>Presupuestos</h3><p>Gestioná el pipeline comercial, costos, márgenes, aprobaciones, órdenes de compra y conversión a proyecto.</p></article>
           <article><h3>Inventario</h3><p>Controlá materiales, costos, precios, stock mínimo y consumos vinculados a órdenes y proyectos.</p></article>
           <article><h3>Finanzas</h3><p>Relacioná facturación, cobros y gastos con clientes, presupuestos y proyectos para medir resultados reales.</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="capturas">
+        <p class="eyebrow">Así se ve en el día a día</p>
+        <h2>Lo que ve tu equipo, en la oficina y en planta</h2>
+        <p class="section-lead">Ejemplos con datos de demostración. Las empresas, equipos y personas que aparecen son ficticios.</p>
+
+        <div class="shots">
+          <figure class="shot">
+            <div class="shot-frame">
+              <div class="shot-bar"><span></span><span></span><span></span></div>
+              <div class="shot-body">
+                <div class="ui-row ui-row-head">
+                  <span class="ui-id">OT-PNT-26-014</span>
+                  <span class="ui-chip ui-chip-violet">Aprobada</span>
+                  <span class="ui-amount">USD 1.840,00</span>
+                </div>
+                <div class="ui-client">Molinos del Litoral S.A.</div>
+                <div class="ui-meta">Planta Norte · Mantenimiento correctivo · 2026-08-14</div>
+                <div class="ui-meta">Equipo: Compresor de tornillo 75 kW</div>
+                <div class="ui-fields">
+                  <div><b>Síntoma</b><span>Corte por alta temperatura de descarga</span></div>
+                  <div><b>Diagnóstico</b><span>Radiador obstruido y termostato fuera de rango</span></div>
+                  <div><b>Solución</b><span>Limpieza de radiador y reemplazo de termostato</span></div>
+                </div>
+                <div class="ui-foot">
+                  <span class="ui-tick">Firma del técnico</span>
+                  <span class="ui-tick">Conformidad del cliente</span>
+                  <span class="ui-tick">3 fotos de evidencia</span>
+                </div>
+              </div>
+            </div>
+            <figcaption>Orden de trabajo con diagnóstico, evidencia y conformidad firmada en el teléfono.</figcaption>
+          </figure>
+
+          <figure class="shot">
+            <div class="shot-frame">
+              <div class="shot-bar"><span></span><span></span><span></span></div>
+              <div class="shot-body">
+                <div class="ui-kpis">
+                  <div><small>Órdenes activas</small><b>12</b></div>
+                  <div><small>Por facturar</small><b>5</b></div>
+                  <div><small>Sin firma</small><b class="ui-warn">2</b></div>
+                  <div><small>Cobro vencido</small><b class="ui-bad">3</b></div>
+                </div>
+                <div class="ui-bars" role="img" aria-label="Carga de trabajo por responsable">
+                  <div><span>M. Sosa</span><i style="width:82%"></i><em>9</em></div>
+                  <div><span>J. Ferreyra</span><i style="width:64%"></i><em>7</em></div>
+                  <div><span>L. Ibarra</span><i style="width:45%"></i><em>5</em></div>
+                  <div><span>D. Pereyra</span><i style="width:27%"></i><em>3</em></div>
+                </div>
+              </div>
+            </div>
+            <figcaption>Panel con la carga por responsable y lo que necesita atención hoy.</figcaption>
+          </figure>
+
+          <figure class="shot">
+            <div class="shot-frame">
+              <div class="shot-bar"><span></span><span></span><span></span></div>
+              <div class="shot-body">
+                <div class="ui-row ui-row-head">
+                  <span class="ui-tag">CT-PN-COMP-01</span>
+                  <span class="ui-chip ui-chip-red">Criticidad alta</span>
+                </div>
+                <div class="ui-client">Compresor de tornillo 75 kW</div>
+                <div class="ui-meta">Planta Norte · Sala de compresores</div>
+                <div class="ui-asset">
+                  <div class="ui-qr" role="img" aria-label="Etiqueta QR del equipo"></div>
+                  <div>
+                    <div class="ui-code">AR-9N3XGXT3</div>
+                    <div class="ui-meta">Etiqueta pegada al equipo</div>
+                  </div>
+                </div>
+                <div class="ui-alert">La misma causa se repitió 3 veces: rodamiento desgastado</div>
+                <div class="ui-foot">
+                  <span class="ui-tick">Preventivo cada 6 meses</span>
+                  <span class="ui-tick">Repuestos críticos definidos</span>
+                </div>
+              </div>
+            </div>
+            <figcaption>Ficha de activo: se escanea la etiqueta y aparece su historial completo.</figcaption>
+          </figure>
         </div>
       </section>
 

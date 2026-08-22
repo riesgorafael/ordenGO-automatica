@@ -4859,7 +4859,7 @@ function BudgetEditor({ budget, clients, parts, me, orders = [], branding, onOpe
           {commerciallyLocked && <div className="mb-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><div><b className="block">Estimación comercial cerrada</b><span>La venta, cantidades, tarifas, costos base y margen objetivo quedaron fijados al aprobar el presupuesto.</span></div></div>}
           <fieldset disabled={commerciallyLocked} className={commerciallyLocked ? "opacity-75" : ""}>
           <p className="text-[11px] leading-relaxed text-slate-500">Las horas de cada perfil toman automáticamente su costo interno. La tarifa de venta se calcula con el margen objetivo; materiales y repuestos toman venta y costo desde Inventario.</p>
-          <div className="my-3 grid grid-cols-1 gap-2 rounded-xl border border-brand-100 bg-brand-50 p-3 sm:grid-cols-[12rem_minmax(0,1fr)]"><L label="Margen objetivo (%)"><input type="number" min="0" max="100" step="1" value={form.targetMargin ?? 35} onChange={(event) => changeTargetMargin(event.target.value)} className="u-input bg-white" /></L><div className="self-center text-xs text-brand-800"><b className="block">Tarifa sugerida = costo ÷ (1 − margen)</b><span className="text-[11px] text-brand-700">Puedes ajustar la tarifa de venta de una línea sin modificar su costo interno.</span></div></div>
+          <div className="my-3 grid grid-cols-1 gap-2 rounded-xl border border-brand-100 bg-brand-50 p-3 sm:grid-cols-[12rem_minmax(0,1fr)]"><L label="Margen objetivo (%)"><input type="number" min="0" max="100" step="1" value={form.targetMargin ?? 35} onChange={(event) => changeTargetMargin(event.target.value)} className="u-input bg-white" /></L><div className="self-center text-xs text-brand-700"><b className="block">Tarifa sugerida = costo ÷ (1 − margen)</b><span className="text-[11px] text-brand-700">Puedes ajustar la tarifa de venta de una línea sin modificar su costo interno.</span></div></div>
           <datalist id="budget-parts">{parts.map((part) => <option key={part.id} value={part.name} />)}</datalist>
           <div className="space-y-2">{form.items.map((item, index) => { const labor = LABOR_TYPES.includes(item.type); const lineSale = (Number(item.qty) || 0) * (Number(item.unitPrice) || 0); const lineCost = (Number(item.qty) || 0) * (Number(item.unitCost) || 0); return <div key={index} className="rounded-lg border border-slate-200 p-2.5">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_auto]">
@@ -8769,21 +8769,21 @@ function PushInvite({ onErr }) {
   if (!visible) return null;
   const dismiss = () => { localStorage.setItem("og_push_invite_dismissed", "1"); setVisible(false); };
   return (
-    <div className="motion-banner mx-auto mt-3 flex max-w-6xl items-start gap-3 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-900 sm:mx-4">
+    <div className="motion-banner mx-auto mt-3 flex max-w-6xl items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-800 shadow-sm sm:mx-4">
       <Bell className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
       <div className="min-w-0 flex-1">
-        <p className="font-medium">Activá los avisos en este teléfono</p>
-        <p className="mt-0.5 text-xs text-brand-800/80">Te llegan los comentarios y las órdenes asignadas aunque tengas la aplicación cerrada.</p>
+        <p className="font-semibold text-slate-900">Activá los avisos en este teléfono</p>
+        <p className="mt-0.5 text-xs text-slate-600">Te llegan los comentarios y las órdenes asignadas aunque tengas la aplicación cerrada.</p>
       </div>
       <div className="flex shrink-0 gap-1.5">
-        <button onClick={dismiss} className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100">Ahora no</button>
+        <button onClick={dismiss} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Ahora no</button>
         <button disabled={busy} onClick={async () => {
           setBusy(true);
           // El clic es el gesto que el navegador exige para dejar mostrar el pedido de permiso.
           try { await enablePush(); setVisible(false); }
           catch (e) { onErr?.(e); dismiss(); }
           setBusy(false);
-        }} className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-400 disabled:opacity-50">Activar</button>
+        }} className="rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50">Activar</button>
       </div>
     </div>
   );

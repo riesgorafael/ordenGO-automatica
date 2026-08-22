@@ -1,19 +1,40 @@
 const CACHE = "ordengo-shell-v1";
 const SHELL = ["/", "/manifest.webmanifest"];
 
+/* Dominios donde vive la web comercial y no la aplicación. Cuando estos dominios servían la
+   aplicación quedó registrado acá un service worker, y sigue controlando el sitio aunque el
+   contenido haya cambiado: servía el armazón cacheado de la aplicación, que sin su JavaScript es
+   una pantalla en blanco. Al detectarlo, el worker se da de baja solo y limpia lo que guardó, así
+   el visitante se libera sin tener que borrar datos del navegador a mano. */
+const HOSTS_COMERCIALES = ["miordengo.com", "www.miordengo.com"];
+const esSitioComercial = () => HOSTS_COMERCIALES.includes(self.location.hostname);
+
+async function darseDeBaja() {
+  const nombres = await caches.keys();
+  await Promise.all(nombres.map((nombre) => caches.delete(nombre)));
+  await self.registration.unregister();
+  const ventanas = await self.clients.matchAll({ type: "window" });
+  // Se recarga cada pestaña para que tome el contenido real del servidor.
+  for (const ventana of ventanas) { try { ventana.navigate(ventana.url); } catch {} }
+}
+
 self.addEventListener("install", (event) => {
+  if (esSitioComercial()) { self.skipWaiting(); return; }
   event.waitUntil(caches.open(CACHE)
     .then((cache) => cache.addAll(SHELL.map((ruta) => new Request(ruta, { cache: "reload" }))))
     .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
+  if (esSitioComercial()) { event.waitUntil(darseDeBaja()); return; }
   event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
+  // En la web comercial el worker no interviene en nada mientras se da de baja.
+  if (esSitioComercial()) return;
   if (request.method !== "GET" || url.pathname.startsWith("/api/")) return;
   // Todo lo de otros dominios se deja pasar sin tocarlo (Google Fonts, el CDN de Tesseract). Dos
   // motivos: el fetch() que haría el worker cuenta como connect-src para la CSP —no como style-src,
