@@ -1973,11 +1973,15 @@ export default function App() {
               if (pTab === "reports" && (isMgr || isMonitor)) return <Reports tasks={vis} users={users} projects={projects} proj={pProj} me={me} branding={branding} whiteboardNotes={whiteboardNotes} reportSignal={projectReportSignal} onConsumeReport={() => setProjectReportSignal(0)} onOpenNotes={(projectId) => { navigateModule("whiteboard"); setWhiteboardProjectFilter(projectId); }} />;
               if (activeProjectView === "calendar") return <WorkCalendar tasks={isMgr || isMonitor ? vis : vis.filter((task) => task.assignee === me.id)} orders={isOffice ? [] : orders.filter((order) => isMgr || order.tech === me.name || order.assignedTechs?.includes(me.name))} projects={projects} userById={userById} onOpenTask={setEditing} onOpenOrder={setODetail} showOrders={pProj === "all"} />;
               if (isMgr && activeProjectView === "gantt" && pProj !== "all") return <GanttChart projectId={pProj} projectName={projects.find((p) => p.id === pProj)?.name || pProj} users={users} branding={branding} toast={toast} onConvertToTask={convertGanttTaskToProjectTask} />;
+              const proyectoActivo = pProj !== "all" ? projects.find((p) => p.id === pProj) : null;
+              const cabecera = proyectoActivo && activeProjectView === "board"
+                ? <ProjectBoardHeader project={proyectoActivo} tasks={tasks} clients={clients} />
+                : null;
               const strip = subChildren.length && activeProjectView === "board" ? <SubprojectStrip parent={projects.find((p) => p.id === pProj)} items={subChildren} projects={projects} tasks={tasks} active={openSub} onSelect={setPSub} /> : null;
-              if (isMonitor) return <>{strip}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} /></>;
-              if (isMgr) return <>{strip}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
+              if (isMonitor) return <>{cabecera}{strip}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} readOnly tvMode={tvMode} /></>;
+              if (isMgr) return <>{cabecera}{strip}<Board tasks={vis} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
               const technicianTasks = techTaskView === "work" ? vis.filter((task) => task.assignee === me.id) : vis;
-              return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <>{strip}<TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
+              return techTaskView === "work" ? <FieldTaskList tasks={technicianTasks} projects={projects} onOpen={setEditing} onMove={moveTask} /> : <>{cabecera}{strip}<TechnicianBoard tasks={technicianTasks} projects={projects} userById={userById} onOpen={setEditing} onMove={moveTask} onMoveToStatus={moveTaskToStatus} /></>;
             })()}
           </>
           ); })()}
@@ -8347,6 +8351,54 @@ function taskProgress(task) {
   if (!pasos.length) return null;
   const hechos = task?.status === "Hecho" ? pasos.length : pasos.filter((paso) => paso?.done).length;
   return { hechos, total: pasos.length, pct: Math.round((hechos / pasos.length) * 100) };
+}
+
+/* Encabezado del proyecto sobre el tablero. Antes las columnas arrancaban sin contexto: al mirar el
+   tablero se veían las tareas pero no de qué proyecto eran, para qué cliente, ni cómo venía.
+
+   El avance usa el mismo criterio que "Progreso por proyecto" del panel —tareas en Hecho sobre el
+   total— a propósito: dos números distintos para lo mismo en dos pantallas hacen que no se confíe
+   en ninguno. */
+function ProjectBoardHeader({ project, tasks, clients = [] }) {
+  const resumen = useMemo(() => {
+    const propias = tasks.filter((task) => task.project === project.id);
+    const hechas = propias.filter((task) => task.status === "Hecho").length;
+    return {
+      total: propias.length,
+      hechas,
+      pct: propias.length ? Math.round((hechas / propias.length) * 100) : 0,
+      vencidas: propias.filter(isOverdue).length,
+    };
+  }, [tasks, project.id]);
+
+  const cliente = project.client || clients.find((c) => c.id === project.clientId)?.name || "";
+  const ubicacion = [cliente, project.site].filter(Boolean).join(" · ");
+
+  return (
+    <Box className="mb-3 flex flex-wrap items-end justify-between gap-3 p-4">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-600">{project.key}</span>
+          {resumen.vencidas > 0 && <Chip className="bg-rose-50 text-rose-700 ring-rose-200"><AlertTriangle className="h-3 w-3" />{resumen.vencidas} vencida(s)</Chip>}
+          {project.active === false && <Chip className="bg-slate-100 text-slate-600 ring-slate-200">Finalizado</Chip>}
+        </div>
+        <h2 className="mt-1 truncate text-base font-semibold text-slate-900">{project.name}</h2>
+        {ubicacion && <p className="truncate text-xs text-slate-500">{ubicacion}</p>}
+      </div>
+      {resumen.total > 0 && (
+        <div className="w-full min-w-[12rem] sm:w-auto sm:max-w-xs sm:flex-1">
+          <div className="flex items-baseline justify-between text-xs text-slate-500">
+            <span>Avance</span>
+            <b className="text-lg font-semibold text-slate-900">{resumen.pct}%</b>
+          </div>
+          <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-200">
+            <div className={`h-full rounded-full transition-[width] duration-500 ${resumen.pct === 100 ? "bg-emerald-500" : "bg-brand-500"}`} style={{ width: `${resumen.pct}%` }} />
+          </div>
+          <div className="mt-1 text-[11px] text-slate-400">{resumen.hechas} de {resumen.total} tarea(s) terminada(s)</div>
+        </div>
+      )}
+    </Box>
+  );
 }
 
 function Board({ tasks, projects = [], userById, onOpen, onMove, onMoveToStatus, readOnly = false, tvMode = false }) {
