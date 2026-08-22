@@ -96,3 +96,103 @@
 /* Garabato de firma dibujado con un borde curvo: sugiere una rúbrica sin imitar la de nadie. */
 .ui-scribble{display:block;height:1.5rem;border-bottom:2px solid #17345e;border-radius:0 0 60% 40%/0 0 100% 100%;transform:rotate(-3deg)}
 .ui-scribble-b{border-bottom-color:#334a68;border-radius:0 0 40% 60%/0 0 100% 100%;transform:rotate(2deg)}
+
+/* ---------- Animación de las maquetas ----------
+   Sólo se anima dentro de .anima, clase que pone el JavaScript. Si ese archivo no carga, nada de
+   esto se aplica y las maquetas se ven quietas pero completas.
+
+   Se anima únicamente transform y opacity: son las dos propiedades que el navegador puede componer
+   sin rehacer el diseño de la página, así que el movimiento va fluido incluso en un teléfono. */
+
+.anima .shot{opacity:0;transform:translateY(18px) scale(.985);
+  transition:opacity .5s cubic-bezier(.22,.61,.36,1),transform .5s cubic-bezier(.22,.61,.36,1);
+  transition-delay:var(--retraso,0ms)}
+.anima .shot.visible{opacity:1;transform:none}
+
+/* El contenido interno entra un poco después que su marco: primero aparece la ventana, después lo
+   que hay adentro. Ese orden es el que hace que se lea como una pantalla que carga. */
+.anima .shot .shot-body>*{opacity:0;transform:translateY(6px);
+  transition:opacity .42s ease-out,transform .42s ease-out}
+.anima .shot.visible .shot-body>*{opacity:1;transform:none}
+.anima .shot.visible .shot-body>*:nth-child(1){transition-delay:calc(var(--retraso,0ms) + 140ms)}
+.anima .shot.visible .shot-body>*:nth-child(2){transition-delay:calc(var(--retraso,0ms) + 190ms)}
+.anima .shot.visible .shot-body>*:nth-child(3){transition-delay:calc(var(--retraso,0ms) + 240ms)}
+.anima .shot.visible .shot-body>*:nth-child(n+4){transition-delay:calc(var(--retraso,0ms) + 290ms)}
+
+/* Las barras crecen desde la izquierda. Se usa scaleX y no width porque animar el ancho obliga al
+   navegador a recalcular la posición de todo lo que hay al lado, en cada cuadro. */
+.anima .ui-bars i,.anima .ui-progress-bar i{transform:scaleX(0);transform-origin:left center;
+  transition:transform .75s cubic-bezier(.22,.61,.36,1);transition-delay:calc(var(--retraso,0ms) + 320ms)}
+.anima .shot.visible .ui-bars i,.anima .shot.visible .ui-progress-bar i{transform:scaleX(1)}
+
+/* El punto de la visita en curso late apenas: señala dónde está el técnico ahora sin distraer. */
+.anima .shot.visible .ui-dot-live{animation:og-latido 2.4s ease-in-out infinite}
+@keyframes og-latido{0%,100%{box-shadow:0 0 0 3px rgba(0,164,211,.18)}50%{box-shadow:0 0 0 6px rgba(0,164,211,.06)}}
+
+/* Al pasar el mouse la ventana se levanta apenas: invita a mirarla de cerca sin pedir un clic que
+   no lleva a ninguna parte. En pantallas táctiles no se aplica, porque ahí no hay estado de hover. */
+@media (hover:hover){
+  .shot-frame{transition:transform .28s ease,box-shadow .28s ease}
+  .shot:hover .shot-frame{transform:translateY(-4px);box-shadow:0 18px 40px rgba(16,35,63,.14)}
+}
+
+/* Quien pidió menos movimiento en su sistema no recibe ninguno. No es un detalle opcional: las
+   animaciones de entrada pueden provocar mareo y desorientación a personas con trastornos
+   vestibulares. Se desactiva todo y el contenido queda visible en su posición final. */
+@media (prefers-reduced-motion:reduce){
+  .anima .shot,
+  .anima .shot .shot-body>*,
+  .anima .ui-bars i,
+  .anima .ui-progress-bar i{opacity:1!important;transform:none!important;transition:none!important;animation:none!important}
+  .anima .shot.visible .ui-dot-live{animation:none!important}
+  .shot-frame,.shot:hover .shot-frame{transition:none!important;transform:none!important}
+}
+
+/* ---------- Tablero y cronograma destacados ----------
+   Esta maqueta ocupa toda la fila: el tablero es lo que más se mira antes de decidir, y en una
+   columna angosta las cuatro etapas quedaban ilegibles. En pantallas chicas vuelve a una columna
+   y el tablero se desplaza en horizontal, que es como se usa un kanban en el teléfono. */
+.shot-wide{grid-column:1/-1}
+
+.ui-proj{display:flex;flex-wrap:wrap;gap:.7rem;align-items:flex-end;justify-content:space-between;padding-bottom:.6rem;border-bottom:1px solid #eef3f8}
+.ui-proj b{display:block;font-size:.92rem;color:#10233f;margin-top:.15rem}
+.ui-proj em{font-style:normal;font-size:.72rem;color:#8b9ab0}
+.ui-proj-progress{min-width:11rem;flex:1 1 11rem;max-width:16rem}
+
+.ui-kanban{margin-top:.7rem;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.45rem}
+.ui-col header{display:flex;align-items:center;justify-content:space-between;font-size:.63rem;text-transform:uppercase;letter-spacing:.04em;color:#8b9ab0;padding:0 .1rem .3rem}
+.ui-col header span{background:#eef3f8;color:#53647c;border-radius:99px;padding:0 .3rem;font-size:.62rem}
+.ui-task{background:#fff;border:1px solid #e6edf5;border-left:3px solid #cbd8e6;border-radius:7px;padding:.35rem .4rem;margin-bottom:.32rem;box-shadow:0 1px 2px rgba(16,35,63,.04)}
+.ui-task b{display:block;font-size:.7rem;font-weight:650;color:#10233f;line-height:1.25}
+.ui-task-foot{display:flex;align-items:center;gap:.3rem;margin-top:.28rem}
+.ui-task-foot em{font-style:normal;font-size:.62rem;color:#8b9ab0;margin-left:auto}
+.ui-late{color:#be123c!important;font-weight:600}
+.ui-who{width:1.05rem;height:1.05rem;border-radius:50%;display:grid;place-items:center;font-size:.55rem;font-weight:700;color:#fff;flex:none}
+.ui-who-a{background:#17345e}
+.ui-who-b{background:#0f766e}
+.ui-who-c{background:#00a4d3}
+.ui-task-live{border-left-color:#00a4d3}
+.ui-task-check{border-left-color:#f59e0b}
+.ui-task-done{border-left-color:#0f766e;opacity:.7}
+.ui-task-ghost{opacity:.62}
+.ui-task-bar{height:.24rem;border-radius:99px;background:#e6edf5;overflow:hidden;margin-top:.3rem}
+.ui-task-bar i{display:block;height:100%;background:#00a4d3}
+
+.ui-gantt{position:relative;margin-top:.8rem;padding-top:.6rem;border-top:1px solid #eef3f8}
+.ui-gantt-title{font-size:.63rem;text-transform:uppercase;letter-spacing:.04em;color:#8b9ab0;margin-bottom:.35rem}
+.ui-gantt-row{display:grid;grid-template-columns:5.6rem 1fr;align-items:center;gap:.4rem;margin-bottom:.26rem}
+.ui-gantt-row span{font-size:.66rem;color:#53647c}
+.ui-gantt-row i{display:block;height:.5rem;border-radius:99px;background:#cbd8e6}
+.ui-gantt-row .g-done{background:#0f766e}
+.ui-gantt-row .g-live{background:linear-gradient(90deg,#17345e,#00a4d3)}
+/* Línea de hoy: es lo que convierte una lista de barras en un cronograma que se puede leer. */
+.ui-gantt-today{position:absolute;top:1.6rem;bottom:0;left:calc(5.6rem + .4rem + 52%);width:1px;background:#f59e0b}
+.ui-gantt-today::before{content:"hoy";position:absolute;top:-.85rem;left:-.55rem;font-size:.55rem;color:#b45309}
+
+@media (max-width:640px){
+  /* En el teléfono el tablero se desplaza al costado en lugar de comprimir cuatro columnas. */
+  .ui-kanban{grid-template-columns:repeat(4,10.5rem);overflow-x:auto;padding-bottom:.3rem;scroll-snap-type:x proximity}
+  .ui-col{scroll-snap-align:start}
+  .ui-gantt-row{grid-template-columns:4.4rem 1fr}
+  .ui-gantt-today{left:calc(4.4rem + .4rem + 52%)}
+}

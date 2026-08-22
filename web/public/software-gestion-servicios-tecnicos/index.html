@@ -14,6 +14,7 @@
     <link rel="icon" type="image/svg+xml" href="/branding/miordengo-icon.svg" />
     <link rel="stylesheet" href="/marketing.css" />
     <script src="/sin-service-worker.js" defer></script>
+    <script src="/demo-animaciones.js" defer></script>
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="es_AR" />
     <meta property="og:site_name" content="MiOrdenGo" />
@@ -214,30 +215,58 @@
             <figcaption>Presupuesto grande certificado por partes: cuánto se ejecutó y cuánto queda.</figcaption>
           </figure>
 
-          <figure class="shot">
+          <figure class="shot shot-wide">
             <div class="shot-frame">
               <div class="shot-bar"><span></span><span></span><span></span></div>
               <div class="shot-body">
-                <div class="ui-board">
+                <div class="ui-proj">
                   <div>
-                    <small>Por hacer</small>
-                    <div class="ui-card">Relevamiento de tableros<em>M. Sosa · 28/08</em></div>
-                    <div class="ui-card">Lista de materiales<em>L. Ibarra · 30/08</em></div>
+                    <span class="ui-tag">AUT-26</span>
+                    <b>Automatización de línea de envasado</b>
+                    <em>Molinos del Litoral S.A. · Planta Norte</em>
                   </div>
-                  <div>
-                    <small>En progreso</small>
-                    <div class="ui-card ui-card-live">Programación de PLC<em>J. Ferreyra · 25/08</em></div>
-                  </div>
-                  <div>
-                    <small>Hecho</small>
-                    <div class="ui-card ui-card-done">Ingeniería de detalle<em>M. Sosa</em></div>
+                  <div class="ui-proj-progress">
+                    <div class="ui-progress-head"><span>Avance</span><b>58%</b></div>
+                    <div class="ui-progress-bar"><i style="width:58%"></i></div>
                   </div>
                 </div>
-                <div class="ui-foot"><span class="ui-tick">Tablero, calendario y cronograma</span></div>
+
+                <div class="ui-kanban">
+                  <div class="ui-col">
+                    <header>Por hacer <span>3</span></header>
+                    <div class="ui-task"><b>Relevamiento de tableros</b><div class="ui-task-foot"><span class="ui-who ui-who-a">MS</span><em>28/08</em></div></div>
+                    <div class="ui-task"><b>Lista de materiales</b><div class="ui-task-foot"><span class="ui-who ui-who-b">LI</span><em>30/08</em></div></div>
+                    <div class="ui-task ui-task-ghost"><b>Pruebas en vacío</b><div class="ui-task-foot"><span class="ui-who ui-who-c">JF</span><em>04/09</em></div></div>
+                  </div>
+                  <div class="ui-col">
+                    <header>En progreso <span>2</span></header>
+                    <div class="ui-task ui-task-live"><b>Programación de PLC</b><div class="ui-task-bar"><i style="width:70%"></i></div><div class="ui-task-foot"><span class="ui-who ui-who-c">JF</span><em>25/08</em></div></div>
+                    <div class="ui-task ui-task-live"><b>Montaje de sensores</b><div class="ui-task-bar"><i style="width:40%"></i></div><div class="ui-task-foot"><span class="ui-who ui-who-a">MS</span><em>26/08</em></div></div>
+                  </div>
+                  <div class="ui-col">
+                    <header>En revisión <span>1</span></header>
+                    <div class="ui-task ui-task-check"><b>Esquemas eléctricos</b><div class="ui-task-foot"><span class="ui-who ui-who-b">LI</span><em class="ui-late">venció ayer</em></div></div>
+                  </div>
+                  <div class="ui-col">
+                    <header>Hecho <span>4</span></header>
+                    <div class="ui-task ui-task-done"><b>Ingeniería de detalle</b><div class="ui-task-foot"><span class="ui-who ui-who-a">MS</span><em>18/08</em></div></div>
+                    <div class="ui-task ui-task-done"><b>Compra de gabinetes</b><div class="ui-task-foot"><span class="ui-who ui-who-b">LI</span><em>14/08</em></div></div>
+                  </div>
+                </div>
+
+                <div class="ui-gantt">
+                  <div class="ui-gantt-title">Cronograma</div>
+                  <div class="ui-gantt-row"><span>Ingeniería</span><i class="g-done" style="margin-left:0%;width:26%"></i></div>
+                  <div class="ui-gantt-row"><span>Compras</span><i class="g-done" style="margin-left:18%;width:24%"></i></div>
+                  <div class="ui-gantt-row"><span>Montaje</span><i class="g-live" style="margin-left:38%;width:32%"></i></div>
+                  <div class="ui-gantt-row"><span>Puesta en marcha</span><i style="margin-left:66%;width:28%"></i></div>
+                  <div class="ui-gantt-today" aria-hidden="true"></div>
+                </div>
               </div>
             </div>
-            <figcaption>Proyectos con tareas por responsable y fecha, en tablero o cronograma.</figcaption>
+            <figcaption>Tablero y cronograma del mismo proyecto: quién hace qué, en qué estado y contra qué fecha. Se arrastra una tarjeta y el avance se recalcula solo.</figcaption>
           </figure>
+
 
           <figure class="shot">
             <div class="shot-frame">
