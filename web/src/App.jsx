@@ -8912,14 +8912,6 @@ const ASSET_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
    calcomanía en planta sepa de quién es sin tener que escanear nada: en un sitio donde trabajan
    varios proveedores, "MOG-" no distinguía a nadie. Se usan las iniciales de las palabras cuando
    alcanzan, y si no las primeras letras del nombre. */
-function assetTokenPrefix(companyName) {
-  // Las primeras cuatro letras del nombre, no las iniciales: "AUTO" se reconoce de un vistazo y
-  // "AA" no. El código se lee a un metro de distancia, pegado a un equipo, y muchas veces por
-  // alguien que no trabaja en la empresa que lo puso.
-  const limpio = String(companyName || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  return limpio.slice(0, 4) || "MOG";
-}
-
 /* Código de país de dos letras para el primer segmento de la etiqueta. Sale del país cargado en los
    datos de la empresa; si no está cargado o no se reconoce, se usa AR. */
 const PAIS_ISO = {
@@ -8937,14 +8929,13 @@ function assetTokenCountry(country) {
   return limpio.replace(/[^A-Z]/g, "").slice(0, 2) || "AR";
 }
 
-/* Código de una etiqueta: PAÍS-EMPRESA-SERIE, por ejemplo AR-AUTO-B7P2PE8H. Los dos primeros
-   segmentos dicen de quién es el equipo sin escanear nada, que es lo que sirve en una planta donde
-   trabajan varios proveedores. Verificado que el largo extra no agranda el QR: sigue en 37x37
-   módulos, así que los tamaños de etiqueta no cambian. */
-function newAssetToken(companyName, country) {
+/* Código de una etiqueta: PAÍS-SERIE, por ejemplo AR-B7P2PE8H. Quién emitió la etiqueta se lee en
+   el nombre de la empresa impreso arriba del QR, no en el código: así el código queda corto y
+   cómodo de dictar por teléfono o de teclear a mano cuando la calcomanía está dañada. */
+function newAssetToken(country) {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   const cuerpo = [...bytes].map((b) => ASSET_TOKEN_ALPHABET[b % ASSET_TOKEN_ALPHABET.length]).join("");
-  return `${assetTokenCountry(country)}-${assetTokenPrefix(companyName)}-${cuerpo}`;
+  return `${assetTokenCountry(country)}-${cuerpo}`;
 }
 
 /* Lo que devuelve el lector puede ser la URL completa de la etiqueta o sólo el código, según se haya
@@ -9233,7 +9224,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
               <button onClick={() => setLabelsOpen(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
               <button onClick={async () => {
                 const count = Math.max(1, Math.min(480, Number(labelCount) || 1));
-                const tokens = Array.from({ length: count }, () => newAssetToken(branding.companyName, branding.companyCountry));
+                const tokens = Array.from({ length: count }, () => newAssetToken(branding.companyCountry));
                 const size = ASSET_LABEL_SIZES.find((item) => item.id === labelSize) || ASSET_LABEL_SIZES[1];
                 try { await assetLabelsPDF(tokens, branding, { cols: size.cols, rows: size.rows }); setLabelsOpen(false); }
                 catch (e) { onErr?.(e); }
