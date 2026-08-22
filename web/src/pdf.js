@@ -2137,7 +2137,15 @@ export async function assetLabelsPDF(tokens, branding = {}, options = {}) {
       } catch { /* sin QR se imprime igual: con el código escrito se puede dar de alta a mano */ }
     }
 
-    doc.setFont("courier", "bold"); doc.setFontSize(8); doc.setTextColor(15, 23, 42);
+    // El cuerpo se achica sólo si el código no entra: con el formato país-empresa-serie y un nombre
+    // de empresa largo, un tamaño fijo se salía del recuadro en las etiquetas chicas.
+    doc.setFont("courier", "bold"); doc.setTextColor(15, 23, 42);
+    let cuerpo = 8;
+    doc.setFontSize(cuerpo);
+    while (cuerpo > 5 && doc.getTextWidth(tokens[index]) > cellW - 4) {
+      cuerpo -= 0.4;
+      doc.setFontSize(cuerpo);
+    }
     doc.text(tokens[index], centro, cursor + qrSide + 3.4, { align: "center" });
   }
   doc.save(`etiquetas-activos-${tokens.length}.pdf`);

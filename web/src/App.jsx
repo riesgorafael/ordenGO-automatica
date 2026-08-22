@@ -8920,10 +8920,31 @@ function assetTokenPrefix(companyName) {
   return limpio.slice(0, 4) || "MOG";
 }
 
-function newAssetToken(companyName) {
+/* Código de país de dos letras para el primer segmento de la etiqueta. Sale del país cargado en los
+   datos de la empresa; si no está cargado o no se reconoce, se usa AR. */
+const PAIS_ISO = {
+  ARGENTINA: "AR", BRASIL: "BR", BRAZIL: "BR", CHILE: "CL", URUGUAY: "UY", PARAGUAY: "PY",
+  BOLIVIA: "BO", "PERU": "PE", COLOMBIA: "CO", MEXICO: "MX", "ESPANA": "ES", SPAIN: "ES",
+  "ESTADOS UNIDOS": "US", USA: "US", ECUADOR: "EC", VENEZUELA: "VE",
+};
+function assetTokenCountry(country) {
+  // Se quitan los acentos antes de buscar: "PERÚ" y "PERU" tienen que dar lo mismo.
+  const limpio = String(country || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+  if (!limpio) return "AR";
+  if (PAIS_ISO[limpio]) return PAIS_ISO[limpio];
+  // Un código ISO ya escrito a mano ("AR", "BR") se toma tal cual.
+  if (/^[A-Z]{2}$/.test(limpio)) return limpio;
+  return limpio.replace(/[^A-Z]/g, "").slice(0, 2) || "AR";
+}
+
+/* Código de una etiqueta: PAÍS-EMPRESA-SERIE, por ejemplo AR-AUTO-B7P2PE8H. Los dos primeros
+   segmentos dicen de quién es el equipo sin escanear nada, que es lo que sirve en una planta donde
+   trabajan varios proveedores. Verificado que el largo extra no agranda el QR: sigue en 37x37
+   módulos, así que los tamaños de etiqueta no cambian. */
+function newAssetToken(companyName, country) {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   const cuerpo = [...bytes].map((b) => ASSET_TOKEN_ALPHABET[b % ASSET_TOKEN_ALPHABET.length]).join("");
-  return assetTokenPrefix(companyName) + "-" + cuerpo;
+  return `${assetTokenCountry(country)}-${assetTokenPrefix(companyName)}-${cuerpo}`;
 }
 
 /* Lo que devuelve el lector puede ser la URL completa de la etiqueta o sólo el código, según se haya
@@ -8934,9 +8955,14 @@ function assetTokenFrom(scanned) {
   const fromUrl = raw.match(/[?&]activo=([^&\s]+)/i);
   const value = fromUrl ? decodeURIComponent(fromUrl[1]) : raw;
   const token = value.trim().toUpperCase();
-  // Prefijo de 2 a 4 caracteres: el de la empresa, o el "MOG" de las etiquetas emitidas antes de
-  // que el prefijo existiera. Esas siguen siendo válidas y no hay que reimprimir nada.
-  return /^[A-Z0-9]{2,4}-[0-9A-Z]{4,20}$/.test(token) ? token : "";
+  // Se aceptan los tres formatos que existieron, porque las etiquetas ya impresas y pegadas siguen
+  // en los equipos y no se reimprimen:
+  //   AR-AUTO-B7P2PE8H  el actual, país + empresa + serie
+  //   AUTO-B7P2PE8H     el intermedio, sólo empresa
+  //   MOG-KQVQ577F      el original, antes de que hubiera prefijo
+  const conPais = /^[A-Z]{2}-[A-Z0-9]{2,6}-[0-9A-Z]{4,20}$/;
+  const soloEmpresa = /^[A-Z0-9]{2,6}-[0-9A-Z]{4,20}$/;
+  return (conPais.test(token) || soloEmpresa.test(token)) ? token : "";
 }
 
 const ASSET_CRITICALITY = ["Alta", "Media", "Baja"];
@@ -9207,7 +9233,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
               <button onClick={() => setLabelsOpen(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancelar</button>
               <button onClick={async () => {
                 const count = Math.max(1, Math.min(480, Number(labelCount) || 1));
-                const tokens = Array.from({ length: count }, () => newAssetToken(branding.companyName));
+                const tokens = Array.from({ length: count }, () => newAssetToken(branding.companyName, branding.companyCountry));
                 const size = ASSET_LABEL_SIZES.find((item) => item.id === labelSize) || ASSET_LABEL_SIZES[1];
                 try { await assetLabelsPDF(tokens, branding, { cols: size.cols, rows: size.rows }); setLabelsOpen(false); }
                 catch (e) { onErr?.(e); }
