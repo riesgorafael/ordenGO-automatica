@@ -48,3 +48,51 @@
   linear-gradient(45deg,#17345e 25%,transparent 25%,transparent 75%,#17345e 75%);
   background-size:.62rem .62rem;background-position:0 0,.31rem .31rem;border:1px solid #17345e}
 .ui-alert{margin-top:.7rem;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:8px;padding:.45rem .55rem;font-size:.73rem}
+
+/* Piezas de las maquetas nuevas. Mismo criterio que las anteriores: HTML y CSS en lugar de
+   imágenes, para que se vean nítidas y no haya forma de filtrar datos reales de clientes. */
+.ui-chip-green{background:#e7f7ef;color:#0f766e}
+.ui-strong{font-weight:700;color:#10233f}
+
+.ui-progress{margin-top:.7rem}
+.ui-progress-head{display:flex;justify-content:space-between;font-size:.72rem;color:#53647c}
+.ui-progress-head b{color:#10233f}
+.ui-progress-bar{margin-top:.25rem;height:.45rem;border-radius:99px;background:#e6edf5;overflow:hidden}
+.ui-progress-bar i{display:block;height:100%;background:linear-gradient(90deg,#17345e,#00a4d3)}
+.ui-progress-legend{display:flex;justify-content:space-between;margin-top:.25rem;font-size:.68rem;color:#8b9ab0}
+
+.ui-list{margin-top:.7rem;display:grid;gap:.3rem}
+.ui-list>div{display:flex;align-items:center;gap:.45rem;font-size:.73rem;color:#334a68}
+.ui-list b{margin-left:auto;color:#10233f;white-space:nowrap}
+.ui-list-lines>div{border-bottom:1px solid #f0f4f9;padding-bottom:.28rem}
+.ui-list-lines>div:last-child{border-bottom:0}
+.ui-seq{background:#17345e;color:#fff;border-radius:4px;padding:.03rem .28rem;font-size:.62rem;font-weight:700;flex:none}
+.ui-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.7rem;color:#53647c}
+
+.ui-board{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem}
+.ui-board>div>small{display:block;font-size:.63rem;text-transform:uppercase;letter-spacing:.03em;color:#8b9ab0;margin-bottom:.28rem}
+.ui-card{background:#f7fafd;border:1px solid #e6edf5;border-left:3px solid #94a3b8;border-radius:6px;padding:.3rem .35rem;font-size:.68rem;color:#10233f;margin-bottom:.28rem;line-height:1.3}
+.ui-card em{display:block;font-style:normal;font-size:.62rem;color:#8b9ab0;margin-top:.1rem}
+.ui-card-live{border-left-color:#00a4d3}
+.ui-card-done{border-left-color:#0f766e;opacity:.75}
+
+.ui-alert-info{background:#eff8fd;border-color:#bae0f2;color:#0d5a75}
+
+/* Teléfono: la barra superior oscura basta para que se lea como un móvil. */
+.shot-phone{max-width:15rem;margin:auto}
+.shot-bar-dark{background:#10233f;border-bottom-color:#10233f;justify-content:center}
+.shot-bar-dark span{width:2.6rem;height:.32rem;border-radius:99px;background:#3d5578}
+.ui-day{font-size:.72rem;color:#53647c;margin-bottom:.4rem}
+.ui-visit{display:flex;gap:.45rem;align-items:flex-start;padding:.35rem 0;border-bottom:1px solid #f0f4f9}
+.ui-visit:last-child{border-bottom:0}
+.ui-visit b{display:block;font-size:.73rem;color:#10233f}
+.ui-visit em{font-style:normal;font-size:.65rem;color:#8b9ab0}
+.ui-dot{width:.5rem;height:.5rem;border-radius:50%;background:#cbd8e6;margin-top:.28rem;flex:none}
+.ui-dot-live{background:#00a4d3;box-shadow:0 0 0 3px rgba(0,164,211,.18)}
+
+.ui-signs{margin-top:.7rem;display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.ui-signs div{text-align:center}
+.ui-signs small{display:block;font-size:.62rem;color:#8b9ab0;margin-top:.15rem}
+/* Garabato de firma dibujado con un borde curvo: sugiere una rúbrica sin imitar la de nadie. */
+.ui-scribble{display:block;height:1.5rem;border-bottom:2px solid #17345e;border-radius:0 0 60% 40%/0 0 100% 100%;transform:rotate(-3deg)}
+.ui-scribble-b{border-bottom-color:#334a68;border-radius:0 0 40% 60%/0 0 100% 100%;transform:rotate(2deg)}
