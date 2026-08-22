@@ -9087,8 +9087,19 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
     const token = assetTokenFrom(scanned);
     setScanning(false);
     if (!token) { setScanMsg("Ese código no es una etiqueta de activo."); return; }
-    const found = assets.find((a) => String(a.qrToken || "").toUpperCase() === token);
-    if (found) { setScanMsg(""); setEditing(found); return; }
+
+    const actual = assets.find((a) => String(a.qrToken || "").toUpperCase() === token);
+    if (actual) { setScanMsg(""); setEditing(actual); return; }
+
+    /* Etiqueta reemplazada: el equipo existe pero hoy lleva otra calcomanía. Se abre igual —es el
+       equipo correcto— y se avisa, porque quien escaneó está mirando una etiqueta que ya no es la
+       vigente y conviene que la despegue. */
+    const previo = assets.find((a) => (a.qrTokenHistory || []).some((h) => String(h.token || "").toUpperCase() === token));
+    if (previo) {
+      setScanMsg(`Esa etiqueta fue reemplazada. El equipo es ${previo.name || previo.tag || "el que se abrió"}, y ahora lleva la etiqueta ${previo.qrToken || "—"}.`);
+      setEditing(previo);
+      return;
+    }
     setScanMsg("");
     setEditing({ qrToken: token });
   };
@@ -9242,7 +9253,7 @@ function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCance
     site: asset.site || "", siteCode: asset.siteCode || "", area: asset.area || "", manufacturer: asset.manufacturer || "", model: asset.model || "",
     serial: asset.serial || "", criticality: asset.criticality || "Media", criticalityReason: asset.criticalityReason || "",
     status: asset.status || "En servicio", commissionedAt: asset.commissionedAt || "", criticalParts: asset.criticalParts || [],
-    replacementValue: asset.replacementValue || "", documents: asset.documents || [], locationHistory: asset.locationHistory || [], notes: asset.notes || "", createdAt: asset.createdAt,
+    replacementValue: asset.replacementValue || "", documents: asset.documents || [], locationHistory: asset.locationHistory || [], qrTokenHistory: asset.qrTokenHistory || [], notes: asset.notes || "", createdAt: asset.createdAt,
   });
   const [saving, setSaving] = useState(false);
   const [scanField, setScanField] = useState(false);
@@ -9271,7 +9282,7 @@ function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCance
       <Box className="space-y-2 p-4">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <L label="TAG / código" help="El identificador con el que la planta conoce al equipo."><input value={form.tag} onChange={(e) => set({ tag: e.target.value })} placeholder="CT-VTU-COMP-01" className="u-input font-mono" /></L>
-          <L label="Etiqueta QR" help="El código impreso en la calcomanía pegada al equipo. Se completa solo al dar de alta escaneando.">
+          <L label="Etiqueta QR" help="El código impreso en la calcomanía pegada al equipo. Se completa solo al dar de alta escaneando. Si la reemplazás, la anterior queda registrada y sigue llevando a este equipo.">
             <div className="flex gap-1.5">
               <input value={form.qrToken || ""} onChange={(e) => set({ qrToken: e.target.value.toUpperCase() })} placeholder="Sin etiqueta" className="u-input font-mono" />
               <button type="button" onClick={() => setScanField(true)} title="Escanear etiqueta" aria-label="Escanear etiqueta" className="grid h-10 w-11 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><ScanLine className="h-4 w-4" /></button>
@@ -9363,6 +9374,23 @@ function AssetEditor({ asset, clients, parts, orders, showMoney = false, onCance
           <L label="Motivo del traslado (opcional)">
             <input value={form.moveReason || ""} onChange={(e) => set({ moveReason: e.target.value })} placeholder="Ej. reasignado a la línea 3 por baja de equipo" className="u-input" />
           </L>
+        </Box>
+      )}
+
+      {/* Etiquetas anteriores: sólo aparece si alguna vez se reemplazó una, que es lo excepcional. */}
+      {(form.qrTokenHistory || []).length > 0 && (
+        <Box className="p-4">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Etiquetas anteriores</h4>
+          <p className="mb-2 text-[11px] text-slate-500">Estos códigos siguen llevando a este equipo al escanearlos, aunque la calcomanía ya no esté.</p>
+          <div className="space-y-1.5">
+            {form.qrTokenHistory.map((previa, index) => (
+              <div key={index} className="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-slate-200 p-2 text-xs">
+                <span className="font-mono text-slate-700">{previa.token}</span>
+                <span className="text-slate-400">reemplazada el {previa.until}</span>
+                {previa.byName && <span className="text-[10px] text-slate-400">· {previa.byName}</span>}
+              </div>
+            ))}
+          </div>
         </Box>
       )}
 

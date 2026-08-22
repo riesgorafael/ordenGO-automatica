@@ -2674,6 +2674,15 @@ const normalizeAsset = (body = {}) => {
     // Código de la etiqueta QR pegada en el equipo. Se normaliza a mayúsculas porque el lector puede
     // devolverlo con otra caja según de dónde venga, y dos cajas distintas serían dos activos.
     qrToken: text(body.qrToken, 40).toUpperCase(),
+    /* Etiquetas anteriores del mismo equipo. Una calcomanía en planta se destruye —se raspa, se
+       quema, se despega— y hay que pegar otra. Sin este registro el código viejo quedaba huérfano:
+       una foto anterior, un remito o la etiqueta a medio despegar dejaban de resolver a nada.
+       Lo escribe el servidor al detectar el cambio; lo que mande el cliente se ignora. */
+    qrTokenHistory: (Array.isArray(body.qrTokenHistory) ? body.qrTokenHistory : []).slice(0, 20).map((previa) => ({
+      token: text(previa.token, 40).toUpperCase(),
+      until: text(previa.until, 10),
+      byName: text(previa.byName, 120),
+    })).filter((previa) => previa.token),
     area: text(body.area, 120),
     manufacturer: text(body.manufacturer, 80),
     model: text(body.model, 80),
@@ -2730,7 +2739,15 @@ app.post("/api/assets", auth, requireRole("admin", "gerente", "tecnico"), apiRat
   const asset = { ...normalizeAsset(req.body), locationHistory: [] };
   if (!asset.name) return res.status(400).json({ error: "El nombre del activo es obligatorio" });
   if (!asset.client) return res.status(400).json({ error: "El activo debe pertenecer a un cliente" });
-  if (asset.qrToken && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 LIMIT 1", [req.user.organizationId, asset.qrToken])).rowCount) {
+  if (asset.qrToken && (await pool.query(
+    `SELECT 1 FROM assets
+      WHERE organization_id=$1
+        AND (upper(data->>'qrToken')=$2
+             OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(data->'qrTokenHistory','[]'::jsonb)) AS previa
+                        WHERE upper(previa->>'token')=$2))
+      LIMIT 1`,
+    [req.user.organizationId, asset.qrToken],
+  )).rowCount) {
     return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
   }
   let stored;
@@ -2755,9 +2772,33 @@ app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), a
       byName: req.user.name || "",
     }, ...merged.locationHistory].slice(0, 50);
   }
-  if (merged.qrToken && merged.qrToken !== String(current.data.qrToken || "").toUpperCase()
-      && (await pool.query("SELECT 1 FROM assets WHERE organization_id=$1 AND upper(data->>'qrToken')=$2 AND id<>$3 LIMIT 1", [req.user.organizationId, merged.qrToken, req.params.id])).rowCount) {
-    return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
+  /* Reemplazo de etiqueta. Se guarda la anterior antes de pisarla: es lo que permite que un código
+     viejo —el de una foto de archivo, un remito, o una calcomanía a medio despegar— siga llevando
+     al equipo correcto en lugar de no resolver a nada. El historial parte siempre de lo guardado,
+     nunca de lo que mande el navegador. */
+  const tokenPrevio = String(current.data.qrToken || "").toUpperCase();
+  merged.qrTokenHistory = Array.isArray(current.data.qrTokenHistory) ? current.data.qrTokenHistory : [];
+  if (merged.qrToken !== tokenPrevio) {
+    if (tokenPrevio) {
+      merged.qrTokenHistory = [{
+        token: tokenPrevio,
+        until: new Date().toISOString().slice(0, 10),
+        byName: req.user.name || "",
+      }, ...merged.qrTokenHistory.filter((previa) => previa.token !== tokenPrevio)].slice(0, 20);
+    }
+    // La etiqueta nueva no puede ser una que ya usó otro activo, ni siquiera una que ese otro haya
+    // reemplazado: si se reasignara, un código impreso pasaría a apuntar a dos equipos distintos.
+    if (merged.qrToken && (await pool.query(
+      `SELECT 1 FROM assets
+        WHERE organization_id=$1 AND id<>$3
+          AND (upper(data->>'qrToken')=$2
+               OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(data->'qrTokenHistory','[]'::jsonb)) AS previa
+                          WHERE upper(previa->>'token')=$2))
+        LIMIT 1`,
+      [req.user.organizationId, merged.qrToken, req.params.id],
+    )).rowCount) {
+      return res.status(409).json({ error: "Esa etiqueta QR ya está asignada a otro activo" });
+    }
   }
   let storedMerged;
   try { storedMerged = await persistAssetDocuments(merged, req.user.id); }
