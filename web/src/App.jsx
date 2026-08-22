@@ -7645,10 +7645,13 @@ function MicButton({ value, onChange, className = "" }) {
 }
 
 /* ===================================== ESCÁNER DE CÓDIGO (TAG DE ACTIVO) ===================================== */
-function BarcodeScannerDialog({ onClose, onDetect }) {
+function BarcodeScannerDialog({ onClose, onDetect, continuo = false, titulo = "Escanear código", pie = "Apuntá al código QR o de barras del equipo. Se detecta automáticamente.", children }) {
   useDialogOpenClass(onClose);
   const videoRef = useRef(null);
   const [error, setError] = useState("");
+  const onDetectRef = useRef(onDetect);
+  onDetectRef.current = onDetect;
+  const ultimo = useRef({ valor: "", at: 0 });
   const supported = typeof window !== "undefined" && "BarcodeDetector" in window;
   useEffect(() => {
     if (!supported) { setError("Tu navegador no soporta el escaneo de códigos. Ingresá el dato manualmente."); return; }
@@ -7661,7 +7664,21 @@ function BarcodeScannerDialog({ onClose, onDetect }) {
         const detector = new window.BarcodeDetector({ formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "codabar"] });
         const tick = async () => {
           if (stopped || !videoRef.current) return;
-          try { const codes = await detector.detect(videoRef.current); if (codes.length) { onDetect(codes[0].rawValue); return; } } catch {}
+          try {
+            const codes = await detector.detect(videoRef.current);
+            if (codes.length) {
+              const valor = codes[0].rawValue;
+              if (!continuo) { onDetectRef.current(valor); return; }
+              // En cadena, la cámara ve el mismo código decenas de veces por segundo mientras
+              // sigue apuntado. Se ignora el repetido durante unos segundos para no contar veinte
+              // relevamientos del mismo equipo por un pulso de mano.
+              const ahora = Date.now();
+              if (valor !== ultimo.current.valor || ahora - ultimo.current.at > 2500) {
+                ultimo.current = { valor, at: ahora };
+                onDetectRef.current(valor);
+              }
+            }
+          } catch {}
           raf = requestAnimationFrame(tick);
         };
         tick();
@@ -7673,13 +7690,16 @@ function BarcodeScannerDialog({ onClose, onDetect }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/70 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) onClose(); }}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-100 p-4"><h2 className="text-lg font-semibold text-slate-900">Escanear código</h2><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="flex items-center justify-between border-b border-slate-100 p-4"><h2 className="text-lg font-semibold text-slate-900">{titulo}</h2><button onClick={onClose} aria-label="Cerrar" className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="relative bg-black" style={{ aspectRatio: "3/4" }}>
           {!error && <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />}
           {!error && <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-white/70" />}
           {error && <div className="flex h-full items-center justify-center p-6 text-center text-sm text-white/90">{error}</div>}
         </div>
-        <p className="p-4 text-xs text-slate-500">Apuntá al código QR o de barras del equipo. Se detecta automáticamente.</p>
+        <div className="p-4">
+          <p className="text-xs text-slate-500">{pie}</p>
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -8914,6 +8934,14 @@ const ASSET_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
    alcanzan, y si no las primeras letras del nombre. */
 /* Código de país de dos letras para el primer segmento de la etiqueta. Sale del país cargado en los
    datos de la empresa; si no está cargado o no se reconoce, se usa AR. */
+/* Días desde que alguien confirmó físicamente el equipo. null si nunca se relevó. */
+function diasSinVer(asset) {
+  if (!asset?.lastSeenAt) return null;
+  const visto = new Date(asset.lastSeenAt);
+  if (Number.isNaN(visto.getTime())) return null;
+  return Math.floor((Date.now() - visto.getTime()) / 86400000);
+}
+
 const PAIS_ISO = {
   ARGENTINA: "AR", BRASIL: "BR", BRAZIL: "BR", CHILE: "CL", URUGUAY: "UY", PARAGUAY: "PY",
   BOLIVIA: "BO", "PERU": "PE", COLOMBIA: "CO", MEXICO: "MX", "ESPANA": "ES", SPAIN: "ES",
@@ -9103,6 +9131,33 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
     setScanMsg("");
     setEditing({ qrToken: token });
   };
+  const [relevando, setRelevando] = useState(false);
+  const [relevados, setRelevados] = useState([]);
+  const relevadosRef = useRef(new Set());
+
+  /* Relevamiento: se recorre la planta escaneando y cada equipo queda confirmado en el lugar. No
+     abre la ficha ni interrumpe: la idea es pasar el teléfono por veinte etiquetas seguidas sin
+     tocar la pantalla, y revisar el resultado al final. */
+  const registrarVisto = async (escaneado) => {
+    const token = assetTokenFrom(escaneado);
+    if (!token) { setRelevados((lista) => [{ token: String(escaneado).slice(0, 20), estado: "no es una etiqueta de activo", error: true }, ...lista].slice(0, 60)); return; }
+    if (relevadosRef.current.has(token)) return;   // ya contado en esta recorrida
+    relevadosRef.current.add(token);
+    try {
+      const visto = await api.markAssetSeen({ token });
+      onSeen?.(visto);
+      setRelevados((lista) => [{
+        token,
+        nombre: visto.name || visto.tag || "Sin nombre",
+        sitio: [visto.site, visto.area].filter(Boolean).join(" · "),
+        estado: visto._etiquetaReemplazada ? "etiqueta vieja: conviene reemplazarla" : "confirmado",
+        aviso: visto._etiquetaReemplazada,
+      }, ...lista].slice(0, 60));
+    } catch (e) {
+      relevadosRef.current.delete(token);           // que se pueda reintentar
+      setRelevados((lista) => [{ token, estado: e.message || "no se pudo registrar", error: true }, ...lista].slice(0, 60));
+    }
+  };
   // Resolver una sola vez: si se reintentara en cada render, cerrar la ficha la volvería a abrir.
   useEffect(() => { if (!deepLink) return; resolveScan(deepLink); onConsumeDeepLink?.(); }, [deepLink]);
   const filtered = useMemo(() => {
@@ -9114,12 +9169,14 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
   // El recuento por criticidad es lo primero que se mira en una revisión: dice si el parque está
   // clasificado de verdad o si quedó todo en el valor por omisión.
   const counts = useMemo(() => {
-    const base = { Alta: 0, Media: 0, Baja: 0, sinJustificar: 0, vencidos: 0 };
+    const base = { Alta: 0, Media: 0, Baja: 0, sinJustificar: 0, vencidos: 0, sinRelevar: 0 };
     for (const a of assets) {
       base[a.criticality] = (base[a.criticality] || 0) + 1;
       if (a.criticality === "Alta" && !String(a.criticalityReason || "").trim()) base.sinJustificar++;
       const own = (orders || []).filter((o) => o.assetId === a.id || (a.tag && tagKey(o.technical?.assetTag) === tagKey(a.tag)));
       if (assetPerformance(own, {}).nextService?.overdue) base.vencidos++;
+      const dias = diasSinVer(a);
+      if (dias === null || dias >= 180) base.sinRelevar++;
     }
     return base;
   }, [assets, orders]);
@@ -9136,6 +9193,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => setScanning(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ScanLine className="h-4 w-4" /> Escanear etiqueta</button>
         <button onClick={() => setLabelsOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><QrCode className="h-4 w-4" /> Imprimir etiquetas</button>
+        <button onClick={() => { setRelevados([]); relevadosRef.current = new Set(); setRelevando(true); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ClipboardList className="h-4 w-4" /> Relevar</button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por equipo, TAG, planta…" className="u-input max-w-xs flex-1" />
@@ -9146,11 +9204,12 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
         <button onClick={() => setEditing({})} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-400"><Plus className="h-4 w-4" /> Activo</button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {ASSET_CRITICALITY.map((c) => (
           <Box key={c} className="p-3"><div className="text-[11px] text-slate-500">Criticidad {c.toLowerCase()}</div><div className="text-xl font-semibold text-slate-900">{counts[c] || 0}</div></Box>
         ))}
         <Box className="p-3"><div className="text-[11px] text-slate-500">Preventivo vencido</div><div className={counts.vencidos ? "text-xl font-semibold text-rose-600" : "text-xl font-semibold text-slate-900"}>{counts.vencidos}</div></Box>
+        <Box className="p-3"><div className="text-[11px] text-slate-500">Sin relevar (6 meses)</div><div className={counts.sinRelevar ? "text-xl font-semibold text-amber-600" : "text-xl font-semibold text-slate-900"}>{counts.sinRelevar}</div></Box>
         <Box className="p-3"><div className="text-[11px] text-slate-500">Críticos sin justificar</div><div className={counts.sinJustificar ? "text-xl font-semibold text-rose-600" : "text-xl font-semibold text-slate-900"}>{counts.sinJustificar}</div></Box>
       </div>
 
@@ -9179,6 +9238,7 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
                     {a.status !== "En servicio" && <Chip className="bg-slate-100 text-slate-600 ring-slate-200">{a.status}</Chip>}
                     {stats.nextService?.overdue && <Chip className="bg-rose-50 text-rose-700 ring-rose-200">Preventivo vencido</Chip>}
                     {stats.repeated.length > 0 && <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Falla repetida</Chip>}
+                    {(() => { const d = diasSinVer(a); if (d === null) return <Chip className="bg-slate-100 text-slate-500 ring-slate-200">Sin relevar</Chip>; return d >= 180 ? <Chip className="bg-amber-50 text-amber-700 ring-amber-200">Sin ver hace {Math.round(d / 30)} meses</Chip> : null; })()}
                   </div>
                   <div className="mt-0.5 truncate text-[11px] text-slate-500">
                     {[a.client, a.site, a.area].filter(Boolean).join(" · ") || "Sin ubicación"}
@@ -9198,6 +9258,22 @@ function AssetsModule({ assets, clients, parts, orders, isMgr, branding = {}, de
       </Box>
       {scanMsg && <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{scanMsg}</div>}
       {scanning && <BarcodeScannerDialog onClose={() => setScanning(false)} onDetect={resolveScan} />}
+      {relevando && (
+        <BarcodeScannerDialog continuo titulo={`Relevamiento · ${relevados.filter((r) => !r.error).length} confirmado(s)`}
+          pie="Pasá el teléfono por las etiquetas, una tras otra. No hace falta tocar la pantalla entre equipo y equipo."
+          onClose={() => setRelevando(false)} onDetect={registrarVisto}>
+          {relevados.length > 0 && (
+            <div className="mt-3 max-h-40 space-y-1 overflow-y-auto">
+              {relevados.map((item, index) => (
+                <div key={index} className={`rounded-lg border p-2 text-xs ${item.error ? "border-rose-200 bg-rose-50 text-rose-700" : item.aviso ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                  <div className="font-medium">{item.nombre || item.token}</div>
+                  <div className="text-[11px] opacity-80">{item.sitio ? item.sitio + " · " : ""}{item.estado}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </BarcodeScannerDialog>
+      )}
       {labelsOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { mouseDownOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (mouseDownOnBackdrop.current && event.target === event.currentTarget) setLabelsOpen(false); }}>
           <div className="w-full max-w-md rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>

@@ -117,6 +117,9 @@ export const api = {
   companyProfile: () => req("/settings/company-profile"),
   updateCompanyProfile: (profile) => req("/settings/company-profile", { method: "PUT", body: JSON.stringify(profile) }),
 
+  // Relevamiento de activos: confirma que el equipo sigue en su lugar. Acepta la etiqueta escaneada.
+  markAssetSeen: (payload) => req("/assets/seen", { method: "POST", body: JSON.stringify(payload) }),
+
   // Push: la clave pública identifica la aplicación ante el servicio del navegador; la suscripción
   // es la dirección única a la que ese servicio entregará los avisos.
   pushKey: () => req("/push/key"),

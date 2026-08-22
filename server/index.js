@@ -2703,6 +2703,10 @@ const normalizeAsset = (body = {}) => {
       note: text(item.note, 200),
     })).filter((item) => item.partId),
     // Se conserva el valor ya guardado; las altas nuevas arrancan vacías.
+    // Último relevamiento físico. Lo escribe /api/assets/seen; acá sólo se conserva para que una
+    // edición de la ficha no lo borre.
+    lastSeenAt: text(body.lastSeenAt, 40),
+    lastSeenBy: text(body.lastSeenBy, 120),
     locationHistory: (Array.isArray(body.locationHistory) ? body.locationHistory : []).slice(0, 50).map((move) => ({
       site: text(move.site, 120),
       siteCode: text(move.siteCode, 40),
@@ -2811,6 +2815,43 @@ app.patch("/api/assets/:id", auth, requireRole("admin", "gerente", "tecnico"), a
   }
   res.json(storedMerged);
 });
+/* Relevamiento: confirmar escaneando que el equipo sigue donde el sistema dice que está.
+
+   Va como acción propia y no como un PATCH de la ficha por dos motivos: la hace un técnico
+   recorriendo la planta, que no debería poder editar criticidad ni valores de reposición al pasar;
+   y llega de a muchas seguidas, así que conviene que escriba lo mínimo.
+
+   Se acepta el código de la etiqueta —incluido uno ya reemplazado— además del id, porque quien
+   releva tiene en la mano la calcomanía, no el identificador interno. */
+app.post("/api/assets/seen", auth, requireRole("admin", "gerente", "tecnico"), apiRateLimit(240), async (req, res) => {
+  const token = String(req.body?.token || "").trim().toUpperCase();
+  const id = String(req.body?.id || "").trim();
+  if (!token && !id) return res.status(400).json({ error: "Indicá la etiqueta o el activo" });
+
+  const fila = (await pool.query(
+    `SELECT id, data FROM assets
+      WHERE organization_id=$1
+        AND ($2 <> '' AND id=$2
+             OR $3 <> '' AND (upper(data->>'qrToken')=$3
+                              OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(data->'qrTokenHistory','[]'::jsonb)) AS previa
+                                         WHERE upper(previa->>'token')=$3)))
+      LIMIT 1`,
+    [req.user.organizationId, id, token],
+  )).rows[0];
+  if (!fila) return res.status(404).json({ error: "Esa etiqueta no corresponde a ningún activo" });
+
+  const visto = {
+    ...fila.data,
+    lastSeenAt: new Date().toISOString(),
+    lastSeenBy: req.user.name || "",
+  };
+  await pool.query("UPDATE assets SET data=$2, updated_at=now() WHERE id=$1", [fila.id, visto]);
+  // Se informa si la etiqueta escaneada ya no es la vigente: quien releva la tiene delante y
+  // conviene que la reemplace en el momento, no cuando alguien lo note meses después.
+  const vigente = String(fila.data.qrToken || "").toUpperCase();
+  res.json({ ...visto, _etiquetaReemplazada: Boolean(token && vigente && token !== vigente) });
+});
+
 app.delete("/api/assets/:id", auth, requireRole("admin", "gerente"), async (req, res) => {
   const deleted = await pool.query("DELETE FROM assets WHERE id=$1 RETURNING data", [req.params.id]);
   if (!deleted.rowCount) return res.status(404).json({ error: "No existe" });
