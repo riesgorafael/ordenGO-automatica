@@ -6,6 +6,7 @@
 // Esa librería trae su propio CSS: import "gantt-task-react/dist/index.css"; (ya incluido abajo).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Gantt, ViewMode } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
 import { Upload, Download, Loader2, AlertTriangle, Plus, Trash2, X, CheckSquare, Maximize2 } from "lucide-react";
@@ -106,7 +107,10 @@ function GanttTaskModal({ task, tasks, onClose, onSave, onDelete }) {
     catch (e) { setError(e.message || "No se pudo eliminar la tarea."); setSaving(false); }
   };
 
-  return (
+  /* Al body: el contenedor del cronograma tiene su propio desplazamiento, y un ancestro con
+     transform convierte el position:fixed del diálogo en relativo a ese contenedor. El resultado
+     era el diálogo recortado por arriba y por abajo. Mismo motivo que en el resto de la aplicación. */
+  return createPortal((
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">{editing ? "Editar tarea del Gantt" : "Nueva tarea del Gantt"}</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
@@ -165,7 +169,7 @@ function GanttTaskModal({ task, tasks, onClose, onSave, onDelete }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // gantt-task-react espera fechas como Date y una forma de tarea propia; mapeamos desde
@@ -238,7 +242,8 @@ function GanttConvertModal({ tasks, users, onClose, onConfirm }) {
     try { await onConfirm({ assignee, priority }); onClose(); }
     catch (e) { setError(e.message || "No se pudieron crear las tareas."); setSaving(false); }
   };
-  return (
+  // Al body, por el mismo motivo que el diálogo de tarea: un ancestro con transform recorta el fixed.
+  return createPortal((
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="mobile-dialog mobile-sheet-content w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl sm:p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-900">Convertir en tarea{tasks.length > 1 ? "s" : ""} de proyecto</h3><button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
@@ -261,7 +266,7 @@ function GanttConvertModal({ tasks, users, onClose, onConfirm }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // El color de la barra ahora codifica ESTADO real (vencida / completada / en curso), no solo tipo

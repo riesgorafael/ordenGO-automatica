@@ -200,3 +200,8 @@
 /* Contador de comentarios en la tarjeta: existe en el tablero real y es de lo que más se mira,
    porque señala qué tarea tiene una conversación abierta sin entrar una por una. */
 .ui-comments{font-size:.58rem;color:#53647c;background:#eef3f8;border-radius:99px;padding:0 .3rem}
+
+/* Las maquetas no se estiran para igualar la altura de su fila: cada una conserva la suya y el
+   pie queda pegado a su ventana. Sin esto, una tarjeta corta al lado de una alta dejaba un hueco
+   de casi cien píxeles entre la ventana y su descripción. */
+.shots{align-items:start}
