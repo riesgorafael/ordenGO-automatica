@@ -6,6 +6,7 @@ import pkg from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import path from "path";
+import fs from "node:fs";
 import crypto from "crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath } from "url";
@@ -4144,14 +4145,40 @@ app.use((error, req, res, _next) => {
 
 /* ------------------------------------------------ Frontend estático (SPA) ------------------------------------------------ */
 const dist = path.join(__dirname, "public");
+
+/* Hosts que muestran la web comercial en lugar de la aplicación. La misma imagen sirve las dos
+   cosas y se decide por el nombre con el que entró la visita: así no hace falta un segundo
+   despliegue ni mantener dos copias del sitio.
+
+   Se configura por variable de entorno para no dejar el dominio escrito en el código; el valor por
+   defecto cubre www y la raíz, que es lo habitual. */
+const LANDING_HOSTS = new Set(
+  String(process.env.LANDING_HOSTS || "www.miordengo.com,miordengo.com")
+    .split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
+);
+const LANDING_FILE = path.join(dist, "software-gestion-servicios-tecnicos", "index.html");
+const esHostComercial = (req) => LANDING_HOSTS.has(String(req.hostname || "").toLowerCase());
+
 app.use(express.static(dist, {
+  index: false,
   etag: true,
   setHeaders(res, filePath) {
     if (/[/\\]assets[/\\].*-[A-Za-z0-9_-]{8,}\./.test(filePath)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     else if (/\.(?:html|webmanifest)$/i.test(filePath)) res.setHeader("Cache-Control", "no-cache");
   },
 }));
-app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
+
+app.get("*", (req, res) => {
+  // La web comercial responde sólo en la raíz de esos dominios. Cualquier otra ruta —un enlace
+  // viejo a una orden, o alguien que escribió mal el subdominio— se manda a la aplicación en vez
+  // de mostrarle la página de venta, que sería un callejón sin salida.
+  if (esHostComercial(req)) {
+    if (req.path === "/" && fs.existsSync(LANDING_FILE)) return res.sendFile(LANDING_FILE);
+    const destino = process.env.APP_URL || "https://app.miordengo.com";
+    return res.redirect(302, destino + req.originalUrl);
+  }
+  res.sendFile(path.join(dist, "index.html"));
+});
 
 /* ---------------------------------- Resumen diario de pendientes ----------------------------------
 Todo el vencimiento del sistema era "de tirar": había que abrir Mi Día para enterarse de que una
