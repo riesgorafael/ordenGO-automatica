@@ -4169,9 +4169,17 @@ app.use(express.static(dist, {
 }));
 
 app.get("*", (req, res) => {
-  // La web comercial responde sólo en la raíz de esos dominios. Cualquier otra ruta —un enlace
-  // viejo a una orden, o alguien que escribió mal el subdominio— se manda a la aplicación en vez
-  // de mostrarle la página de venta, que sería un callejón sin salida.
+  /* Páginas propias que viven en un subdirectorio —la web comercial es una— se sirven en cualquier
+     dominio. Hace falta resolverlo acá porque express.static va con index:false: sin eso, la raíz
+     de esos dominios recibía la aplicación en lugar de la página comercial, y con eso se dejaron de
+     servir los índices de subdirectorio, que es de donde cuelga /software-gestion-servicios-tecnicos/. */
+  const candidato = path.join(dist, req.path, "index.html");
+  if (req.path !== "/" && candidato.startsWith(dist + path.sep) && fs.existsSync(candidato)) {
+    return res.sendFile(candidato);
+  }
+  // La web comercial responde en la raíz de sus dominios. Cualquier otra ruta —un enlace viejo a
+  // una orden, o alguien que escribió mal el subdominio— se manda a la aplicación en vez de
+  // mostrarle la página de venta, que sería un callejón sin salida.
   if (esHostComercial(req)) {
     if (req.path === "/" && fs.existsSync(LANDING_FILE)) return res.sendFile(LANDING_FILE);
     const destino = process.env.APP_URL || "https://app.miordengo.com";
